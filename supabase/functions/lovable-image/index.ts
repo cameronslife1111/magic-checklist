@@ -1,6 +1,6 @@
 // Image generation:
 // - Text-to-image  -> fal openai/gpt-image-2 (high quality)
-// - Image edits / remix (refImages present) -> Lovable AI Gateway (Nano Banana)
+// - Image edits / remix (refImages present) -> fal openai/gpt-image-2/edit (high quality)
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -73,51 +73,45 @@ async function generateWithGptImage2(prompt: string, aspectRatio: string | undef
   return await urlToDataUrl(url);
 }
 
-async function generateWithNanoBanana(
+async function editWithGptImage2Edit(
   prompt: string,
   aspectRatio: string | undefined,
-  quality: string | undefined,
-  refImages: string[] | undefined,
-): Promise<{ ok: true; dataUrl: string } | { ok: false; status: number; error: string }> {
-  const key = Deno.env.get("LOVABLE_API_KEY");
-  if (!key) throw new Error("LOVABLE_API_KEY not configured");
-  const model = quality === "high" ? "google/gemini-3-pro-image-preview" : "google/gemini-2.5-flash-image";
+  refImages: string[],
+): Promise<string> {
+  const falKey = Deno.env.get("FAL_KEY");
+  if (!falKey) throw new Error("FAL_KEY not configured");
 
-  const userContent: any[] = [
-    { type: "text", text: `${prompt}\n\nAspect ratio: ${aspectRatio ?? "1:1"}.` },
-  ];
-  if (Array.isArray(refImages)) {
-    for (const url of refImages.slice(0, 16)) {
-      userContent.push({ type: "image_url", image_url: { url } });
-    }
-  }
+  // If the caller passed a known aspect, use it; otherwise let the model infer from inputs.
+  const image_size = aspectRatio ? (ASPECT_TO_SIZE[aspectRatio] ?? "auto") : "auto";
 
-  const r = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+  const submit = await fetch("https://queue.fal.run/openai/gpt-image-2/edit", {
     method: "POST",
-    headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+    headers: { Authorization: `Key ${falKey}`, "Content-Type": "application/json" },
     body: JSON.stringify({
-      model,
-      messages: [{ role: "user", content: userContent }],
-      modalities: ["image", "text"],
+      prompt,
+      image_urls: refImages.slice(0, 16),
+      image_size,
+      quality: "high",
+      num_images: 1,
+      output_format: "png",
     }),
   });
-  if (!r.ok) {
-    const t = await r.text();
-    console.error("lovable image err", r.status, t);
-    if (r.status === 429) return { ok: false, status: 429, error: "Rate limited" };
-    if (r.status === 402) return { ok: false, status: 402, error: "Out of credits" };
-    return { ok: false, status: 500, error: `image gen failed: ${t.slice(0, 200)}` };
+  if (!submit.ok) {
+    const t = await submit.text();
+    console.error("fal gpt-image-2/edit submit err", submit.status, t);
+    throw new Error(`fal gpt-image-2/edit ${submit.status}: ${t.slice(0, 300)}`);
   }
-  const data = await r.json();
-  const dataUrl = data.choices?.[0]?.message?.images?.[0]?.image_url?.url;
-  if (!dataUrl) throw new Error("no image returned");
-  return { ok: true, dataUrl };
+  const queued = await submit.json();
+  const result = await pollFal(falKey, queued.status_url, queued.response_url);
+  const url = result?.images?.[0]?.url;
+  if (!url) throw new Error("no image url returned");
+  return await urlToDataUrl(url);
 }
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
-    const { prompt, aspectRatio, quality, refImages } = await req.json();
+    const { prompt, aspectRatio, refImages } = await req.json();
     if (!prompt) {
       return new Response(JSON.stringify({ error: "Missing prompt" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
@@ -130,12 +124,9 @@ Deno.serve(async (req) => {
       return new Response(JSON.stringify({ dataUrl }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Edits / remix -> Nano Banana
-    const out = await generateWithNanoBanana(prompt, aspectRatio, quality, refImages);
-    if (!out.ok) {
-      return new Response(JSON.stringify({ error: out.error }), { status: out.status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
-    }
-    return new Response(JSON.stringify({ dataUrl: out.dataUrl }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    // Image-to-image / remix -> GPT Image 2 Edit via fal
+    const dataUrl = await editWithGptImage2Edit(prompt, aspectRatio, refImages as string[]);
+    return new Response(JSON.stringify({ dataUrl }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     console.error(e);
     return new Response(JSON.stringify({ error: (e as Error).message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
