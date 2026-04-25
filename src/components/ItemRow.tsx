@@ -92,7 +92,7 @@ export const ItemRow = ({
             onBlur={() => { if (text !== item.text) onTextChange(item, text); }}
             rows={1}
             className={cn(
-              "w-full resize-none bg-transparent outline-none text-[15px] leading-snug",
+              "w-full resize-none bg-transparent outline-none text-base md:text-[15px] leading-snug",
               item.checked && "line-through text-[hsl(var(--checked))]"
             )}
             placeholder="Item…"
