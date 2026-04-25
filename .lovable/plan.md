@@ -1,51 +1,75 @@
 ## Goal
-Make submitted actions (especially multi-image → image) feel as fast as other AI sites, without changing the dashboard, the buttons, or any user-visible options.
+On the Action Queue Dashboard, every job card (regardless of status — pending, scheduled, running, paused, completed, failed, cancelled) should show:
+- Any **media attached as a source** (e.g. ref images for image-image / remix, source video for video-video, source image for image-video, image for analyze-image).
+- Any **context** that was attached at enqueue time: linked **checklists** (by title) and attached **media** (image / video / audio thumbnails).
 
-## Root causes found
+Nothing about the existing layout, status logic, action buttons, tabs, or copy-error UI changes — we're just adding a small "Attachments" section inside each card.
 
-1. **Up to ~60s of dead time before any job starts.** `process-action-queue` only runs on a 1-minute pg_cron tick. A job submitted right after a tick waits a full minute before the model is even called.
-2. **Gallery images are needlessly round-tripped through base64.** In `process-action-queue` → `image-image`/`remix`, each gallery `refImageUrl` is fetched and converted to a `data:` URL, then `lovable-image` decodes that data URL and **re-uploads the bytes to fal.ai**. Fal accepts public URLs directly, so we're doing: download → base64-encode → send across function boundary → base64-decode → upload to fal — for every reference image. With multi-image this dominates latency.
-3. **Worker's `urlToDataUrl` is not chunked** (`String.fromCharCode(...new Uint8Array(buf))`), making large images slow and risky. The one in `lovable-image` is already chunked.
-4. **Fal polling waits a flat 2s.** Image edits often finish in ~5–15s, so avg ~1s of pure idle wait per job.
-5. **DB cancellation poll every 2s** for every running job adds load and can throttle the worker.
+## Where this data already lives
+Each row in `action_jobs` has a `payload` jsonb that already contains everything we need:
+- `payload.refImageUrls: string[]` — gallery refs for image actions
+- `payload.sourceUrl: string` — source for video actions
+- `payload.imageUrl: string` — source for analyze-image (legacy may also be data URL — we'll skip non-http URLs)
+- `payload.context.checklists: { id, title }[]`
+- `payload.context.media: { url, type: "image" | "video" | "audio", name }[]`
+- `payload.imageDataUrl` (legacy) — ignore (not a public URL, can't preview safely)
 
-## Plan (no UI/feature changes)
+The result media (for completed jobs) is already shown via the linked checklist; we are NOT touching result rendering.
 
-### 1. Fire the worker immediately on enqueue (kills the ~60s cron lag)
-- In `supabase/functions/enqueue-action/index.ts`, after a successful insert of a `pending` job, **fire-and-forget** a POST to `process-action-queue` (do not `await`; just log errors). The pg_cron tick stays as a safety net for missed/scheduled jobs.
-- Result: a submitted job starts processing within ~1 second instead of up to 60.
+## Why the dashboard currently doesn't show this
+`src/pages/ActionQueue.tsx` deliberately omits `payload` from `JOB_COLS` and from the realtime row mapping ("never select payload/result here, they can be huge"). That guardrail is correct for the giant base64 legacy payloads, but with the new Storage-URL-only enqueue path, payloads are tiny (the enqueue function already rejects payloads >200 KB). We can safely fetch a **derived attachments summary** without pulling raw blobs.
 
-### 2. Pass gallery image URLs straight through to fal (removes the biggest per-image cost)
-- Extend `lovable-image` to accept a new `refImageUrls: string[]` field in addition to existing `refImages` (data URLs). When URLs are present, pass them directly to fal's `openai/gpt-image-2/edit` `image_urls` field — no fetch, no base64, no re-upload.
-- In `process-action-queue` `image-image`/`remix` branch:
-  - Stop calling `urlToDataUrl` on `p.refImageUrls` and on `ctx.imageUrls`.
-  - Forward them to `lovable-image` as `refImageUrls` instead.
-  - Keep legacy `refImages` (data URLs) support for any old queued jobs.
-- Apply the same pattern to `text-image` (only when `ctx.imageUrls` is present).
-- Apply to `fal-video` (`image-video` / `video-video`): accept `sourceUrl` directly and pass as `image_url` / `video_url` to fal without base64. Keep `sourceDataUrl` for backward compat.
+## Plan
 
-### 3. Chunk the worker's `urlToDataUrl` (only used for the legacy/fallback paths now)
-- Replace `btoa(String.fromCharCode(...new Uint8Array(buf)))` with the same chunked loop used in `lovable-image`. Prevents stack overflow and speeds up large blobs.
+### 1. `src/pages/ActionQueue.tsx` — extend `Job` type and select
+- Add an `attachments` field on the in-memory `Job` shape:
+  ```ts
+  attachments: {
+    sources: { url: string; type: "image" | "video" }[];   // refImageUrls / sourceUrl / imageUrl
+    contextChecklists: { id: string; title: string }[];
+    contextMedia: { url: string; type: "image" | "video" | "audio"; name: string }[];
+  }
+  ```
+- Update `JOB_COLS` to also select `payload` (it's now bounded to ≤200 KB by the enqueue guardrail, and we already cap the list to 200 rows → worst-case ~40 MB but realistically a few KB per row since payloads are URLs + short prompts).
+- Add a small `deriveAttachments(payload)` helper that:
+  - Reads `payload.refImageUrls` (filter strings starting with `http`) → push as `image` sources.
+  - Reads `payload.sourceUrl` → push as `image` or `video` based on `action_type` (`image`/`video`-video → video, image-video → image).
+  - Reads `payload.imageUrl` for `analyze-image` → push as `image` source (only if it starts with `http`, skip data URLs).
+  - Reads `payload.context.checklists` and `payload.context.media` (validated arrays).
+- Use it both in the initial `fetchJobs` map and in the realtime row builder so updates keep attachments populated.
 
-### 4. Faster, smarter fal polling
-- In both `lovable-image` and `fal-video`, change the polling loop to: 1s for the first 10 polls, then 2s after that, capped at the same total wait. Image edits usually finish in the first window.
+### 2. `JobRow` rendering (same file)
+Add a new compact section below the prompt preview / scheduling line and above the failure block. Only render if there's at least one attachment.
 
-### 5. Reduce cancellation DB load
-- Increase the cancellation poll interval in `process-action-queue` from 2s to 5s. Cancellation is user-initiated and 5s feels instant; this cuts DB hits 2.5×.
+Layout:
+- Section label: small uppercase muted "Attachments"
+- **Source media** (if any): horizontal row of 56×56 rounded thumbnails.
+  - Images → `<img>` with `loading="lazy"`, object-cover.
+  - Videos → `<video>` with `muted preload="metadata"` (no controls; just a poster-style preview), with a tiny play overlay.
+  - Each thumb wrapped in `<a href=url target="_blank" rel="noreferrer">` so the user can open it full-size.
+- **Context checklists** (if any): inline list of small `<Badge variant="secondary">` chips with the checklist title, each clickable → `navigate(`/?c=${id}`)`.
+- **Context media** (if any): same 56×56 thumbnail row as sources, but for audio show a small `<Music/>` icon tile with the file name underneath (no inline player to keep cards compact); image/video render the same way as sources.
+- All thumbnail rows use `flex flex-wrap gap-1.5` so they degrade nicely on narrow screens.
 
-## Out of scope (per your request)
-- No changes to the dashboard layout, buttons, tabs, status badges, or any options.
-- No new features, no removed features.
-- No DB schema changes.
+Accessibility:
+- Each thumbnail `<a>` gets an `aria-label` like "Open attached image" / "Open source video" / "Open checklist {title}".
 
-## Expected outcome
-- Multi-image → image: typically **~30–90s faster** end-to-end (no cron wait + no base64 round-trip of N images).
-- Single image edits: **~10–60s faster** (mostly the cron-wait elimination).
-- Text-text / web-search: **up to ~60s faster** start time.
-- Video jobs: **~60s faster start** + smaller payloads to fal.
+### 3. No backend / migration changes
+- No schema change.
+- No edge function change.
+- RLS already restricts `action_jobs.select` to `auth.uid() = user_id`, so re-including `payload` in the select is safe.
 
-## Files to change
-- `supabase/functions/enqueue-action/index.ts` — fire-and-forget worker kick.
-- `supabase/functions/process-action-queue/index.ts` — pass URLs through, chunked encoder for fallback paths, slower cancel poll.
-- `supabase/functions/lovable-image/index.ts` — accept `refImageUrls`, pass directly to fal; faster early polling.
-- `supabase/functions/fal-video/index.ts` — accept `sourceUrl`, skip upload when given; faster early polling.
+### 4. Out of scope (intentionally)
+- We are NOT changing the dashboard layout, tabs, status badges, or any of the existing action buttons (Pause / Stop / Resume / Re-run / Make recurring / Open checklist / Delete / Copy error).
+- We are NOT changing how jobs are created or processed.
+- We are NOT showing the generated *result* media on the card (it already lives in the destination checklist, reachable via "Open checklist").
+
+## Files touched
+- `src/pages/ActionQueue.tsx` (only file)
+
+## Verification after implementation
+- Open Action Queue with an in-flight `image-image` or `remix` job → see the source ref images as thumbnails.
+- A job enqueued with attached context checklists shows clickable chips that navigate to those checklists.
+- A job enqueued with attached context media (image+video+audio) shows thumbnails for image/video and a labeled icon tile for audio.
+- A plain `text-text` job with no attachments shows no Attachments section (no empty header).
+- Failed jobs still show the red error block beneath the attachments row.
