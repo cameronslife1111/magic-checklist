@@ -194,6 +194,7 @@ const ActionQueue = () => {
             max_attempts: raw.max_attempts ?? 3,
             created_at: raw.created_at,
             completed_at: raw.completed_at ?? null,
+            attachments: deriveAttachments(raw.action_type, raw.payload),
           };
           setJobs((prev) => {
             if (payload.eventType === "DELETE") return prev.filter((j) => j.id !== row.id);
