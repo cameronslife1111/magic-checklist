@@ -342,7 +342,8 @@ const ChecklistPage = () => {
     } catch { return null; }
   };
 
-  const runMediaAction = async (sourceItem: ChecklistItem, action: DialogState extends { kind: "media" } ? DialogState["action"] : never, opts: GenOptions) => {
+  type MediaAction = "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "analyze-image";
+  const runMediaAction = async (sourceItem: ChecklistItem, action: MediaAction, opts: GenOptions) => {
     if (!checklist) return;
     const t = toast.loading("Working…");
     try {
