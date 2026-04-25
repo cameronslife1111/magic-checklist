@@ -91,6 +91,8 @@ const ChecklistPage = () => {
   const itemRefs = useRef<Record<string, HTMLLIElement | null>>({});
   const longPressTimerRef = useRef<number | null>(null);
   const longPressFiredRef = useRef(false);
+  const actionsLongPressTimerRef = useRef<number | null>(null);
+  const actionsLongPressFiredRef = useRef(false);
   const keepaliveRef = useRef<HTMLInputElement>(null);
   const didAutoFocusRef = useRef<string | null>(null);
   const registerRef = useCallback((id: string, el: HTMLLIElement | null) => {
@@ -789,8 +791,44 @@ const ChecklistPage = () => {
           ) : (
             <div className="flex gap-3">
               <Button
-                onClick={() => { primeSpeech(); setActionsOpen(true); }}
-                className="flex-1 h-14 rounded-2xl text-base font-semibold shadow-floating"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  actionsLongPressFiredRef.current = false;
+                  primeSpeech();
+                  if (actionsLongPressTimerRef.current) window.clearTimeout(actionsLongPressTimerRef.current);
+                  actionsLongPressTimerRef.current = window.setTimeout(() => {
+                    actionsLongPressFiredRef.current = true;
+                    if (highestUnchecked) {
+                      const text = highestUnchecked.linked_checklist_id
+                        ? (highestUnchecked.text || "Open checklist")
+                        : highestUnchecked.text;
+                      if (text) speak(text);
+                    }
+                  }, 500);
+                }}
+                onPointerUp={() => {
+                  if (actionsLongPressTimerRef.current) {
+                    window.clearTimeout(actionsLongPressTimerRef.current);
+                    actionsLongPressTimerRef.current = null;
+                  }
+                  if (!actionsLongPressFiredRef.current) {
+                    setActionsOpen(true);
+                  }
+                }}
+                onPointerLeave={() => {
+                  if (actionsLongPressTimerRef.current) {
+                    window.clearTimeout(actionsLongPressTimerRef.current);
+                    actionsLongPressTimerRef.current = null;
+                  }
+                }}
+                onPointerCancel={() => {
+                  if (actionsLongPressTimerRef.current) {
+                    window.clearTimeout(actionsLongPressTimerRef.current);
+                    actionsLongPressTimerRef.current = null;
+                  }
+                }}
+                onContextMenu={(e) => e.preventDefault()}
+                className="flex-1 h-14 rounded-2xl text-base font-semibold shadow-floating select-none touch-none"
               >
                 Actions
               </Button>
