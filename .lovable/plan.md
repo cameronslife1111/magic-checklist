@@ -1,59 +1,41 @@
-## Goal
-Reorganize the Actions pop-up (`src/components/ActionsSheet.tsx`) so frequently used actions sit on top and rarely used / destructive ones move to the bottom. Also visually distinguish AI-powered actions by coloring their icon + label blue.
+# Make Web Speech reliable (recover from stuck state)
 
-## 1. New button order
+## Problem
 
-I'll reorder the `STATIC_ITEMS` array. The mute toggle stays pinned at the very top and the theme + sign-out items stay pinned at the very bottom (these are dynamic and already handled separately).
+`window.speechSynthesis` periodically gets stuck (especially on Chrome and Safari) and stops speaking until the user refreshes the page. The current `src/lib/speech.ts` does not protect against the well-known browser bugs that cause this:
 
-**Top (most-used / quick utilities):**
-1. Copy sentence
-2. Copy full checklist
-3. Rearrange checkboxes
-4. Insert checklist link
-5. Add new checkbox
-6. Duplicate checkbox
-7. Split current checkbox
-8. Send to checklist
-9. Action Queue Dashboard
-10. Change checklist background
+1. **Chrome's ~15-second stall bug** — utterances longer than ~15 seconds, or rapid `cancel()` → `speak()` sequences, leave the engine in a `speaking + paused` zombie state. Subsequent `speak()` calls queue forever and never play.
+2. **`cancel()` immediately followed by `speak()`** in the same tick (which `speak()` does today) is a known trigger of the zombie state on Safari/iOS and some Chrome versions.
+3. **Tab visibility changes** — backgrounding the tab can leave synthesis paused on return.
+4. **No recovery path** — once stuck, nothing in the app nudges the engine back; only a full page refresh works.
+5. **`primeSpeech` is one-shot** — even after `setMuted(true)` then `setMuted(false)`, or after a stall, the engine is never re-primed.
 
-**Middle (AI actions — these get the blue treatment):**
-11. Text to text
-12. Text to image
-13. Image to image
-14. Remix multiple images
-15. Image to video
-16. Video to video
-17. Analyze image
-18. Text to web search
+## Fix — rewrite `src/lib/speech.ts` with proven workarounds
 
-**Bottom (rare / destructive):**
-19. Edit checklist title
-20. New checklist
-21. Duplicate checklist
-22. Delete checklist
+All changes are localized to `src/lib/speech.ts`. The exported API (`speak`, `stopSpeech`, `primeSpeech`, `isMuted`, `setMuted`) stays identical — no callers need to change.
 
-Then the existing dynamic items append after `STATIC_ITEMS`: theme toggle, sign out.
+### Changes
 
-## 2. Blue styling for AI actions
+1. **Defer `speak()` after `cancel()`** — when there is something currently speaking/queued, call `cancel()` and schedule the new `speak()` via `setTimeout(..., 50)` instead of running both synchronously. This avoids the Safari/Chrome zombie state. When idle, speak immediately so user-gesture context is preserved.
 
-Define a set of AI keys:
-```ts
-const AI_KEYS = new Set<ActionKey>([
-  "text-text", "text-image", "image-image", "remix",
-  "image-video", "video-video", "analyze-image", "web-search",
-]);
-```
+2. **Keep-alive heartbeat while speaking** — start a `setInterval` (every 10 s) that runs `speechSynthesis.pause(); speechSynthesis.resume();` whenever an utterance is active. This is the standard workaround for the Chrome 15-second stall. Stop the interval on `utterance.onend` / `onerror` and when nothing is queued.
 
-In the render loop, when `AI_KEYS.has(it.key)`:
-- Apply `text-blue-500` to the `<Button>` (overriding default foreground) and a hover variant like `hover:text-blue-500` so it stays blue on hover.
-- Apply `text-blue-500` to the `<Icon>` (overriding the current `text-muted-foreground`).
+3. **Auto-recover stuck engine before each `speak()`** — at the top of `speak()`, detect the zombie state (`speechSynthesis.speaking && speechSynthesis.paused`) and call `resume()` then `cancel()` to reset, before queueing the new utterance.
 
-Non-AI items keep their current styling (icon = `text-muted-foreground`, label = default).
+4. **Visibility handler** — add a single `document.visibilitychange` listener that, on `visible`, calls `resume()` if synthesis is paused-but-speaking. Registered once at module load.
 
-Using `text-blue-500` (Tailwind built-in) keeps it consistent in both light and dark modes without needing new design tokens. No other files change.
+5. **Re-prime on demand** — change `primeSpeech` so it can re-prime after `setMuted(true) → setMuted(false)`, and after a recovered stall (clear `primed` when we detect/clear a zombie state).
 
-## 3. Files touched
-- `src/components/ActionsSheet.tsx` — reorder `STATIC_ITEMS`, add `AI_KEYS` set, conditionally apply blue classes in the map.
+6. **`utterance.onerror` handler** — log to console and clear the heartbeat so a single failed utterance doesn't poison subsequent ones.
 
-No backend, routing, or behavior changes — purely presentational.
+7. **Chunk long text (safety net)** — split text >180 chars on sentence boundaries and queue sequential utterances. Keeps each utterance well under the 15-second threshold so the stall rarely triggers in the first place.
+
+### Files touched
+- `src/lib/speech.ts` (rewrite, same exported API)
+
+### Files NOT touched
+- `src/pages/Checklist.tsx`, `src/components/ItemRow.tsx`, `src/pages/ActionQueue.tsx` — they keep calling `speak`/`stopSpeech`/`primeSpeech` exactly as today.
+
+## Expected result
+
+Speech keeps working indefinitely without page refreshes — through long sessions, long items, tab switches, and rapid checkbox toggling. If the engine ever does enter the zombie state, the next `speak()` call automatically recovers it instead of silently failing.
