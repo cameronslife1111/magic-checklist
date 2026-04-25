@@ -84,6 +84,7 @@ const ChecklistPage = () => {
   }, [theme]);
 
   const itemRefs = useRef<Record<string, HTMLLIElement | null>>({});
+  const didAutoFocusRef = useRef<string | null>(null);
   const registerRef = useCallback((id: string, el: HTMLLIElement | null) => {
     itemRefs.current[id] = el;
   }, []);
@@ -115,6 +116,8 @@ const ChecklistPage = () => {
   }, [user]);
 
   const openChecklist = async (id: string) => {
+    didAutoFocusRef.current = null;
+    stopSpeech();
     const { data: cl } = await supabase.from("checklists").select("*").eq("id", id).single();
     const { data: its } = await supabase
       .from("checklist_items").select("*").eq("checklist_id", id).order("position", { ascending: true });
@@ -123,6 +126,22 @@ const ChecklistPage = () => {
   };
 
   const highestUnchecked = useMemo(() => items.find((i) => !i.checked) ?? null, [items]);
+
+  // Auto-scroll & speak the highest unchecked item once per checklist load
+  useEffect(() => {
+    if (!checklist || !highestUnchecked) return;
+    if (didAutoFocusRef.current === checklist.id) return;
+    didAutoFocusRef.current = checklist.id;
+    const id = highestUnchecked.id;
+    const text = highestUnchecked.linked_checklist_id
+      ? (highestUnchecked.text || "Open checklist")
+      : highestUnchecked.text;
+    requestAnimationFrame(() => {
+      const el = itemRefs.current[id];
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (text) speak(text);
+    });
+  }, [checklist, highestUnchecked]);
 
   const scrollItemToCenter = (id: string) => {
     requestAnimationFrame(() => {
