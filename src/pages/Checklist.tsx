@@ -489,8 +489,25 @@ const ChecklistPage = () => {
       </header>
 
       <main className="flex-1 px-3 pt-1 pb-actions">
+        {reorderMode && (
+          <p className="text-center text-muted-foreground text-xs pb-2">Drag the handle to rearrange. Tap Done when finished.</p>
+        )}
         {items.length === 0 ? (
           <p className="text-center text-muted-foreground mt-12 text-sm">This checklist is empty.</p>
+        ) : reorderMode ? (
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
+              <ul className="flex flex-col gap-2 max-w-2xl mx-auto w-full">
+                {items.map((it) => (
+                  <SortableItemRow
+                    key={it.id}
+                    item={it}
+                    isActive={highestUnchecked?.id === it.id}
+                  />
+                ))}
+              </ul>
+            </SortableContext>
+          </DndContext>
         ) : (
           <ul className="flex flex-col gap-2 max-w-2xl mx-auto w-full">
             {items.map((it) => (
@@ -516,12 +533,21 @@ const ChecklistPage = () => {
 
       <div className="fixed bottom-0 left-0 right-0 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 pointer-events-none">
         <div className="max-w-2xl mx-auto pointer-events-auto">
-          <Button
-            onClick={() => { primeSpeech(); setActionsOpen(true); }}
-            className="w-full h-14 rounded-2xl text-base font-semibold shadow-floating"
-          >
-            Actions
-          </Button>
+          {reorderMode ? (
+            <Button
+              onClick={() => setReorderMode(false)}
+              className="w-full h-14 rounded-2xl text-base font-semibold shadow-floating"
+            >
+              Done
+            </Button>
+          ) : (
+            <Button
+              onClick={() => { primeSpeech(); setActionsOpen(true); }}
+              className="w-full h-14 rounded-2xl text-base font-semibold shadow-floating"
+            >
+              Actions
+            </Button>
+          )}
         </div>
       </div>
 
