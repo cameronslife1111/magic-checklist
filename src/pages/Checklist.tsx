@@ -169,6 +169,14 @@ const ChecklistPage = () => {
     });
   };
 
+  const focusAndSpeakHighestUnchecked = (list: ChecklistItem[]) => {
+    const next = list.find((i) => !i.checked);
+    if (!next) { stopSpeech(); return; }
+    scrollItemToCenter(next.id);
+    const text = next.linked_checklist_id ? (next.text || "Open checklist") : next.text;
+    if (text) speak(text);
+  };
+
   const handleToggle = async (item: ChecklistItem, next: boolean) => {
     primeSpeech();
     const targetIdx = items.findIndex((i) => i.id === item.id);
