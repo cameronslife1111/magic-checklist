@@ -189,8 +189,14 @@ async function urlToDataUrl(url: string): Promise<string> {
   if (!r.ok) throw new Error(`fetch context url failed: ${r.status}`);
   const blob = await r.blob();
   const buf = await blob.arrayBuffer();
-  const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
-  return `data:${blob.type || "application/octet-stream"};base64,${b64}`;
+  // Chunked base64 to avoid stack overflow on large images.
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return `data:${blob.type || "application/octet-stream"};base64,${btoa(binary)}`;
 }
 
 async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ result: any }> {
