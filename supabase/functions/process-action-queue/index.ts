@@ -184,9 +184,6 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
-  // Atomically claim a batch of due jobs
-  const { data: claimed, error: claimErr } = await supabase.rpc("exec_sql", {}).then(() => null).catch(() => null) ?? { data: null, error: null };
-  // Fallback: do a regular update returning rows
   const nowIso = new Date().toISOString();
   const { data: dueJobs, error: dueErr } = await supabase
     .from("action_jobs")
