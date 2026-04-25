@@ -46,14 +46,15 @@ async function pollFal(falKey: string, statusUrl: string, resultUrl: string): Pr
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
-    const { prompt, sourceDataUrl, sourceKind, aspectRatio } = await req.json();
-    if (!prompt || !sourceDataUrl || !sourceKind) {
+    const { prompt, sourceDataUrl, sourceUrl, sourceKind, aspectRatio } = await req.json();
+    if (!prompt || (!sourceDataUrl && !sourceUrl) || !sourceKind) {
       return new Response(JSON.stringify({ error: "Missing inputs" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
     const falKey = Deno.env.get("FAL_KEY");
     if (!falKey) throw new Error("FAL_KEY not configured");
 
-    const hostedUrl = await uploadToFal(falKey, sourceDataUrl);
+    // Fast path: if a public URL is provided, hand it directly to fal — no download/base64/re-upload.
+    const hostedUrl = sourceUrl ?? await uploadToFal(falKey, sourceDataUrl);
 
     // Pick a model for each mode.
     const model = sourceKind === "video"
