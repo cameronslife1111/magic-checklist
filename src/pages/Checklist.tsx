@@ -267,6 +267,9 @@ const ChecklistPage = () => {
       case "bg":
         setDialog({ kind: "bg" });
         break;
+      case "rearrange":
+        setReorderMode(true);
+        break;
       case "theme":
         setTheme((t) => (t === "dark" ? "light" : "dark"));
         break;
