@@ -9,6 +9,10 @@ import { ActionsSheet, ActionKey } from "@/components/ActionsSheet";
 import { Button } from "@/components/ui/button";
 import { Check } from "lucide-react";
 import { TextPromptDialog } from "@/components/TextPromptDialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { ChecklistPickerDialog } from "@/components/ChecklistPickerDialog";
 import { SendToChecklistDialog, SendPosition } from "@/components/SendToChecklistDialog";
 import { BackgroundPickerDialog } from "@/components/BackgroundPickerDialog";
@@ -38,6 +42,8 @@ type DialogState =
   | { kind: "insert-link" }
   | { kind: "send-to" }
   | { kind: "bg" }
+  | { kind: "duplicate-title" }
+  | { kind: "delete-checklist" }
   | { kind: "media"; action: "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "analyze-image"; sourceItem: ChecklistItem };
 
 const ChecklistPage = () => {
@@ -386,7 +392,10 @@ const ChecklistPage = () => {
         setDialog({ kind: "new" });
         break;
       case "duplicate":
-        await duplicateCurrent();
+        setDialog({ kind: "duplicate-title" });
+        break;
+      case "delete-checklist":
+        setDialog({ kind: "delete-checklist" });
         break;
       case "edit-title":
         setDialog({ kind: "edit-title" });
@@ -498,12 +507,12 @@ const ChecklistPage = () => {
     toast.success("Checkbox duplicated.");
   };
 
-  const duplicateCurrent = async () => {
+  const duplicateCurrent = async (newTitle: string) => {
     if (!checklist || !user) return;
-    const newTitle = `${checklist.title} Copy`;
+    const title = newTitle.trim() || `${checklist.title} Copy`;
     const { data: created, error } = await supabase
       .from("checklists")
-      .insert({ user_id: user.id, title: newTitle, background_color: checklist.background_color })
+      .insert({ user_id: user.id, title, background_color: checklist.background_color })
       .select().single();
     if (error || !created) {
       toast.error("Could not duplicate checklist. Try again.");
@@ -523,6 +532,40 @@ const ChecklistPage = () => {
     if (inserts.length) await supabase.from("checklist_items").insert(inserts);
     await openChecklist(created.id);
     toast.success("Checklist duplicated.");
+  };
+
+  const deleteCurrentChecklist = async () => {
+    if (!checklist || !user) return;
+    const deletedId = checklist.id;
+    const { error: itemsErr } = await supabase
+      .from("checklist_items").delete().eq("checklist_id", deletedId);
+    if (itemsErr) { toast.error("Could not delete checklist. Try again."); return; }
+    const { error: clErr } = await supabase
+      .from("checklists").delete().eq("id", deletedId);
+    if (clErr) { toast.error("Could not delete checklist. Try again."); return; }
+
+    try { localStorage.removeItem("mc-last-checklist"); } catch {}
+    setDialog({ kind: "none" });
+    toast.success("Checklist deleted.");
+
+    // Open next available checklist, or bootstrap a fresh one.
+    const { data: next } = await supabase
+      .from("checklists").select("*")
+      .order("updated_at", { ascending: false }).limit(1);
+    if (next && next.length > 0) {
+      await openChecklist((next[0] as Checklist).id);
+      return;
+    }
+    const { data: created } = await supabase
+      .from("checklists").insert({ user_id: user.id, title: "My first checklist" })
+      .select().single();
+    if (created) {
+      await supabase.from("checklist_items").insert([
+        { checklist_id: created.id, user_id: user.id, text: "Welcome to Magic Checklist.", position: 1024 },
+        { checklist_id: created.id, user_id: user.id, text: "Tap Actions to do more.", position: 2048 },
+      ]);
+      await openChecklist((created as Checklist).id);
+    }
   };
 
   const splitCurrent = async () => {
@@ -956,6 +999,39 @@ const ChecklistPage = () => {
           setDialog({ kind: "none" });
         }}
       />
+
+      <TextPromptDialog
+        open={dialog.kind === "duplicate-title"}
+        title="Duplicate checklist"
+        label="New checklist title"
+        initial={`${checklist.title} Copy`}
+        saveLabel="Duplicate"
+        onClose={() => setDialog({ kind: "none" })}
+        onSave={async (title) => {
+          await duplicateCurrent(title);
+          setDialog({ kind: "none" });
+        }}
+      />
+
+      <AlertDialog open={dialog.kind === "delete-checklist"} onOpenChange={(o) => { if (!o) setDialog({ kind: "none" }); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this checklist?</AlertDialogTitle>
+            <AlertDialogDescription>
+              "{checklist.title}" and all its checkboxes will be permanently deleted. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); deleteCurrentChecklist(); }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <ChecklistPickerDialog
         open={dialog.kind === "insert-link"}

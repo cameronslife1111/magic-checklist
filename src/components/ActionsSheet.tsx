@@ -3,12 +3,12 @@ import { Button } from "@/components/ui/button";
 import {
   Plus, FilePlus, Copy, CopyPlus, Pencil, Scissors, Type, Image as ImageIcon, Images, Wand2,
   Film, Video, Link2, Eye, Search, Palette, LogOut, Moon, Sun, ArrowUpDown,
-  ClipboardCopy, ClipboardList, Send, Volume2, VolumeX, ListChecks,
+  ClipboardCopy, ClipboardList, Send, Volume2, VolumeX, ListChecks, Trash2,
 } from "lucide-react";
 
 export type ActionKey =
   | "mute" | "queue"
-  | "add" | "duplicate-item" | "new" | "duplicate" | "edit-title" | "split"
+  | "add" | "duplicate-item" | "new" | "duplicate" | "delete-checklist" | "edit-title" | "split"
   | "text-text" | "text-image" | "image-image" | "remix" | "image-video" | "video-video"
   | "insert-link" | "analyze-image" | "web-search" | "bg" | "rearrange"
   | "copy-sentence" | "copy-checklist" | "send-to" | "theme" | "sign-out";
@@ -20,6 +20,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "queue",          label: "Action Queue Dashboard",  icon: ListChecks },
   { key: "new",            label: "New checklist",           icon: FilePlus },
   { key: "duplicate",      label: "Duplicate checklist",     icon: Copy },
+  { key: "delete-checklist", label: "Delete checklist",      icon: Trash2 },
   { key: "edit-title",     label: "Edit checklist title",    icon: Pencil },
   { key: "split",          label: "Split current checkbox",  icon: Scissors },
   { key: "text-text",      label: "Text to text",            icon: Type },
