@@ -967,6 +967,13 @@ const ChecklistPage = () => {
         type={viewer?.type ?? null}
         onClose={() => setViewer(null)}
       />
+
+      <ScheduleActionDialog
+        open={!!pendingEnqueue}
+        actionLabel={pendingEnqueue?.actionLabel ?? ""}
+        onClose={() => setPendingEnqueue(null)}
+        onPick={submitEnqueue}
+      />
     </div>
   );
 };
