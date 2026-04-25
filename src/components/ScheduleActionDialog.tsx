@@ -5,6 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Zap, Clock, Repeat } from "lucide-react";
+import { ContextAttacher, AttachedContext } from "@/components/ContextAttacher";
 
 export type SchedulePick =
   | { mode: "now" }
@@ -16,6 +17,10 @@ type Props = {
   actionLabel: string;
   onClose: () => void;
   onPick: (p: SchedulePick) => void;
+  userId?: string;
+  excludeChecklistId?: string;
+  context?: AttachedContext;
+  onContextChange?: (c: AttachedContext) => void;
 };
 
 const defaultLocal = () => {
