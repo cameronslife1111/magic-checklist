@@ -16,7 +16,7 @@ Deno.serve(async (req) => {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "gpt-4o-mini",
+        model: "gpt-5.5-2026-04-23",
         messages: [
           { role: "system", content: "You are a concise assistant. Respond in 1-3 short sentences suitable for a checklist item." },
           { role: "user", content: prompt },
