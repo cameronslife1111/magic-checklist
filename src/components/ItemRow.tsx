@@ -3,6 +3,7 @@ import { ChecklistItem } from "@/lib/types";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { ExternalLink, Link2, X } from "lucide-react";
+import { stopSpeech } from "@/lib/speech";
 
 type Props = {
   item: ChecklistItem;
@@ -89,6 +90,7 @@ export const ItemRow = ({
             ref={taRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
+            onFocus={() => stopSpeech()}
             onBlur={() => { if (text !== item.text) onTextChange(item, text); }}
             rows={1}
             className={cn(

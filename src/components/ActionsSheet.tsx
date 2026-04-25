@@ -3,10 +3,11 @@ import { Button } from "@/components/ui/button";
 import {
   Plus, FilePlus, Copy, Pencil, Scissors, Type, Image as ImageIcon, Images, Wand2,
   Film, Video, Link2, Eye, Search, Palette, LogOut, Moon, Sun, ArrowUpDown,
-  ClipboardCopy, ClipboardList, Send,
+  ClipboardCopy, ClipboardList, Send, Volume2, VolumeX,
 } from "lucide-react";
 
 export type ActionKey =
+  | "mute"
   | "add" | "new" | "duplicate" | "edit-title" | "split"
   | "text-text" | "text-image" | "image-image" | "remix" | "image-video" | "video-video"
   | "insert-link" | "analyze-image" | "web-search" | "bg" | "rearrange"
@@ -39,14 +40,18 @@ type Props = {
   onOpenChange: (o: boolean) => void;
   onPick: (k: ActionKey) => void;
   currentTheme: "light" | "dark";
+  muted: boolean;
 };
 
-export const ActionsSheet = ({ open, onOpenChange, onPick, currentTheme }: Props) => {
+export const ActionsSheet = ({ open, onOpenChange, onPick, currentTheme, muted }: Props) => {
+  const muteItem = muted
+    ? { key: "mute" as const, label: "Unmute speech", icon: Volume2 }
+    : { key: "mute" as const, label: "Mute speech", icon: VolumeX };
   const themeItem = currentTheme === "dark"
     ? { key: "theme" as const, label: "Switch to light mode", icon: Sun }
     : { key: "theme" as const, label: "Switch to dark mode", icon: Moon };
   const signOutItem = { key: "sign-out" as const, label: "Sign out", icon: LogOut };
-  const items = [...STATIC_ITEMS, themeItem, signOutItem];
+  const items = [muteItem, ...STATIC_ITEMS, themeItem, signOutItem];
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
