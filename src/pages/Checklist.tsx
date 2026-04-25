@@ -760,7 +760,6 @@ const ChecklistPage = () => {
         type="text"
         aria-hidden="true"
         tabIndex={-1}
-        readOnly
         className="fixed bottom-0 left-0 w-px h-px opacity-0 pointer-events-none"
         style={{ fontSize: "16px" }}
       />
