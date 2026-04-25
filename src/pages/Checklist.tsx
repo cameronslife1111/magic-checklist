@@ -555,6 +555,60 @@ const ChecklistPage = () => {
     }
   };
 
+  const handleSendTo = async (targetId: string, _title: string, where: SendPosition) => {
+    if (!user) return;
+    const src = highestUnchecked;
+    if (!src) {
+      toast.error("No unchecked checkbox found.");
+      setDialog({ kind: "none" });
+      return;
+    }
+    try {
+      const { data: targetItems, error: fetchErr } = await supabase
+        .from("checklist_items")
+        .select("id,position,checked")
+        .eq("checklist_id", targetId)
+        .order("position", { ascending: true });
+      if (fetchErr) throw fetchErr;
+      const list = (targetItems ?? []) as { id: string; position: number; checked: boolean }[];
+
+      let position: number;
+      if (list.length === 0) {
+        position = POS_STEP;
+      } else if (where === "top") {
+        position = list[0].position - POS_STEP;
+      } else if (where === "bottom") {
+        position = list[list.length - 1].position + POS_STEP;
+      } else {
+        const idx = list.findIndex((i) => !i.checked);
+        if (idx === -1) {
+          position = list[list.length - 1].position + POS_STEP;
+        } else {
+          const cur = list[idx];
+          const next = list[idx + 1];
+          position = next ? (cur.position + next.position) / 2 : cur.position + POS_STEP;
+        }
+      }
+
+      const { error: insErr } = await supabase.from("checklist_items").insert({
+        checklist_id: targetId,
+        user_id: user.id,
+        text: src.text ?? "",
+        position,
+        external_link: src.external_link ?? null,
+        linked_checklist_id: src.linked_checklist_id ?? null,
+        media_url: src.media_url ?? null,
+        media_type: src.media_type ?? null,
+      });
+      if (insErr) throw insErr;
+      toast.success("Sent to checklist.");
+    } catch {
+      toast.error("Could not send. Try again.");
+    } finally {
+      setDialog({ kind: "none" });
+    }
+  };
+
   if (loading || !checklist) {
     return <div className="min-h-screen flex items-center justify-center text-muted-foreground">Loading…</div>;
   }
