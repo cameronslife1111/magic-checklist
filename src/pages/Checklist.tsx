@@ -36,6 +36,17 @@ const ChecklistPage = () => {
   const [dialog, setDialog] = useState<DialogState>({ kind: "none" });
   const [viewer, setViewer] = useState<{ url: string; type: string } | null>(null);
   const [focusItemId, setFocusItemId] = useState<string | null>(null);
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    if (typeof window === "undefined") return "light";
+    return (localStorage.getItem("mc-theme") as "light" | "dark") ?? "light";
+  });
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === "dark") root.classList.add("dark");
+    else root.classList.remove("dark");
+    localStorage.setItem("mc-theme", theme);
+  }, [theme]);
 
   const itemRefs = useRef<Record<string, HTMLLIElement | null>>({});
   const registerRef = useCallback((id: string, el: HTMLLIElement | null) => {
