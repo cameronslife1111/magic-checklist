@@ -23,6 +23,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   // Top: moved-up quick actions (right under Mute)
   { key: "split",            label: "Split current checkbox",   icon: Scissors },
   { key: "send-to",          label: "Send to checklist",        icon: Send },
+  { key: "send-to-blank",    label: "Send to blank checklist",  icon: FilePlus2 },
   { key: "queue",            label: "Action Queue Dashboard",   icon: ListChecks },
   { key: "rearrange",        label: "Rearrange checkboxes",     icon: ArrowUpDown },
 
