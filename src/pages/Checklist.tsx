@@ -116,6 +116,8 @@ const ChecklistPage = () => {
   }, [user]);
 
   const openChecklist = async (id: string) => {
+    didAutoFocusRef.current = null;
+    stopSpeech();
     const { data: cl } = await supabase.from("checklists").select("*").eq("id", id).single();
     const { data: its } = await supabase
       .from("checklist_items").select("*").eq("checklist_id", id).order("position", { ascending: true });
