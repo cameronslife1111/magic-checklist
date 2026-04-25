@@ -732,7 +732,7 @@ const ChecklistPage = () => {
                   }
                 }}
                 onContextMenu={(e) => e.preventDefault()}
-                className="h-14 w-14 rounded-2xl shadow-floating select-none touch-none"
+                className="flex-1 h-14 rounded-2xl shadow-floating select-none touch-none"
               >
                 <Check className="h-6 w-6" />
               </Button>
