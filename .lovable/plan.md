@@ -1,54 +1,51 @@
-## Add "Send to Blank Checklist" action
+## Goal
+Make submitted actions (especially multi-image → image) feel as fast as other AI sites, without changing the dashboard, the buttons, or any user-visible options.
 
-A new entry in the Actions sheet that takes the current yellow-highlighted (highest unchecked) item — text, image, video, or audio — prompts the user for a title for a brand-new checklist, creates that checklist, moves the item into it as the sole entry, and opens it.
+## Root causes found
 
-### 1. `src/components/ActionsSheet.tsx`
-- Extend the `ActionKey` union with `"send-to-blank"`.
-- Add a new entry to `STATIC_ITEMS` placed right after the existing `"send-to"` row:
-  - key: `"send-to-blank"`, label: `"Send to blank checklist"`, icon: `FilePlus2` (import from lucide-react; visually distinct from the existing "New checklist" `FilePlus`).
+1. **Up to ~60s of dead time before any job starts.** `process-action-queue` only runs on a 1-minute pg_cron tick. A job submitted right after a tick waits a full minute before the model is even called.
+2. **Gallery images are needlessly round-tripped through base64.** In `process-action-queue` → `image-image`/`remix`, each gallery `refImageUrl` is fetched and converted to a `data:` URL, then `lovable-image` decodes that data URL and **re-uploads the bytes to fal.ai**. Fal accepts public URLs directly, so we're doing: download → base64-encode → send across function boundary → base64-decode → upload to fal — for every reference image. With multi-image this dominates latency.
+3. **Worker's `urlToDataUrl` is not chunked** (`String.fromCharCode(...new Uint8Array(buf))`), making large images slow and risky. The one in `lovable-image` is already chunked.
+4. **Fal polling waits a flat 2s.** Image edits often finish in ~5–15s, so avg ~1s of pure idle wait per job.
+5. **DB cancellation poll every 2s** for every running job adds load and can throttle the worker.
 
-### 2. `src/pages/Checklist.tsx`
-**Dialog state**: extend the `DialogState` union with `{ kind: "send-to-blank" }`.
+## Plan (no UI/feature changes)
 
-**Action handler**: in the `onPick` switch, add a `"send-to-blank"` case that:
-- Bails with a toast if `highestUnchecked` is missing.
-- Otherwise sets `setDialog({ kind: "send-to-blank" })`.
+### 1. Fire the worker immediately on enqueue (kills the ~60s cron lag)
+- In `supabase/functions/enqueue-action/index.ts`, after a successful insert of a `pending` job, **fire-and-forget** a POST to `process-action-queue` (do not `await`; just log errors). The pg_cron tick stays as a safety net for missed/scheduled jobs.
+- Result: a submitted job starts processing within ~1 second instead of up to 60.
 
-**Dialog rendering**: reuse the existing `TextPromptDialog` component:
-```tsx
-<TextPromptDialog
-  open={dialog.kind === "send-to-blank"}
-  title="Send to new checklist"
-  label="Title for the new checklist"
-  initial={highestUnchecked?.text?.slice(0, 80) ?? ""}
-  saveLabel="Create & send"
-  onClose={() => setDialog({ kind: "none" })}
-  onSave={handleSendToBlank}
-/>
-```
-Pre-filling with the item's text (truncated) gives the user a sensible starting point they can edit or clear; matches the pattern already used by `edit-title` / `duplicate-title` dialogs.
+### 2. Pass gallery image URLs straight through to fal (removes the biggest per-image cost)
+- Extend `lovable-image` to accept a new `refImageUrls: string[]` field in addition to existing `refImages` (data URLs). When URLs are present, pass them directly to fal's `openai/gpt-image-2/edit` `image_urls` field — no fetch, no base64, no re-upload.
+- In `process-action-queue` `image-image`/`remix` branch:
+  - Stop calling `urlToDataUrl` on `p.refImageUrls` and on `ctx.imageUrls`.
+  - Forward them to `lovable-image` as `refImageUrls` instead.
+  - Keep legacy `refImages` (data URLs) support for any old queued jobs.
+- Apply the same pattern to `text-image` (only when `ctx.imageUrls` is present).
+- Apply to `fal-video` (`image-video` / `video-video`): accept `sourceUrl` directly and pass as `image_url` / `video_url` to fal without base64. Keep `sourceDataUrl` for backward compat.
 
-**`handleSendToBlank(title: string)`** — new async function modeled on `duplicateCurrent` + `handleSendTo`:
-1. Guard on `user`, `checklist`, and `highestUnchecked`. Capture `src = highestUnchecked`.
-2. Insert a new row into `checklists` with `{ user_id, title: title.trim() || (src.text?.slice(0,80) || "Untitled"), background_color: checklist.background_color }`. On error → toast and return.
-3. Insert a single row into `checklist_items` for the new checklist using all media-bearing fields from `src`:
-   ```
-   { checklist_id: created.id, user_id, text: src.text ?? "",
-     position: POS_STEP,
-     external_link: src.external_link ?? null,
-     linked_checklist_id: src.linked_checklist_id ?? null,
-     media_url: src.media_url ?? null,
-     media_type: src.media_type ?? null,
-     checked: false }
-   ```
-   This carries text **and** image/video/audio (which already live as `media_url` + `media_type`) — same fields `handleSendTo` copies.
-4. Delete the original `src` row from the current checklist (`supabase.from("checklist_items").delete().eq("id", src.id)`), then update local `items` state via `setItems(prev => { const next = prev.filter(i => i.id !== src.id); focusAndSpeakHighestUnchecked(next); return next; })` — mirrors `handleSendTo`.
-5. `await openChecklist(created.id)` so the user lands on the new single-item checklist.
-6. `toast.success("Sent to new checklist.")`.
-7. Always `setDialog({ kind: "none" })` in a `finally`.
+### 3. Chunk the worker's `urlToDataUrl` (only used for the legacy/fallback paths now)
+- Replace `btoa(String.fromCharCode(...new Uint8Array(buf)))` with the same chunked loop used in `lovable-image`. Prevents stack overflow and speeds up large blobs.
 
-### Out of scope
-- No changes to `SendToChecklistDialog` (existing "Send to checklist" still targets existing lists).
-- No DB migrations — schema already supports everything.
-- No re-ordering of the Actions list beyond adding the new row beside `"send-to"`.
-- No changes to bottom nav buttons.
+### 4. Faster, smarter fal polling
+- In both `lovable-image` and `fal-video`, change the polling loop to: 1s for the first 10 polls, then 2s after that, capped at the same total wait. Image edits usually finish in the first window.
+
+### 5. Reduce cancellation DB load
+- Increase the cancellation poll interval in `process-action-queue` from 2s to 5s. Cancellation is user-initiated and 5s feels instant; this cuts DB hits 2.5×.
+
+## Out of scope (per your request)
+- No changes to the dashboard layout, buttons, tabs, status badges, or any options.
+- No new features, no removed features.
+- No DB schema changes.
+
+## Expected outcome
+- Multi-image → image: typically **~30–90s faster** end-to-end (no cron wait + no base64 round-trip of N images).
+- Single image edits: **~10–60s faster** (mostly the cron-wait elimination).
+- Text-text / web-search: **up to ~60s faster** start time.
+- Video jobs: **~60s faster start** + smaller payloads to fal.
+
+## Files to change
+- `supabase/functions/enqueue-action/index.ts` — fire-and-forget worker kick.
+- `supabase/functions/process-action-queue/index.ts` — pass URLs through, chunked encoder for fallback paths, slower cancel poll.
+- `supabase/functions/lovable-image/index.ts` — accept `refImageUrls`, pass directly to fal; faster early polling.
+- `supabase/functions/fal-video/index.ts` — accept `sourceUrl`, skip upload when given; faster early polling.

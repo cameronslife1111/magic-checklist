@@ -31,8 +31,9 @@ async function urlToDataUrl(url: string): Promise<string> {
 }
 
 async function pollFal(falKey: string, statusUrl: string, resultUrl: string): Promise<any> {
-  for (let i = 0; i < 90; i++) {
-    await new Promise((r) => setTimeout(r, 2000));
+  for (let i = 0; i < 120; i++) {
+    // Faster polling early (1s for first 10 polls), then 2s. Most image edits finish within 5-15s.
+    await new Promise((r) => setTimeout(r, i < 10 ? 1000 : 2000));
     const s = await fetch(statusUrl, { headers: { Authorization: `Key ${falKey}` } });
     if (!s.ok) continue;
     const j = await s.json();
@@ -111,21 +112,24 @@ async function editWithGptImage2Edit(
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
-    const { prompt, aspectRatio, refImages } = await req.json();
+    const { prompt, aspectRatio, refImages, refImageUrls } = await req.json();
     if (!prompt) {
       return new Response(JSON.stringify({ error: "Missing prompt" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    const hasRefs = Array.isArray(refImages) && refImages.length > 0;
+    // Prefer public URLs (fast path: pass straight to fal, no fetch/base64/re-upload).
+    const urlRefs: string[] = Array.isArray(refImageUrls) ? refImageUrls.filter((u) => typeof u === "string") : [];
+    const dataUrlRefs: string[] = Array.isArray(refImages) ? refImages.filter((u) => typeof u === "string") : [];
+    const allRefs = [...urlRefs, ...dataUrlRefs].slice(0, 16);
 
-    if (!hasRefs) {
+    if (allRefs.length === 0) {
       // Text-to-image -> GPT Image 2 via fal
       const dataUrl = await generateWithGptImage2(prompt, aspectRatio);
       return new Response(JSON.stringify({ dataUrl }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Image-to-image / remix -> GPT Image 2 Edit via fal
-    const dataUrl = await editWithGptImage2Edit(prompt, aspectRatio, refImages as string[]);
+    // Image-to-image / remix -> GPT Image 2 Edit via fal (URLs go directly, data URLs fal also accepts).
+    const dataUrl = await editWithGptImage2Edit(prompt, aspectRatio, allRefs);
     return new Response(JSON.stringify({ dataUrl }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     console.error(e);

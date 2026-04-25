@@ -99,6 +99,23 @@ Deno.serve(async (req) => {
       .single();
 
     if (error) throw error;
+
+    // Fire-and-forget: kick the worker so the job starts within ~1s instead of waiting up to 60s for pg_cron.
+    if (status === "pending") {
+      const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+      if (serviceKey) {
+        fetch(`${supabaseUrl}/functions/v1/process-action-queue`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${serviceKey}`,
+            apikey: serviceKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ trigger: "enqueue", id: data.id }),
+        }).catch((err) => console.error("worker kick failed", err));
+      }
+    }
+
     return new Response(JSON.stringify({ id: data.id, status }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (e) {
     console.error("enqueue-action error", e);
