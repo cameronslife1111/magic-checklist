@@ -310,6 +310,13 @@ const ChecklistPage = () => {
         }
         setDialog({ kind: "insert-link" });
         break;
+      case "send-to":
+        if (!highestUnchecked) {
+          toast.error("No unchecked checkbox found.");
+          return;
+        }
+        setDialog({ kind: "send-to" });
+        break;
       case "web-search":
         await runWebSearch();
         break;
