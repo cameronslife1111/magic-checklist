@@ -1,7 +1,7 @@
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import {
-  Plus, FilePlus, Copy, CopyPlus, Pencil, Scissors, Type, Image as ImageIcon, Images, Wand2,
+  Plus, FilePlus, FilePlus2, Copy, CopyPlus, Pencil, Scissors, Type, Image as ImageIcon, Images, Wand2,
   Film, Video, Link2, Eye, Search, Palette, LogOut, Moon, Sun, ArrowUpDown,
   ClipboardCopy, ClipboardList, Send, Volume2, VolumeX, ListChecks, Trash2, Library,
 } from "lucide-react";
@@ -12,7 +12,7 @@ export type ActionKey =
   | "add" | "duplicate-item" | "new" | "duplicate" | "delete-checklist" | "edit-title" | "split"
   | "text-text" | "text-image" | "image-image" | "remix" | "image-video" | "video-video"
   | "insert-link" | "analyze-image" | "web-search" | "bg" | "rearrange"
-  | "copy-sentence" | "copy-checklist" | "send-to" | "media-gallery" | "theme" | "sign-out";
+  | "copy-sentence" | "copy-checklist" | "send-to" | "send-to-blank" | "media-gallery" | "theme" | "sign-out";
 
 const AI_KEYS = new Set<ActionKey>([
   "text-text", "text-image", "image-image", "remix",
@@ -23,6 +23,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   // Top: moved-up quick actions (right under Mute)
   { key: "split",            label: "Split current checkbox",   icon: Scissors },
   { key: "send-to",          label: "Send to checklist",        icon: Send },
+  { key: "send-to-blank",    label: "Send to blank checklist",  icon: FilePlus2 },
   { key: "queue",            label: "Action Queue Dashboard",   icon: ListChecks },
   { key: "rearrange",        label: "Rearrange checkboxes",     icon: ArrowUpDown },
 
