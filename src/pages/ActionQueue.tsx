@@ -317,8 +317,32 @@ const ActionQueue = () => {
         <Button variant="ghost" size="icon" onClick={() => navigate("/")}>
           <ArrowLeft className="h-5 w-5" />
         </Button>
-        <h1 className="text-lg font-semibold">Action Queue Dashboard</h1>
+        <h1 className="text-lg font-semibold flex-1">Action Queue Dashboard</h1>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={() => { if (user) { setLoading(true); fetchJobs(user.id); } }}
+          disabled={!user || loading}
+          aria-label="Refresh"
+        >
+          <RefreshCw className={`h-5 w-5 ${loading ? "animate-spin" : ""}`} />
+        </Button>
       </header>
+
+      {fetchError && (
+        <div className="max-w-2xl mx-auto px-4 pt-3">
+          <div className="rounded-lg border border-destructive/40 bg-destructive/10 p-3 text-sm flex items-start gap-2">
+            <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+            <div className="flex-1 min-w-0">
+              <p className="font-medium text-destructive">Could not load actions.</p>
+              <p className="text-xs text-muted-foreground mt-0.5 break-words">{fetchError}</p>
+            </div>
+            <Button size="sm" variant="outline" onClick={() => { if (user) { setLoading(true); fetchJobs(user.id); } }}>
+              Retry
+            </Button>
+          </div>
+        </div>
+      )}
 
       <main className="max-w-2xl mx-auto p-4 pb-20">
         <Tabs defaultValue="queue" className="w-full">
