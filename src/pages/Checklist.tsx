@@ -600,64 +600,38 @@ const ChecklistPage = () => {
   };
 
   type MediaAction = "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "analyze-image";
+  const MEDIA_LABELS: Record<MediaAction, string> = {
+    "text-image": "Text to image",
+    "image-image": "Image to image",
+    "remix": "Remix images",
+    "image-video": "Image to video",
+    "video-video": "Video to video",
+    "analyze-image": "Analyze image",
+  };
   const runMediaAction = async (sourceItem: ChecklistItem, action: MediaAction, opts: GenOptions) => {
     if (!checklist) return;
-    const t = toast.loading("Working…");
     try {
-      if (action === "text-image") {
-        const { data, error } = await supabase.functions.invoke("lovable-image", {
-          body: { prompt: sourceItem.text, aspectRatio: opts.aspectRatio, quality: opts.quality },
-        });
-        if (error || !data?.dataUrl) throw new Error(data?.error ?? "fail");
-        const url = await uploadGeneratedToStorage(data.dataUrl, "png") ?? data.dataUrl;
-        await insertItemAfter(sourceItem.id, { text: "Generated image", media_url: url, media_type: "image" });
-        toast.success("Image ready.", { id: t });
-      } else if (action === "image-image" || action === "remix") {
-        const refImages = await Promise.all((opts.files ?? []).map(fileToBase64));
-        const { data, error } = await supabase.functions.invoke("lovable-image", {
-          body: { prompt: sourceItem.text, aspectRatio: opts.aspectRatio, quality: opts.quality, refImages },
-        });
-        if (error || !data?.dataUrl) throw new Error(data?.error ?? "fail");
-        const url = await uploadGeneratedToStorage(data.dataUrl, "png") ?? data.dataUrl;
-        await insertItemAfter(sourceItem.id, { text: action === "remix" ? "Remixed image" : "Edited image", media_url: url, media_type: "image" });
-        toast.success("Image ready.", { id: t });
+      let payload: any = { prompt: sourceItem.text, aspectRatio: opts.aspectRatio, quality: opts.quality };
+      if (action === "image-image" || action === "remix") {
+        payload.refImages = await Promise.all((opts.files ?? []).map(fileToBase64));
       } else if (action === "image-video" || action === "video-video") {
         const file = opts.files?.[0];
-        if (!file) throw new Error("missing");
-        const dataUrl = await fileToBase64(file);
-        const { data, error } = await supabase.functions.invoke("fal-video", {
-          body: {
-            prompt: sourceItem.text,
-            sourceDataUrl: dataUrl,
-            sourceKind: action === "video-video" ? "video" : "image",
-            aspectRatio: opts.aspectRatio,
-          },
-        });
-        if (error || !data?.url) throw new Error(data?.error ?? "fail");
-        await insertItemAfter(sourceItem.id, { text: "Generated video", media_url: data.url, media_type: "video" });
-        toast.success("Video ready.", { id: t });
+        if (!file) throw new Error("missing file");
+        payload.sourceDataUrl = await fileToBase64(file);
       } else if (action === "analyze-image") {
         const file = opts.files?.[0];
-        if (!file) throw new Error("missing");
-        const dataUrl = await fileToBase64(file);
-        const { data, error } = await supabase.functions.invoke("openai-vision", {
-          body: { prompt: sourceItem.text, imageDataUrl: dataUrl },
-        });
-        if (error || !data?.text) throw new Error(data?.error ?? "fail");
-        await insertItemAfter(sourceItem.id, { text: data.text });
-        toast.success("Analyzed.", { id: t });
+        if (!file) throw new Error("missing file");
+        payload.imageDataUrl = await fileToBase64(file);
       }
-    } catch (e: any) {
-      const map: Record<string, string> = {
-        "text-image": "Image generation failed. Try again.",
-        "image-image": "Image-to-image failed. Try again.",
-        "remix": "Image remix failed. Try again.",
-        "image-video": "Image-to-video failed. Try again.",
-        "video-video": "Video-to-video failed. Try again.",
-        "analyze-image": "Image analysis failed. Try again.",
-      };
-      toast.error(map[action] ?? "Failed. Try again.", { id: t });
-    } finally {
+      setDialog({ kind: "none" });
+      requestEnqueue({
+        action_type: action,
+        actionLabel: MEDIA_LABELS[action],
+        payload,
+        source_item_id: sourceItem.id,
+      });
+    } catch {
+      toast.error("Could not prepare action. Try again.");
       setDialog({ kind: "none" });
     }
   };
