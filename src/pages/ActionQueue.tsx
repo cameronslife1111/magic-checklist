@@ -1,11 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { ArrowLeft, Pause, Play, Trash2, RotateCw, Repeat, AlertTriangle, ExternalLink, Copy, Check, Square } from "lucide-react";
+import { ArrowLeft, Pause, Play, Trash2, RotateCw, Repeat, AlertTriangle, ExternalLink, Copy, Check, Square, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { stopSpeech } from "@/lib/speech";
 
@@ -59,45 +59,86 @@ const StatusBadge = ({ s }: { s: Job["status"] }) => {
 };
 
 const ActionQueue = () => {
-  const { user } = useAuth();
+  const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
+  const [fetchError, setFetchError] = useState<string | null>(null);
+  const mountedRef = useRef(true);
 
   useEffect(() => { stopSpeech(); }, []);
 
   useEffect(() => {
-    if (!user) return;
-    let mounted = true;
-    (async () => {
-      const { data } = await supabase
-        .from("action_jobs")
-        .select("*")
-        .order("created_at", { ascending: false })
-        .limit(200);
-      if (mounted) {
-        setJobs((data ?? []) as Job[]);
-        setLoading(false);
-      }
-    })();
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+
+  // Reliable list fetch — explicit user filter (defense in depth) and surfaces errors.
+  const fetchJobs = useCallback(async (uid: string) => {
+    setFetchError(null);
+    const { data, error } = await supabase
+      .from("action_jobs")
+      .select("*")
+      .eq("user_id", uid)
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (!mountedRef.current) return;
+    if (error) {
+      setFetchError(error.message || "Could not load actions.");
+      setLoading(false);
+      return;
+    }
+    setJobs((data ?? []) as Job[]);
+    setLoading(false);
+  }, []);
+
+  // Wait for auth to fully resolve before querying. Otherwise RLS silently
+  // returns 0 rows and we render an empty dashboard forever.
+  useEffect(() => {
+    if (authLoading) return;
+    if (!user) {
+      setJobs([]);
+      setLoading(false);
+      return;
+    }
+
+    setLoading(true);
+    fetchJobs(user.id);
 
     const channel = supabase
-      .channel("action_jobs_dashboard")
-      .on("postgres_changes", { event: "*", schema: "public", table: "action_jobs" }, (payload) => {
-        setJobs((prev) => {
-          const row = (payload.new ?? payload.old) as Job;
-          if (payload.eventType === "DELETE") return prev.filter((j) => j.id !== row.id);
-          const idx = prev.findIndex((j) => j.id === row.id);
-          if (idx === -1) return [row, ...prev];
-          const copy = [...prev];
-          copy[idx] = row;
-          return copy;
-        });
-      })
-      .subscribe();
+      .channel(`action_jobs_dashboard_${user.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "action_jobs", filter: `user_id=eq.${user.id}` },
+        (payload) => {
+          setJobs((prev) => {
+            const row = (payload.new ?? payload.old) as Job;
+            if (!row) return prev;
+            if (payload.eventType === "DELETE") return prev.filter((j) => j.id !== row.id);
+            const idx = prev.findIndex((j) => j.id === row.id);
+            if (idx === -1) return [row, ...prev];
+            const copy = [...prev];
+            copy[idx] = row;
+            return copy;
+          });
+        },
+      )
+      .subscribe((status) => {
+        // After a (re)connect, refetch to backfill anything missed mid-flight.
+        if (status === "SUBSCRIBED") fetchJobs(user.id);
+      });
 
-    return () => { mounted = false; supabase.removeChannel(channel); };
-  }, [user]);
+    // Refetch when the tab becomes visible again — covers laptop sleep / mobile bg.
+    const onVis = () => {
+      if (document.visibilityState === "visible") fetchJobs(user.id);
+    };
+    document.addEventListener("visibilitychange", onVis);
+
+    return () => {
+      document.removeEventListener("visibilitychange", onVis);
+      supabase.removeChannel(channel);
+    };
+  }, [user, authLoading, fetchJobs]);
 
   const inQueue = useMemo(() => jobs.filter((j) => ["pending", "scheduled", "running", "paused"].includes(j.status)), [jobs]);
   const completed = useMemo(() => jobs.filter((j) => j.status === "completed"), [jobs]);
