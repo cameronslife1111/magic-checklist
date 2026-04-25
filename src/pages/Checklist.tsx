@@ -696,7 +696,11 @@ const ChecklistPage = () => {
 
       const { error: delErr } = await supabase.from("checklist_items").delete().eq("id", src.id);
       if (delErr) throw delErr;
-      setItems((prev) => prev.filter((i) => i.id !== src.id));
+      setItems((prev) => {
+        const nextList = prev.filter((i) => i.id !== src.id);
+        focusAndSpeakHighestUnchecked(nextList);
+        return nextList;
+      });
 
       toast.success("Sent to checklist.");
     } catch {
