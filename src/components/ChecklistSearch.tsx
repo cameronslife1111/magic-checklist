@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { markPickJustHappened } from "@/lib/clickGuard";
+import { sortChecklistsByTitle } from "@/lib/sortChecklists";
 
 type Props = {
   onPick: (id: string) => void;
