@@ -232,12 +232,24 @@ const ActionQueue = () => {
               <Pause className="h-3.5 w-3.5" />Pause
             </Button>
           )}
+          {j.status === "running" && (
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={async () => {
+                await update(j.id, { status: "cancelled" });
+                toast.message("Stopping… this may take a few seconds.");
+              }}
+            >
+              <Square className="h-3.5 w-3.5" />Stop
+            </Button>
+          )}
           {j.status === "paused" && (
             <Button size="sm" variant="outline" onClick={() => update(j.id, { status: "pending" })}>
               <Play className="h-3.5 w-3.5" />Resume
             </Button>
           )}
-          {(j.status === "completed" || j.status === "failed") && (
+          {(j.status === "completed" || j.status === "failed" || j.status === "cancelled") && (
             <Button size="sm" variant="outline" onClick={() => rerun(j)}>
               <RotateCw className="h-3.5 w-3.5" />Re-run
             </Button>
