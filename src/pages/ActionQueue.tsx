@@ -16,8 +16,7 @@ type Job = {
   source_item_id: string | null;
   action_type: string;
   status: "pending" | "scheduled" | "running" | "completed" | "failed" | "paused" | "cancelled";
-  payload: any;
-  result: any;
+  prompt_preview: string | null;
   error_raw: string | null;
   error_friendly: string | null;
   error_fix: string | null;
@@ -28,6 +27,9 @@ type Job = {
   created_at: string;
   completed_at: string | null;
 };
+
+// Lightweight column list — never select payload/result here, they can be huge.
+const JOB_COLS = "id,user_id,checklist_id,source_item_id,action_type,status,prompt_preview,error_raw,error_friendly,error_fix,scheduled_for,recurrence,attempts,max_attempts,created_at,completed_at";
 
 const ACTION_LABELS: Record<string, string> = {
   "text-text": "Text to text",
@@ -78,7 +80,7 @@ const ActionQueue = () => {
     setFetchError(null);
     const { data, error } = await supabase
       .from("action_jobs")
-      .select("*")
+      .select(JOB_COLS)
       .eq("user_id", uid)
       .order("created_at", { ascending: false })
       .limit(200);
@@ -111,9 +113,29 @@ const ActionQueue = () => {
         "postgres_changes",
         { event: "*", schema: "public", table: "action_jobs", filter: `user_id=eq.${user.id}` },
         (payload) => {
+          // Realtime sends the full row (REPLICA IDENTITY FULL) which can include huge payloads.
+          // Strip to the lightweight shape so we don't keep megabytes in React state.
+          const raw: any = payload.new ?? payload.old;
+          if (!raw) return;
+          const row: Job = {
+            id: raw.id,
+            user_id: raw.user_id,
+            checklist_id: raw.checklist_id,
+            source_item_id: raw.source_item_id ?? null,
+            action_type: raw.action_type,
+            status: raw.status,
+            prompt_preview: raw.prompt_preview ?? (typeof raw.payload?.prompt === "string" ? String(raw.payload.prompt).slice(0, 500) : null),
+            error_raw: raw.error_raw ?? null,
+            error_friendly: raw.error_friendly ?? null,
+            error_fix: raw.error_fix ?? null,
+            scheduled_for: raw.scheduled_for ?? null,
+            recurrence: raw.recurrence ?? null,
+            attempts: raw.attempts ?? 0,
+            max_attempts: raw.max_attempts ?? 3,
+            created_at: raw.created_at,
+            completed_at: raw.completed_at ?? null,
+          };
           setJobs((prev) => {
-            const row = (payload.new ?? payload.old) as Job;
-            if (!row) return prev;
             if (payload.eventType === "DELETE") return prev.filter((j) => j.id !== row.id);
             const idx = prev.findIndex((j) => j.id === row.id);
             if (idx === -1) return [row, ...prev];
