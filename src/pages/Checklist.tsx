@@ -15,6 +15,14 @@ import { MediaViewer } from "@/components/MediaViewer";
 import { toast } from "sonner";
 import { primeSpeech, speak, stopSpeech } from "@/lib/speech";
 import { extractFirstUrl, isUrl, splitTextWithLinks } from "@/lib/split";
+import {
+  DndContext, DragEndEvent, PointerSensor, TouchSensor, KeyboardSensor,
+  useSensor, useSensors, closestCenter,
+} from "@dnd-kit/core";
+import {
+  SortableContext, arrayMove, sortableKeyboardCoordinates, verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { SortableItemRow } from "@/components/SortableItemRow";
 
 const POS_STEP = 1024;
 
