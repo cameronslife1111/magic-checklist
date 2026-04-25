@@ -42,6 +42,7 @@ type DialogState =
   | { kind: "edit-title" }
   | { kind: "insert-link" }
   | { kind: "send-to" }
+  | { kind: "send-to-blank" }
   | { kind: "bg" }
   | { kind: "duplicate-title" }
   | { kind: "delete-checklist" }
