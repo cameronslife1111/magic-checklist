@@ -219,8 +219,11 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ r
     }
     case "text-image": {
       const prompt = buildPrompt(p.prompt, ctx, false);
-      const extraRefs = await Promise.all(ctx.imageUrls.map(urlToDataUrl));
-      const out = await callFn("lovable-image", { prompt, aspectRatio: p.aspectRatio, quality: p.quality, refImages: extraRefs }, signal);
+      // Pass any context image URLs straight through (no fetch/base64/re-upload).
+      const out = await callFn("lovable-image", {
+        prompt, aspectRatio: p.aspectRatio, quality: p.quality,
+        refImageUrls: ctx.imageUrls,
+      }, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       const url = await uploadDataUrl(supabase, job.user_id, out.dataUrl, "png");
       await insertResultItem(supabase, job, { text: "Generated image", media_url: url, media_type: "image" });
@@ -229,13 +232,15 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ r
     case "image-image":
     case "remix": {
       const prompt = buildPrompt(p.prompt, ctx, false);
-      const extraRefs = await Promise.all(ctx.imageUrls.map(urlToDataUrl));
-      // New gallery-based payload: refImageUrls. Legacy: refImages (data URLs).
-      const galleryRefs = Array.isArray(p.refImageUrls)
-        ? await Promise.all((p.refImageUrls as string[]).map(urlToDataUrl))
-        : [];
-      const refImages = [...(p.refImages ?? []), ...galleryRefs, ...extraRefs].slice(0, 16);
-      const out = await callFn("lovable-image", { prompt, aspectRatio: p.aspectRatio, quality: p.quality, refImages }, signal);
+      // Fast path: forward all URLs directly to lovable-image (no download/base64).
+      const galleryUrls: string[] = Array.isArray(p.refImageUrls) ? p.refImageUrls : [];
+      const refImageUrls = [...galleryUrls, ...ctx.imageUrls].slice(0, 16);
+      // Legacy: data URL refs (old queued jobs only). Don't compute these for new jobs.
+      const refImages: string[] = Array.isArray(p.refImages) ? p.refImages : [];
+      const out = await callFn("lovable-image", {
+        prompt, aspectRatio: p.aspectRatio, quality: p.quality,
+        refImageUrls, refImages,
+      }, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       const url = await uploadDataUrl(supabase, job.user_id, out.dataUrl, "png");
       await insertResultItem(supabase, job, {
@@ -247,19 +252,20 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ r
     case "image-video":
     case "video-video": {
       const prompt = buildPrompt(p.prompt, ctx, true);
-      // Prefer new gallery URL field, then legacy data URL, then context fallback.
-      let sourceDataUrl = p.sourceDataUrl;
-      if (!sourceDataUrl && p.sourceUrl) sourceDataUrl = await urlToDataUrl(p.sourceUrl);
-      if (!sourceDataUrl) {
+      // Prefer a public URL (fast path). Only fall back to data URL conversion for legacy jobs.
+      let sourceUrl: string | undefined = p.sourceUrl;
+      if (!sourceUrl) {
         const fallback = job.action_type === "video-video" ? ctx.videoUrls[0] : ctx.imageUrls[0];
-        if (fallback) sourceDataUrl = await urlToDataUrl(fallback);
+        if (fallback) sourceUrl = fallback;
       }
-      const out = await callFn("fal-video", {
+      const body: any = {
         prompt,
-        sourceDataUrl,
         sourceKind: job.action_type === "video-video" ? "video" : "image",
         aspectRatio: p.aspectRatio,
-      }, signal);
+      };
+      if (sourceUrl) body.sourceUrl = sourceUrl;
+      else if (p.sourceDataUrl) body.sourceDataUrl = p.sourceDataUrl;
+      const out = await callFn("fal-video", body, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       await insertResultItem(supabase, job, { text: "Generated video", media_url: out.url, media_type: "video" });
       return { result: { media_url: out.url } };
