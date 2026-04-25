@@ -503,12 +503,12 @@ const ChecklistPage = () => {
     toast.success("Checkbox duplicated.");
   };
 
-  const duplicateCurrent = async () => {
+  const duplicateCurrent = async (newTitle: string) => {
     if (!checklist || !user) return;
-    const newTitle = `${checklist.title} Copy`;
+    const title = newTitle.trim() || `${checklist.title} Copy`;
     const { data: created, error } = await supabase
       .from("checklists")
-      .insert({ user_id: user.id, title: newTitle, background_color: checklist.background_color })
+      .insert({ user_id: user.id, title, background_color: checklist.background_color })
       .select().single();
     if (error || !created) {
       toast.error("Could not duplicate checklist. Try again.");
@@ -528,6 +528,40 @@ const ChecklistPage = () => {
     if (inserts.length) await supabase.from("checklist_items").insert(inserts);
     await openChecklist(created.id);
     toast.success("Checklist duplicated.");
+  };
+
+  const deleteCurrentChecklist = async () => {
+    if (!checklist || !user) return;
+    const deletedId = checklist.id;
+    const { error: itemsErr } = await supabase
+      .from("checklist_items").delete().eq("checklist_id", deletedId);
+    if (itemsErr) { toast.error("Could not delete checklist. Try again."); return; }
+    const { error: clErr } = await supabase
+      .from("checklists").delete().eq("id", deletedId);
+    if (clErr) { toast.error("Could not delete checklist. Try again."); return; }
+
+    try { localStorage.removeItem("mc-last-checklist"); } catch {}
+    setDialog({ kind: "none" });
+    toast.success("Checklist deleted.");
+
+    // Open next available checklist, or bootstrap a fresh one.
+    const { data: next } = await supabase
+      .from("checklists").select("*")
+      .order("updated_at", { ascending: false }).limit(1);
+    if (next && next.length > 0) {
+      await openChecklist((next[0] as Checklist).id);
+      return;
+    }
+    const { data: created } = await supabase
+      .from("checklists").insert({ user_id: user.id, title: "My first checklist" })
+      .select().single();
+    if (created) {
+      await supabase.from("checklist_items").insert([
+        { checklist_id: created.id, user_id: user.id, text: "Welcome to Magic Checklist.", position: 1024 },
+        { checklist_id: created.id, user_id: user.id, text: "Tap Actions to do more.", position: 2048 },
+      ]);
+      await openChecklist((created as Checklist).id);
+    }
   };
 
   const splitCurrent = async () => {
