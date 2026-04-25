@@ -2,13 +2,13 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import {
   Plus, FilePlus, Copy, Pencil, Scissors, Type, Image as ImageIcon, Images, Wand2,
-  Film, Video, Link2, Eye, Search, Palette, LogOut, Moon, Sun,
+  Film, Video, Link2, Eye, Search, Palette, LogOut, Moon, Sun, ArrowUpDown,
 } from "lucide-react";
 
 export type ActionKey =
   | "add" | "new" | "duplicate" | "edit-title" | "split"
   | "text-text" | "text-image" | "image-image" | "remix" | "image-video" | "video-video"
-  | "insert-link" | "analyze-image" | "web-search" | "bg" | "theme" | "sign-out";
+  | "insert-link" | "analyze-image" | "web-search" | "bg" | "rearrange" | "theme" | "sign-out";
 
 const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: "add",            label: "Add new checkbox",        icon: Plus },
@@ -26,6 +26,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "analyze-image",  label: "Analyze image",           icon: Eye },
   { key: "web-search",     label: "Text to web search",      icon: Search },
   { key: "bg",             label: "Change checklist background", icon: Palette },
+  { key: "rearrange",      label: "Rearrange checkboxes",    icon: ArrowUpDown },
 ];
 
 type Props = {
