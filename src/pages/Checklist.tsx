@@ -905,6 +905,11 @@ const ChecklistPage = () => {
           const { data, error } = await supabase
             .from("checklists").insert({ user_id: user.id, title }).select().single();
           if (error || !data) { toast.error("Could not create checklist. Try again."); return; }
+          await supabase.from("checklist_items").insert([
+            { checklist_id: data.id, user_id: user.id, text: "", position: 1024 },
+            { checklist_id: data.id, user_id: user.id, text: "", position: 2048 },
+            { checklist_id: data.id, user_id: user.id, text: "", position: 3072 },
+          ]);
           await openChecklist(data.id);
           setDialog({ kind: "none" });
         }}
