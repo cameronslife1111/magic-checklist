@@ -227,7 +227,7 @@ const ActionQueue = () => {
   const completed = useMemo(() => jobs.filter((j) => j.status === "completed"), [jobs]);
   const failed = useMemo(() => jobs.filter((j) => j.status === "failed" || j.status === "cancelled"), [jobs]);
 
-  const update = async (id: string, patch: Partial<Job>) => {
+  const update = async (id: string, patch: { status?: Job["status"] }) => {
     const { error } = await supabase.from("action_jobs").update(patch).eq("id", id);
     if (error) toast.error("Could not update job.");
   };
