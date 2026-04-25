@@ -101,7 +101,7 @@ const ActionQueue = () => {
 
   const inQueue = useMemo(() => jobs.filter((j) => ["pending", "scheduled", "running", "paused"].includes(j.status)), [jobs]);
   const completed = useMemo(() => jobs.filter((j) => j.status === "completed"), [jobs]);
-  const failed = useMemo(() => jobs.filter((j) => j.status === "failed"), [jobs]);
+  const failed = useMemo(() => jobs.filter((j) => j.status === "failed" || j.status === "cancelled"), [jobs]);
 
   const update = async (id: string, patch: Partial<Job>) => {
     const { error } = await supabase.from("action_jobs").update(patch).eq("id", id);
