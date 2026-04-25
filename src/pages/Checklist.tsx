@@ -152,9 +152,37 @@ const ChecklistPage = () => {
 
   const handleToggle = async (item: ChecklistItem, next: boolean) => {
     primeSpeech();
-    setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, checked: next } : i)));
-    await supabase.from("checklist_items").update({ checked: next }).eq("id", item.id);
-    const updated = items.map((i) => (i.id === item.id ? { ...i, checked: next } : i));
+    const targetIdx = items.findIndex((i) => i.id === item.id);
+    if (targetIdx < 0) return;
+
+    // Cascade: checking → also check all earlier unchecked items.
+    // Unchecking → also uncheck all later checked items.
+    const changedIds: string[] = [];
+    const updated = items.map((i, idx) => {
+      if (next) {
+        if (idx <= targetIdx && !i.checked) {
+          changedIds.push(i.id);
+          return { ...i, checked: true };
+        }
+      } else {
+        if (idx >= targetIdx && i.checked) {
+          changedIds.push(i.id);
+          return { ...i, checked: false };
+        }
+      }
+      return i;
+    });
+
+    setItems(updated);
+
+    if (changedIds.length) {
+      const { error } = await supabase
+        .from("checklist_items")
+        .update({ checked: next })
+        .in("id", changedIds);
+      if (error) toast.error("Could not save. Try again.");
+    }
+
     const nxt = updated.find((i) => !i.checked);
     if (nxt) {
       scrollItemToCenter(nxt.id);
