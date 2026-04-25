@@ -3,11 +3,11 @@ import { Button } from "@/components/ui/button";
 import {
   Plus, FilePlus, Copy, Pencil, Scissors, Type, Image as ImageIcon, Images, Wand2,
   Film, Video, Link2, Eye, Search, Palette, LogOut, Moon, Sun, ArrowUpDown,
-  ClipboardCopy, ClipboardList, Send, Volume2, VolumeX,
+  ClipboardCopy, ClipboardList, Send, Volume2, VolumeX, ListChecks,
 } from "lucide-react";
 
 export type ActionKey =
-  | "mute"
+  | "mute" | "queue"
   | "add" | "new" | "duplicate" | "edit-title" | "split"
   | "text-text" | "text-image" | "image-image" | "remix" | "image-video" | "video-video"
   | "insert-link" | "analyze-image" | "web-search" | "bg" | "rearrange"
@@ -16,6 +16,7 @@ export type ActionKey =
 const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: "add",            label: "Add new checkbox",        icon: Plus },
   { key: "send-to",        label: "Send to checklist",       icon: Send },
+  { key: "queue",          label: "Action Queue Dashboard",  icon: ListChecks },
   { key: "new",            label: "New checklist",           icon: FilePlus },
   { key: "duplicate",      label: "Duplicate checklist",     icon: Copy },
   { key: "edit-title",     label: "Edit checklist title",    icon: Pencil },
