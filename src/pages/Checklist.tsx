@@ -695,12 +695,46 @@ const ChecklistPage = () => {
               Done
             </Button>
           ) : (
-            <Button
-              onClick={() => { primeSpeech(); setActionsOpen(true); }}
-              className="w-full h-14 rounded-2xl text-base font-semibold shadow-floating"
-            >
-              Actions
-            </Button>
+            <div className="flex gap-3">
+              <Button
+                onClick={() => { primeSpeech(); setActionsOpen(true); }}
+                className="flex-1 h-14 rounded-2xl text-base font-semibold shadow-floating"
+              >
+                Actions
+              </Button>
+              <Button
+                aria-label="Check current and advance"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  longPressFiredRef.current = false;
+                  if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
+                  longPressTimerRef.current = window.setTimeout(async () => {
+                    longPressFiredRef.current = true;
+                    primeSpeech();
+                    await addNewAfterCurrent();
+                  }, 600);
+                }}
+                onPointerUp={(e) => {
+                  e.preventDefault();
+                  if (longPressTimerRef.current) {
+                    window.clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                  }
+                  if (longPressFiredRef.current) return;
+                  if (highestUnchecked) handleToggle(highestUnchecked, true);
+                }}
+                onPointerCancel={() => {
+                  if (longPressTimerRef.current) {
+                    window.clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                  }
+                }}
+                onContextMenu={(e) => e.preventDefault()}
+                className="h-14 w-14 rounded-2xl shadow-floating select-none touch-none"
+              >
+                <Check className="h-6 w-6" />
+              </Button>
+            </div>
           )}
         </div>
       </div>
