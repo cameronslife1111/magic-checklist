@@ -5,7 +5,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { ArrowLeft, Pause, Play, Trash2, RotateCw, Repeat, AlertTriangle, ExternalLink, Copy, Check } from "lucide-react";
+import { ArrowLeft, Pause, Play, Trash2, RotateCw, Repeat, AlertTriangle, ExternalLink, Copy, Check, Square } from "lucide-react";
 import { toast } from "sonner";
 import { stopSpeech } from "@/lib/speech";
 
@@ -101,7 +101,7 @@ const ActionQueue = () => {
 
   const inQueue = useMemo(() => jobs.filter((j) => ["pending", "scheduled", "running", "paused"].includes(j.status)), [jobs]);
   const completed = useMemo(() => jobs.filter((j) => j.status === "completed"), [jobs]);
-  const failed = useMemo(() => jobs.filter((j) => j.status === "failed"), [jobs]);
+  const failed = useMemo(() => jobs.filter((j) => j.status === "failed" || j.status === "cancelled"), [jobs]);
 
   const update = async (id: string, patch: Partial<Job>) => {
     const { error } = await supabase.from("action_jobs").update(patch).eq("id", id);
@@ -232,12 +232,24 @@ const ActionQueue = () => {
               <Pause className="h-3.5 w-3.5" />Pause
             </Button>
           )}
+          {j.status === "running" && (
+            <Button
+              size="sm"
+              variant="destructive"
+              onClick={async () => {
+                await update(j.id, { status: "cancelled" });
+                toast.message("Stopping… this may take a few seconds.");
+              }}
+            >
+              <Square className="h-3.5 w-3.5" />Stop
+            </Button>
+          )}
           {j.status === "paused" && (
             <Button size="sm" variant="outline" onClick={() => update(j.id, { status: "pending" })}>
               <Play className="h-3.5 w-3.5" />Resume
             </Button>
           )}
-          {(j.status === "completed" || j.status === "failed") && (
+          {(j.status === "completed" || j.status === "failed" || j.status === "cancelled") && (
             <Button size="sm" variant="outline" onClick={() => rerun(j)}>
               <RotateCw className="h-3.5 w-3.5" />Re-run
             </Button>
@@ -272,7 +284,7 @@ const ActionQueue = () => {
           <TabsList className="grid grid-cols-3 w-full">
             <TabsTrigger value="queue">In queue <Badge variant="secondary" className="ml-2">{inQueue.length}</Badge></TabsTrigger>
             <TabsTrigger value="completed">Completed <Badge variant="secondary" className="ml-2">{completed.length}</Badge></TabsTrigger>
-            <TabsTrigger value="failed">Failed <Badge variant="secondary" className="ml-2">{failed.length}</Badge></TabsTrigger>
+            <TabsTrigger value="failed">Failed / Stopped <Badge variant="secondary" className="ml-2">{failed.length}</Badge></TabsTrigger>
           </TabsList>
 
           <TabsContent value="queue">
@@ -285,7 +297,7 @@ const ActionQueue = () => {
               : <ul className="flex flex-col gap-2 mt-3">{completed.map((j) => <JobRow key={j.id} j={j} />)}</ul>}
           </TabsContent>
           <TabsContent value="failed">
-            {failed.length === 0 ? <p className="text-muted-foreground text-sm py-6 text-center">No failed actions.</p>
+            {failed.length === 0 ? <p className="text-muted-foreground text-sm py-6 text-center">No failed or stopped actions.</p>
               : <ul className="flex flex-col gap-2 mt-3">{failed.map((j) => <JobRow key={j.id} j={j} />)}</ul>}
           </TabsContent>
         </Tabs>

@@ -63,11 +63,12 @@ async function explainErrorInline(action_type: string, error_raw: string): Promi
   }
 }
 
-async function callFn(name: string, body: any) {
+async function callFn(name: string, body: any, signal?: AbortSignal) {
   const r = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${SERVICE_KEY}`, "Content-Type": "application/json", apikey: SERVICE_KEY },
     body: JSON.stringify(body),
+    signal,
   });
   const text = await r.text();
   let json: any = {};
@@ -192,26 +193,29 @@ async function urlToDataUrl(url: string): Promise<string> {
   return `data:${blob.type || "application/octet-stream"};base64,${b64}`;
 }
 
-async function runJob(supabase: any, job: Job): Promise<{ result: any }> {
+async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ result: any }> {
   const p = job.payload ?? {};
   const ctx = await resolveContext(supabase, p);
   switch (job.action_type) {
     case "text-text": {
       const prompt = buildPrompt(p.prompt, ctx, true);
-      const out = await callFn("openai-text", { prompt });
+      const out = await callFn("openai-text", { prompt }, signal);
+      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       await insertResultItem(supabase, job, { text: out.text });
       return { result: { text: out.text } };
     }
     case "web-search": {
       const prompt = buildPrompt(p.prompt, ctx, true);
-      const out = await callFn("perplexity-search", { query: prompt });
+      const out = await callFn("perplexity-search", { query: prompt }, signal);
+      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       await insertResultItem(supabase, job, { text: out.text });
       return { result: { text: out.text } };
     }
     case "text-image": {
       const prompt = buildPrompt(p.prompt, ctx, false);
       const extraRefs = await Promise.all(ctx.imageUrls.map(urlToDataUrl));
-      const out = await callFn("lovable-image", { prompt, aspectRatio: p.aspectRatio, quality: p.quality, refImages: extraRefs });
+      const out = await callFn("lovable-image", { prompt, aspectRatio: p.aspectRatio, quality: p.quality, refImages: extraRefs }, signal);
+      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       const url = await uploadDataUrl(supabase, job.user_id, out.dataUrl, "png");
       await insertResultItem(supabase, job, { text: "Generated image", media_url: url, media_type: "image" });
       return { result: { media_url: url } };
@@ -221,7 +225,8 @@ async function runJob(supabase: any, job: Job): Promise<{ result: any }> {
       const prompt = buildPrompt(p.prompt, ctx, false);
       const extraRefs = await Promise.all(ctx.imageUrls.map(urlToDataUrl));
       const refImages = [...(p.refImages ?? []), ...extraRefs].slice(0, 16);
-      const out = await callFn("lovable-image", { prompt, aspectRatio: p.aspectRatio, quality: p.quality, refImages });
+      const out = await callFn("lovable-image", { prompt, aspectRatio: p.aspectRatio, quality: p.quality, refImages }, signal);
+      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       const url = await uploadDataUrl(supabase, job.user_id, out.dataUrl, "png");
       await insertResultItem(supabase, job, {
         text: job.action_type === "remix" ? "Remixed image" : "Edited image",
@@ -242,7 +247,8 @@ async function runJob(supabase: any, job: Job): Promise<{ result: any }> {
         sourceDataUrl,
         sourceKind: job.action_type === "video-video" ? "video" : "image",
         aspectRatio: p.aspectRatio,
-      });
+      }, signal);
+      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       await insertResultItem(supabase, job, { text: "Generated video", media_url: out.url, media_type: "video" });
       return { result: { media_url: out.url } };
     }
@@ -250,13 +256,40 @@ async function runJob(supabase: any, job: Job): Promise<{ result: any }> {
       const prompt = buildPrompt(p.prompt, ctx, ctx.imageUrls.length > 1);
       let imageDataUrl = p.imageDataUrl;
       if (!imageDataUrl && ctx.imageUrls[0]) imageDataUrl = await urlToDataUrl(ctx.imageUrls[0]);
-      const out = await callFn("openai-vision", { prompt, imageDataUrl });
+      const out = await callFn("openai-vision", { prompt, imageDataUrl }, signal);
+      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       await insertResultItem(supabase, job, { text: out.text });
       return { result: { text: out.text } };
     }
     default:
       throw new Error(`unknown action_type: ${job.action_type}`);
   }
+}
+
+// Polls action_jobs.status; aborts the in-flight upstream fetch if the user marks the job cancelled.
+async function runWithCancellation(
+  supabase: any,
+  jobId: string,
+  work: (signal: AbortSignal) => Promise<{ result: any }>,
+): Promise<{ result: any }> {
+  const controller = new AbortController();
+  const interval = setInterval(async () => {
+    try {
+      const { data } = await supabase.from("action_jobs").select("status").eq("id", jobId).maybeSingle();
+      if (data?.status === "cancelled" && !controller.signal.aborted) {
+        controller.abort();
+      }
+    } catch (_) { /* ignore poll errors */ }
+  }, 2000);
+  try {
+    return await work(controller.signal);
+  } finally {
+    clearInterval(interval);
+  }
+}
+
+function isAbortError(e: unknown): boolean {
+  return e instanceof Error && (e.name === "AbortError" || /aborted/i.test(e.message));
 }
 
 
@@ -300,7 +333,19 @@ Deno.serve(async (req) => {
   const results: any[] = [];
   for (const j of (jobs ?? []) as Job[]) {
     try {
-      const { result } = await runJob(supabase, j);
+      const { result } = await runWithCancellation(supabase, j.id, (signal) => runJob(supabase, j, signal));
+
+      // If user cancelled mid-flight but inner work still resolved, treat as cancelled.
+      const { data: cur } = await supabase.from("action_jobs").select("status").eq("id", j.id).maybeSingle();
+      if (cur?.status === "cancelled") {
+        await supabase.from("action_jobs").update({
+          status: "cancelled",
+          completed_at: new Date().toISOString(),
+          attempts: j.attempts + 1,
+        }).eq("id", j.id);
+        results.push({ id: j.id, ok: false, cancelled: true });
+        continue;
+      }
 
       await supabase.from("action_jobs").update({
         status: "completed",
@@ -312,7 +357,6 @@ Deno.serve(async (req) => {
       // Recurring: enqueue next occurrence
       const interval = recurrenceToInterval(j.recurrence);
       if (interval) {
-        
         const nextRun = new Date(Date.now() + intervalMs(j.recurrence!)).toISOString();
         await supabase.from("action_jobs").insert({
           user_id: j.user_id,
@@ -330,6 +374,24 @@ Deno.serve(async (req) => {
       results.push({ id: j.id, ok: true });
     } catch (e) {
       const errMsg = (e as Error).message ?? String(e);
+
+      // Check if this was a user-initiated cancellation.
+      const aborted = isAbortError(e);
+      let cancelledInDb = false;
+      if (!aborted) {
+        const { data: cur } = await supabase.from("action_jobs").select("status").eq("id", j.id).maybeSingle();
+        cancelledInDb = cur?.status === "cancelled";
+      }
+      if (aborted || cancelledInDb) {
+        await supabase.from("action_jobs").update({
+          status: "cancelled",
+          completed_at: new Date().toISOString(),
+          attempts: j.attempts + 1,
+        }).eq("id", j.id);
+        results.push({ id: j.id, ok: false, cancelled: true });
+        continue;
+      }
+
       const nextAttempts = j.attempts + 1;
       const exhausted = nextAttempts >= j.max_attempts;
       if (exhausted) {
