@@ -89,6 +89,7 @@ const ChecklistPage = () => {
   const itemRefs = useRef<Record<string, HTMLLIElement | null>>({});
   const longPressTimerRef = useRef<number | null>(null);
   const longPressFiredRef = useRef(false);
+  const keepaliveRef = useRef<HTMLInputElement>(null);
   const didAutoFocusRef = useRef<string | null>(null);
   const registerRef = useCallback((id: string, el: HTMLLIElement | null) => {
     itemRefs.current[id] = el;
