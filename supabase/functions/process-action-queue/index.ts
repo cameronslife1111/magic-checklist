@@ -333,7 +333,19 @@ Deno.serve(async (req) => {
   const results: any[] = [];
   for (const j of (jobs ?? []) as Job[]) {
     try {
-      const { result } = await runJob(supabase, j);
+      const { result } = await runWithCancellation(supabase, j.id, (signal) => runJob(supabase, j, signal));
+
+      // If user cancelled mid-flight but inner work still resolved, treat as cancelled.
+      const { data: cur } = await supabase.from("action_jobs").select("status").eq("id", j.id).maybeSingle();
+      if (cur?.status === "cancelled") {
+        await supabase.from("action_jobs").update({
+          status: "cancelled",
+          completed_at: new Date().toISOString(),
+          attempts: j.attempts + 1,
+        }).eq("id", j.id);
+        results.push({ id: j.id, ok: false, cancelled: true });
+        continue;
+      }
 
       await supabase.from("action_jobs").update({
         status: "completed",
@@ -345,7 +357,6 @@ Deno.serve(async (req) => {
       // Recurring: enqueue next occurrence
       const interval = recurrenceToInterval(j.recurrence);
       if (interval) {
-        
         const nextRun = new Date(Date.now() + intervalMs(j.recurrence!)).toISOString();
         await supabase.from("action_jobs").insert({
           user_id: j.user_id,
@@ -363,6 +374,24 @@ Deno.serve(async (req) => {
       results.push({ id: j.id, ok: true });
     } catch (e) {
       const errMsg = (e as Error).message ?? String(e);
+
+      // Check if this was a user-initiated cancellation.
+      const aborted = isAbortError(e);
+      let cancelledInDb = false;
+      if (!aborted) {
+        const { data: cur } = await supabase.from("action_jobs").select("status").eq("id", j.id).maybeSingle();
+        cancelledInDb = cur?.status === "cancelled";
+      }
+      if (aborted || cancelledInDb) {
+        await supabase.from("action_jobs").update({
+          status: "cancelled",
+          completed_at: new Date().toISOString(),
+          attempts: j.attempts + 1,
+        }).eq("id", j.id);
+        results.push({ id: j.id, ok: false, cancelled: true });
+        continue;
+      }
+
       const nextAttempts = j.attempts + 1;
       const exhausted = nextAttempts >= j.max_attempts;
       if (exhausted) {
