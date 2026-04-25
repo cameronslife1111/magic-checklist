@@ -98,6 +98,12 @@
   .shadow-floating { box-shadow: var(--shadow-floating); }
   .glow-active {
     box-shadow: 0 0 0 2px hsl(48 96% 60% / 0.6), 0 0 20px 4px hsl(48 96% 60% / 0.45);
-    background-color: hsl(48 96% 60% / 0.1);
+    background-color: hsl(48 96% 60% / 0.12);
+    color: hsl(40 30% 12%);
+  }
+  .dark .glow-active {
+    box-shadow: 0 0 0 2px hsl(48 96% 60% / 0.7), 0 0 22px 4px hsl(48 96% 60% / 0.35);
+    background-color: hsl(48 96% 55% / 0.18);
+    color: hsl(48 100% 92%);
   }
 }
