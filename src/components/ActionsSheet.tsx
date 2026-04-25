@@ -31,6 +31,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "rearrange",      label: "Rearrange checkboxes",    icon: ArrowUpDown },
   { key: "copy-sentence",  label: "Copy sentence",           icon: ClipboardCopy },
   { key: "copy-checklist", label: "Copy full checklist",     icon: ClipboardList },
+  { key: "send-to",        label: "Send to checklist",       icon: Send },
 ];
 
 type Props = {
