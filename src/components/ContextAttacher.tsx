@@ -1,12 +1,14 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { FileText, Image as ImageIcon, Video, Music, X, Loader2 } from "lucide-react";
+import { FileText, Image as ImageIcon, Video, Music, X } from "lucide-react";
 import { toast } from "sonner";
 import { sortChecklistsByTitle } from "@/lib/sortChecklists";
+import { MediaGalleryPicker } from "@/components/MediaGalleryPicker";
+import { MediaAsset, MediaKind } from "@/lib/mediaAssets";
 
 export type AttachedMedia = { url: string; path: string; type: "image" | "video" | "audio"; name: string };
 export type AttachedContext = {
@@ -26,46 +28,33 @@ type Props = {
 
 export const ContextAttacher = ({ userId, excludeChecklistId, value, onChange, onUploadingChange }: Props) => {
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [uploadingCount, setUploadingCount] = useState(0);
-  const imgRef = useRef<HTMLInputElement>(null);
-  const vidRef = useRef<HTMLInputElement>(null);
-  const audRef = useRef<HTMLInputElement>(null);
+  const [galleryKind, setGalleryKind] = useState<MediaKind | null>(null);
 
   useEffect(() => {
-    onUploadingChange?.(uploadingCount > 0);
-  }, [uploadingCount, onUploadingChange]);
+    onUploadingChange?.(false);
+  }, [onUploadingChange]);
 
   const countByType = (t: AttachedMedia["type"]) => value.media.filter((m) => m.type === t).length;
 
-  const handleFiles = async (files: FileList | null, type: AttachedMedia["type"]) => {
-    if (!files || files.length === 0) return;
-    const remaining = MAX_PER_KIND - countByType(type);
-    const arr = Array.from(files).slice(0, remaining);
-    if (arr.length < files.length) toast.error(`Max ${MAX_PER_KIND} ${type} attachments.`);
-    if (arr.length === 0) return;
+  const openGallery = (k: MediaKind) => setGalleryKind(k);
 
-    setUploadingCount((c) => c + arr.length);
-    const uploaded: AttachedMedia[] = [];
-    for (const file of arr) {
-      try {
-        const ext = file.name.split(".").pop() || "bin";
-        const path = `${userId}/context/${crypto.randomUUID()}.${ext}`;
-        const { error } = await supabase.storage.from("generated-media").upload(path, file, { contentType: file.type });
-        if (error) throw error;
-        const url = supabase.storage.from("generated-media").getPublicUrl(path).data.publicUrl;
-        uploaded.push({ url, path, type, name: file.name });
-      } catch (e: any) {
-        toast.error(`Upload failed: ${file.name}`);
-      } finally {
-        setUploadingCount((c) => c - 1);
-      }
+  const onGalleryConfirm = (assets: MediaAsset[]) => {
+    if (!galleryKind) return;
+    // Replace media of this kind with the picked set, in order. Keep other kinds intact.
+    const others = value.media.filter((m) => m.type !== galleryKind);
+    const added: AttachedMedia[] = assets.map((a) => ({
+      url: a.url, path: a.storage_path, type: a.kind, name: a.title,
+    }));
+    if (added.length > MAX_PER_KIND) {
+      toast.error(`Max ${MAX_PER_KIND} ${galleryKind} attachments.`);
     }
-    if (uploaded.length) onChange({ ...value, media: [...value.media, ...uploaded] });
+    onChange({ ...value, media: [...others, ...added.slice(0, MAX_PER_KIND)] });
+    setGalleryKind(null);
   };
 
-  const removeMedia = async (m: AttachedMedia) => {
+  const removeMedia = (m: AttachedMedia) => {
+    // Detach only — never delete the underlying gallery asset.
     onChange({ ...value, media: value.media.filter((x) => x.path !== m.path) });
-    try { await supabase.storage.from("generated-media").remove([m.path]); } catch { /* best-effort */ }
   };
 
   const removeChecklist = (id: string) => {
@@ -73,6 +62,12 @@ export const ContextAttacher = ({ userId, excludeChecklistId, value, onChange, o
   };
 
   const totalCount = value.checklists.length + value.media.length;
+
+  const initialIdsForKind = (k: MediaKind | null): string[] => {
+    if (!k) return [];
+    // We stored storage_path in `path`; for re-open we don't have asset ids. Leave empty.
+    return [];
+  };
 
   return (
     <div className="space-y-2 border rounded-md p-3 bg-muted/30">
@@ -93,22 +88,18 @@ export const ContextAttacher = ({ userId, excludeChecklistId, value, onChange, o
         <Button type="button" variant="outline" size="sm" onClick={() => setPickerOpen(true)} className="justify-start">
           <FileText className="h-4 w-4" /> Add Text Context
         </Button>
-        <Button type="button" variant="outline" size="sm" onClick={() => imgRef.current?.click()} className="justify-start">
+        <Button type="button" variant="outline" size="sm" onClick={() => openGallery("image")} className="justify-start">
           <ImageIcon className="h-4 w-4" /> Add Image Context
         </Button>
-        <Button type="button" variant="outline" size="sm" onClick={() => vidRef.current?.click()} className="justify-start">
+        <Button type="button" variant="outline" size="sm" onClick={() => openGallery("video")} className="justify-start">
           <Video className="h-4 w-4" /> Add Video Context
         </Button>
-        <Button type="button" variant="outline" size="sm" onClick={() => audRef.current?.click()} className="justify-start">
+        <Button type="button" variant="outline" size="sm" onClick={() => openGallery("audio")} className="justify-start">
           <Music className="h-4 w-4" /> Add Audio Context
         </Button>
       </div>
 
-      <input ref={imgRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFiles(e.target.files, "image"); e.target.value = ""; }} />
-      <input ref={vidRef} type="file" accept="video/*" multiple className="hidden" onChange={(e) => { handleFiles(e.target.files, "video"); e.target.value = ""; }} />
-      <input ref={audRef} type="file" accept="audio/*" multiple className="hidden" onChange={(e) => { handleFiles(e.target.files, "audio"); e.target.value = ""; }} />
-
-      {(value.checklists.length > 0 || value.media.length > 0 || uploadingCount > 0) && (
+      {(value.checklists.length > 0 || value.media.length > 0) && (
         <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto pt-1">
           {value.checklists.map((c) => (
             <span key={c.id} className="inline-flex items-center gap-1 text-xs bg-background border rounded-full pl-2 pr-1 py-0.5 max-w-[180px]">
@@ -124,11 +115,6 @@ export const ContextAttacher = ({ userId, excludeChecklistId, value, onChange, o
               <button onClick={() => removeMedia(m)} className="hover:bg-muted rounded-full p-0.5"><X className="h-3 w-3" /></button>
             </span>
           ))}
-          {uploadingCount > 0 && (
-            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin" /> Uploading {uploadingCount}…
-            </span>
-          )}
         </div>
       )}
 
@@ -139,6 +125,19 @@ export const ContextAttacher = ({ userId, excludeChecklistId, value, onChange, o
         onClose={() => setPickerOpen(false)}
         onConfirm={(picks) => { onChange({ ...value, checklists: picks }); setPickerOpen(false); }}
       />
+
+      {galleryKind && (
+        <MediaGalleryPicker
+          open={!!galleryKind}
+          userId={userId}
+          kind={galleryKind}
+          mode="multi"
+          maxSelected={MAX_PER_KIND}
+          initialSelectedIds={initialIdsForKind(galleryKind)}
+          onClose={() => setGalleryKind(null)}
+          onConfirm={onGalleryConfirm}
+        />
+      )}
     </div>
   );
 };

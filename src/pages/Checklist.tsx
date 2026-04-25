@@ -473,6 +473,9 @@ const ChecklistPage = () => {
       case "queue":
         navigate("/queue");
         break;
+      case "media-gallery":
+        navigate("/media");
+        break;
       case "theme":
         setTheme((t) => (t === "dark" ? "light" : "dark"));
         break;
@@ -696,17 +699,17 @@ const ChecklistPage = () => {
   const runMediaAction = async (sourceItem: ChecklistItem, action: MediaAction, opts: GenOptions) => {
     if (!checklist) return;
     try {
-      let payload: any = { prompt: sourceItem.text, aspectRatio: opts.aspectRatio, quality: opts.quality };
+      const payload: any = { prompt: sourceItem.text, aspectRatio: opts.aspectRatio, quality: opts.quality };
+      const assets = opts.assets ?? [];
       if (action === "image-image" || action === "remix") {
-        payload.refImages = await Promise.all((opts.files ?? []).map(fileToBase64));
+        if (assets.length === 0) throw new Error("missing image");
+        payload.refImageUrls = assets.map((a) => a.url);
       } else if (action === "image-video" || action === "video-video") {
-        const file = opts.files?.[0];
-        if (!file) throw new Error("missing file");
-        payload.sourceDataUrl = await fileToBase64(file);
+        if (assets.length === 0) throw new Error("missing media");
+        payload.sourceUrl = assets[0].url;
       } else if (action === "analyze-image") {
-        const file = opts.files?.[0];
-        if (!file) throw new Error("missing file");
-        payload.imageDataUrl = await fileToBase64(file);
+        if (assets.length === 0) throw new Error("missing image");
+        payload.imageUrl = assets[0].url;
       }
       setDialog({ kind: "none" });
       requestEnqueue({
@@ -1063,7 +1066,7 @@ const ChecklistPage = () => {
         }}
       />
 
-      {dialog.kind === "media" && (
+      {dialog.kind === "media" && user && (
         <MediaActionDialog
           open
           title={
@@ -1075,6 +1078,7 @@ const ChecklistPage = () => {
           }
           prompt={dialog.sourceItem.text || "(empty)"}
           mode={dialog.action}
+          userId={user.id}
           onClose={() => setDialog({ kind: "none" })}
           onGenerate={(opts) => runMediaAction(dialog.sourceItem, dialog.action, opts)}
           generateLabel={dialog.action === "analyze-image" ? "Analyze" : "Generate"}

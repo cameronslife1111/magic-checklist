@@ -224,7 +224,11 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ r
     case "remix": {
       const prompt = buildPrompt(p.prompt, ctx, false);
       const extraRefs = await Promise.all(ctx.imageUrls.map(urlToDataUrl));
-      const refImages = [...(p.refImages ?? []), ...extraRefs].slice(0, 16);
+      // New gallery-based payload: refImageUrls. Legacy: refImages (data URLs).
+      const galleryRefs = Array.isArray(p.refImageUrls)
+        ? await Promise.all((p.refImageUrls as string[]).map(urlToDataUrl))
+        : [];
+      const refImages = [...(p.refImages ?? []), ...galleryRefs, ...extraRefs].slice(0, 16);
       const out = await callFn("lovable-image", { prompt, aspectRatio: p.aspectRatio, quality: p.quality, refImages }, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       const url = await uploadDataUrl(supabase, job.user_id, out.dataUrl, "png");
@@ -237,7 +241,9 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ r
     case "image-video":
     case "video-video": {
       const prompt = buildPrompt(p.prompt, ctx, true);
+      // Prefer new gallery URL field, then legacy data URL, then context fallback.
       let sourceDataUrl = p.sourceDataUrl;
+      if (!sourceDataUrl && p.sourceUrl) sourceDataUrl = await urlToDataUrl(p.sourceUrl);
       if (!sourceDataUrl) {
         const fallback = job.action_type === "video-video" ? ctx.videoUrls[0] : ctx.imageUrls[0];
         if (fallback) sourceDataUrl = await urlToDataUrl(fallback);
@@ -255,6 +261,7 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ r
     case "analyze-image": {
       const prompt = buildPrompt(p.prompt, ctx, ctx.imageUrls.length > 1);
       let imageDataUrl = p.imageDataUrl;
+      if (!imageDataUrl && p.imageUrl) imageDataUrl = await urlToDataUrl(p.imageUrl);
       if (!imageDataUrl && ctx.imageUrls[0]) imageDataUrl = await urlToDataUrl(ctx.imageUrls[0]);
       const out = await callFn("openai-vision", { prompt, imageDataUrl }, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
