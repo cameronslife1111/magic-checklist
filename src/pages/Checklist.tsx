@@ -48,6 +48,12 @@ const ChecklistPage = () => {
   const [actionsOpen, setActionsOpen] = useState(false);
   const [dialog, setDialog] = useState<DialogState>({ kind: "none" });
   const [viewer, setViewer] = useState<{ url: string; type: string } | null>(null);
+  const [pendingEnqueue, setPendingEnqueue] = useState<null | {
+    action_type: string;
+    actionLabel: string;
+    payload: any;
+    source_item_id: string | null;
+  }>(null);
   const [focusItemId, setFocusItemId] = useState<string | null>(null);
   const [reorderMode, setReorderMode] = useState(false);
   const [muted, setMutedState] = useState<boolean>(() => isMuted());
