@@ -1,32 +1,23 @@
+## Bug
+On mobile, tapping a search result correctly opens the picked checklist, but the synthesized click from that same touch then lands on the `<h1>` title (which sits directly below the search dropdown) and opens the "Edit checklist title" dialog.
 
-# Add Mute toggle for Web Speech + auto-stop on typing
+## Root cause
+In `src/components/ChecklistSearch.tsx`, each result row uses `onPointerDown` + `e.preventDefault()` to pick a checklist. On iOS Safari, after the dropdown closes synchronously, the browser still dispatches the follow-up `click` event for that touch. With the dropdown gone, the click lands on the `<h1>` in `src/pages/Checklist.tsx` (line 697-703) whose `onClick` opens the rename dialog.
 
-## 1. `src/lib/speech.ts` — Add a global "muted" gate
-- Add module-level `let muted = false`.
-- Export `isMuted()`, `setMuted(v: boolean)`.
-- In `speak()`: early return if `muted` is true.
-- In `setMuted(true)`: also call `window.speechSynthesis.cancel()` so any in-flight utterance stops immediately.
-- Persist mute preference to `localStorage` (`speech-muted`) and read on module load so it survives reloads.
+## Fix (minimal, targeted)
 
-## 2. `src/components/ActionsSheet.tsx` — Add Mute item at the very top
-- Add new `ActionKey` value: `"mute"`.
-- Accept new prop `muted: boolean`.
-- Build the item dynamically:
-  - If `muted` → label "Unmute speech", icon `Volume2`.
-  - If `!muted` → label "Mute speech", icon `VolumeX`.
-- Prepend this item to `items` so it is the first row in the sheet (above "Add new checkbox").
+### 1. `src/components/ChecklistSearch.tsx` — swallow the trailing click
+- Keep the existing `onPointerDown` selection behavior (so it still feels instant).
+- Track `pickingRef = useRef(false)`. Set it to `true` inside `handlePick`, then clear it on a short timeout (~400ms).
+- While `pickingRef.current` is true, attach a one-shot capture-phase `click` listener to `document` that calls `e.stopPropagation()` and `e.preventDefault()`, then removes itself. This blocks the synthesized click from reaching the `<h1>` underneath.
+- Alternative simpler version: in `handlePick`, install a `window.addEventListener('click', handler, { capture: true, once: true })` that swallows the next click. This is the approach we'll use — smaller and self-contained.
 
-## 3. `src/pages/Checklist.tsx` — Wire it up
-- Import `isMuted`, `setMuted` from `@/lib/speech`.
-- Add `const [muted, setMutedState] = useState(isMuted())`.
-- Pass `muted={muted}` to `<ActionsSheet />`.
-- In the actions `onPick` switch, handle `"mute"`:
-  - `const next = !muted; setMuted(next); setMutedState(next);` then close the sheet and toast "Speech muted" / "Speech unmuted".
+### 2. `src/pages/Checklist.tsx` — defensive guard on the title (small hardening)
+- Change the `<h1>` `onClick` to also check that the click target is the `<h1>` itself (not bubbling weirdness). Not strictly required once #1 is in, but cheap insurance.
 
-## 4. Auto-stop speech when user starts typing in a checkbox
-- In `src/components/ItemRow.tsx`, add `onFocus={() => stopSpeech()}` to the `<textarea>` (import `stopSpeech` from `@/lib/speech`).
-- This stops only the current utterance — it does NOT toggle the mute state, so subsequent navigation will speak again unless the user has explicitly muted.
+## What about the "scroll + highlight + speak" behavior?
+`openChecklist` already resets `didAutoFocusRef.current = null`, and the existing effect on lines 138-151 scrolls the highest unchecked item to center, applies the `glow-active` highlight (via `highestUnchecked` memo), and calls `speak(text)`. So once the title-dialog bug is gone, the requested behavior (scroll to highest unchecked, yellow glow, speech reads it) already works. No additional changes needed there.
 
-## Notes
-- `speak()` callers across the file (`handleToggle`, auto-focus effect, generation flows) need no changes — the mute check is centralized in `speak()`.
-- Long-press "add new checkbox" focuses the new textarea via `autoFocus`, which will also trigger the new `onFocus` → `stopSpeech()`, matching the requested behavior automatically.
+## Files changed
+- `src/components/ChecklistSearch.tsx` — swallow the next click after a pick.
+- `src/pages/Checklist.tsx` — minor defensive tweak on the title `onClick` (optional but included).
