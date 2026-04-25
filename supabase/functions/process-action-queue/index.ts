@@ -299,7 +299,7 @@ async function runWithCancellation(
         controller.abort();
       }
     } catch (_) { /* ignore poll errors */ }
-  }, 2000);
+  }, 5000);
   try {
     return await work(controller.signal);
   } finally {
