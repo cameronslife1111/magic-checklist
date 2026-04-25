@@ -996,6 +996,39 @@ const ChecklistPage = () => {
         }}
       />
 
+      <TextPromptDialog
+        open={dialog.kind === "duplicate-title"}
+        title="Duplicate checklist"
+        label="New checklist title"
+        initial={`${checklist.title} Copy`}
+        saveLabel="Duplicate"
+        onClose={() => setDialog({ kind: "none" })}
+        onSave={async (title) => {
+          await duplicateCurrent(title);
+          setDialog({ kind: "none" });
+        }}
+      />
+
+      <AlertDialog open={dialog.kind === "delete-checklist"} onOpenChange={(o) => { if (!o) setDialog({ kind: "none" }); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this checklist?</AlertDialogTitle>
+            <AlertDialogDescription>
+              "{checklist.title}" and all its checkboxes will be permanently deleted. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); deleteCurrentChecklist(); }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <ChecklistPickerDialog
         open={dialog.kind === "insert-link"}
         excludeId={checklist.id}
