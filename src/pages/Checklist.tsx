@@ -388,7 +388,10 @@ const ChecklistPage = () => {
         setDialog({ kind: "new" });
         break;
       case "duplicate":
-        await duplicateCurrent();
+        setDialog({ kind: "duplicate-title" });
+        break;
+      case "delete-checklist":
+        setDialog({ kind: "delete-checklist" });
         break;
       case "edit-title":
         setDialog({ kind: "edit-title" });
