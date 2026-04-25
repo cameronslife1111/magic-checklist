@@ -271,9 +271,7 @@ const ChecklistPage = () => {
 
     switch (key) {
       case "add": {
-        const sourceId = highestUnchecked?.id ?? (items[items.length - 1]?.id ?? null);
-        const created = await insertItemAfter(sourceId, { text: "" });
-        if (created) setFocusItemId(created.id);
+        await addNewAfterCurrent();
         break;
       }
       case "new":
