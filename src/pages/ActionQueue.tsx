@@ -145,6 +145,25 @@ const ActionQueue = () => {
   const JobRow = ({ j }: { j: Job }) => {
     const isFailed = j.status === "failed";
     const canPause = j.status === "pending" || j.status === "scheduled";
+    const [copied, setCopied] = useState(false);
+
+    const copyError = async () => {
+      const actionLabel = ACTION_LABELS[j.action_type] ?? j.action_type;
+      const text =
+        `Action: ${actionLabel}\n` +
+        `What went wrong: ${j.error_friendly ?? "Something went wrong."}\n` +
+        `Fix: ${j.error_fix ?? "(no fix suggested)"}\n` +
+        `Raw error:\n${j.error_raw ?? "(no raw error)"}`;
+      try {
+        await navigator.clipboard.writeText(text);
+        setCopied(true);
+        toast.success("Error details copied");
+        setTimeout(() => setCopied(false), 1500);
+      } catch {
+        toast.error("Could not copy");
+      }
+    };
+
     return (
       <li className={`rounded-xl border p-3 ${isFailed ? "border-destructive/40 bg-destructive/5" : "border-border bg-card"}`}>
         <div className="flex items-start justify-between gap-3">
@@ -171,18 +190,33 @@ const ActionQueue = () => {
 
             {isFailed && (
               <div className="mt-2 rounded-lg bg-destructive/10 p-2 text-sm">
-                <div className="flex items-start gap-2">
-                  <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
-                  <div className="min-w-0">
-                    <p className="font-medium text-destructive">{j.error_friendly ?? "Something went wrong."}</p>
-                    {j.error_fix && <p className="text-foreground/80 mt-1"><strong>Fix:</strong> {j.error_fix}</p>}
-                    {j.error_raw && (
-                      <details className="mt-1">
-                        <summary className="text-xs text-muted-foreground cursor-pointer">Raw error</summary>
-                        <pre className="text-xs mt-1 whitespace-pre-wrap break-all">{j.error_raw}</pre>
-                      </details>
-                    )}
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex items-start gap-2 min-w-0 flex-1">
+                    <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-muted-foreground">
+                        {ACTION_LABELS[j.action_type] ?? j.action_type}
+                      </p>
+                      <p className="font-medium text-destructive mt-0.5">{j.error_friendly ?? "Something went wrong."}</p>
+                      {j.error_fix && <p className="text-foreground/80 mt-1"><strong>Fix:</strong> {j.error_fix}</p>}
+                      {j.error_raw && (
+                        <details className="mt-1">
+                          <summary className="text-xs text-muted-foreground cursor-pointer">Raw error</summary>
+                          <pre className="text-xs mt-1 whitespace-pre-wrap break-all">{j.error_raw}</pre>
+                        </details>
+                      )}
+                    </div>
                   </div>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={copyError}
+                    className="shrink-0 h-7 px-2"
+                    aria-label="Copy error details"
+                  >
+                    {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+                    {copied ? "Copied" : "Copy"}
+                  </Button>
                 </div>
               </div>
             )}
