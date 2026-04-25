@@ -796,6 +796,53 @@ const ChecklistPage = () => {
     }
   };
 
+  const handleSendToBlank = async (newTitle: string) => {
+    if (!user || !checklist) return;
+    const src = highestUnchecked;
+    if (!src) {
+      toast.error("No unchecked checkbox found.");
+      setDialog({ kind: "none" });
+      return;
+    }
+    try {
+      const title = newTitle.trim() || (src.text?.slice(0, 80) || "Untitled");
+      const { data: created, error: clErr } = await supabase
+        .from("checklists")
+        .insert({ user_id: user.id, title, background_color: checklist.background_color })
+        .select().single();
+      if (clErr || !created) throw clErr ?? new Error("create failed");
+
+      const { error: insErr } = await supabase.from("checklist_items").insert({
+        checklist_id: created.id,
+        user_id: user.id,
+        text: src.text ?? "",
+        position: POS_STEP,
+        external_link: src.external_link ?? null,
+        linked_checklist_id: src.linked_checklist_id ?? null,
+        media_url: src.media_url ?? null,
+        media_type: src.media_type ?? null,
+        checked: false,
+      });
+      if (insErr) throw insErr;
+
+      const { error: delErr } = await supabase.from("checklist_items").delete().eq("id", src.id);
+      if (delErr) throw delErr;
+
+      setItems((prev) => {
+        const next = prev.filter((i) => i.id !== src.id);
+        focusAndSpeakHighestUnchecked(next);
+        return next;
+      });
+
+      await openChecklist(created.id);
+      toast.success("Sent to new checklist.");
+    } catch {
+      toast.error("Could not send. Try again.");
+    } finally {
+      setDialog({ kind: "none" });
+    }
+  };
+
   if (loading || !checklist) {
     return <div className="min-h-screen flex items-center justify-center text-muted-foreground">Loading…</div>;
   }
