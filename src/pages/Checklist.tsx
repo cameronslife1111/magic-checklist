@@ -125,6 +125,22 @@ const ChecklistPage = () => {
 
   const highestUnchecked = useMemo(() => items.find((i) => !i.checked) ?? null, [items]);
 
+  // Auto-scroll & speak the highest unchecked item once per checklist load
+  useEffect(() => {
+    if (!checklist || !highestUnchecked) return;
+    if (didAutoFocusRef.current === checklist.id) return;
+    didAutoFocusRef.current = checklist.id;
+    const id = highestUnchecked.id;
+    const text = highestUnchecked.linked_checklist_id
+      ? (highestUnchecked.text || "Open checklist")
+      : highestUnchecked.text;
+    requestAnimationFrame(() => {
+      const el = itemRefs.current[id];
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (text) speak(text);
+    });
+  }, [checklist, highestUnchecked]);
+
   const scrollItemToCenter = (id: string) => {
     requestAnimationFrame(() => {
       const el = itemRefs.current[id];
