@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -18,14 +18,19 @@ export const TextPromptDialog = ({ open, title, label, initial = "", saveLabel =
   const [value, setValue] = useState(initial);
   const [busy, setBusy] = useState(false);
 
-  // reset value when opening
+  // Reset the input every time the dialog opens, so callers always see the
+  // latest `initial` value (e.g. the title of the checklist currently open).
+  useEffect(() => {
+    if (open) setValue(initial);
+  }, [open, initial]);
+
   const handleOpen = (o: boolean) => {
     if (!o) onClose();
   };
 
   return (
     <Dialog open={open} onOpenChange={handleOpen}>
-      <DialogContent onOpenAutoFocus={() => setValue(initial)} className="max-w-sm">
+      <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
