@@ -231,7 +231,7 @@ Deno.serve(async (req) => {
       // Recurring: enqueue next occurrence
       const interval = recurrenceToInterval(j.recurrence);
       if (interval) {
-        const { data: next } = await supabase.rpc("now"); // ignored; we compute below
+        
         const nextRun = new Date(Date.now() + intervalMs(j.recurrence!)).toISOString();
         await supabase.from("action_jobs").insert({
           user_id: j.user_id,
