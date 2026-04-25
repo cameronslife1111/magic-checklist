@@ -3,12 +3,14 @@ import { Button } from "@/components/ui/button";
 import {
   Plus, FilePlus, Copy, Pencil, Scissors, Type, Image as ImageIcon, Images, Wand2,
   Film, Video, Link2, Eye, Search, Palette, LogOut, Moon, Sun, ArrowUpDown,
+  ClipboardCopy, ClipboardList,
 } from "lucide-react";
 
 export type ActionKey =
   | "add" | "new" | "duplicate" | "edit-title" | "split"
   | "text-text" | "text-image" | "image-image" | "remix" | "image-video" | "video-video"
-  | "insert-link" | "analyze-image" | "web-search" | "bg" | "rearrange" | "theme" | "sign-out";
+  | "insert-link" | "analyze-image" | "web-search" | "bg" | "rearrange"
+  | "copy-sentence" | "copy-checklist" | "theme" | "sign-out";
 
 const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: "add",            label: "Add new checkbox",        icon: Plus },
@@ -27,6 +29,8 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "web-search",     label: "Text to web search",      icon: Search },
   { key: "bg",             label: "Change checklist background", icon: Palette },
   { key: "rearrange",      label: "Rearrange checkboxes",    icon: ArrowUpDown },
+  { key: "copy-sentence",  label: "Copy sentence",           icon: ClipboardCopy },
+  { key: "copy-checklist", label: "Copy full checklist",     icon: ClipboardList },
 ];
 
 type Props = {
