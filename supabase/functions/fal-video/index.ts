@@ -28,8 +28,9 @@ async function uploadToFal(falKey: string, dataUrl: string): Promise<string> {
 }
 
 async function pollFal(falKey: string, statusUrl: string, resultUrl: string): Promise<any> {
-  for (let i = 0; i < 90; i++) {
-    await new Promise((r) => setTimeout(r, 2000));
+  for (let i = 0; i < 120; i++) {
+    // Faster polling early; videos still take a while but check sooner just in case.
+    await new Promise((r) => setTimeout(r, i < 10 ? 1000 : 2000));
     const s = await fetch(statusUrl, { headers: { Authorization: `Key ${falKey}` } });
     if (!s.ok) continue;
     const j = await s.json();
