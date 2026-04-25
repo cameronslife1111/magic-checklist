@@ -11,33 +11,42 @@ export const ChecklistSearch = ({ onPick }: Props) => {
   const [results, setResults] = useState<{ id: string; title: string }[]>([]);
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    const onClick = (e: MouseEvent) => {
+    const onPointer = (e: PointerEvent) => {
       if (!wrapRef.current?.contains(e.target as Node)) setOpen(false);
     };
-    document.addEventListener("mousedown", onClick);
-    return () => document.removeEventListener("mousedown", onClick);
+    document.addEventListener("pointerdown", onPointer);
+    return () => document.removeEventListener("pointerdown", onPointer);
   }, []);
 
   useEffect(() => {
-    if (!open) return;
     let cancelled = false;
-    (async () => {
+    const t = setTimeout(async () => {
       let query = supabase.from("checklists").select("id,title").order("updated_at", { ascending: false }).limit(20);
       if (q.trim()) query = query.ilike("title", `%${q.trim()}%`);
       const { data } = await query;
       if (!cancelled) setResults(data ?? []);
-    })();
-    return () => { cancelled = true; };
-  }, [q, open]);
+    }, 150);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [q]);
+
+  const handlePick = (id: string) => {
+    onPick(id);
+    setQ("");
+    setOpen(false);
+    inputRef.current?.blur();
+  };
 
   return (
     <div ref={wrapRef} className="relative">
       <Input
+        ref={inputRef}
         value={q}
-        onChange={(e) => setQ(e.target.value)}
+        onChange={(e) => { setQ(e.target.value); if (!open) setOpen(true); }}
         onFocus={() => setOpen(true)}
+        onClick={() => setOpen(true)}
         placeholder="Search checklists"
         aria-label="Search checklists"
         className="h-11 rounded-xl bg-card shadow-soft"
@@ -51,8 +60,7 @@ export const ChecklistSearch = ({ onPick }: Props) => {
               {results.map((r) => (
                 <li key={r.id}>
                   <button
-                    onMouseDown={(e) => e.preventDefault()}
-                    onClick={() => { onPick(r.id); setQ(""); setOpen(false); }}
+                    onPointerDown={(e) => { e.preventDefault(); handlePick(r.id); }}
                     className="w-full text-left px-4 py-2.5 hover:bg-accent text-sm"
                   >
                     {r.title}
