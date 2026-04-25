@@ -20,16 +20,18 @@ const AI_KEYS = new Set<ActionKey>([
 ]);
 
 const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  // Top: most-used quick utilities
-  { key: "copy-sentence",    label: "Copy sentence",            icon: ClipboardCopy },
-  { key: "copy-checklist",   label: "Copy full checklist",      icon: ClipboardList },
-  { key: "rearrange",        label: "Rearrange checkboxes",     icon: ArrowUpDown },
-  { key: "insert-link",      label: "Insert checklist link",    icon: Link2 },
-  { key: "add",              label: "Add new checkbox",         icon: Plus },
-  { key: "duplicate-item",   label: "Duplicate checkbox",       icon: CopyPlus },
+  // Top: moved-up quick actions (right under Mute)
   { key: "split",            label: "Split current checkbox",   icon: Scissors },
   { key: "send-to",          label: "Send to checklist",        icon: Send },
   { key: "queue",            label: "Action Queue Dashboard",   icon: ListChecks },
+  { key: "rearrange",        label: "Rearrange checkboxes",     icon: ArrowUpDown },
+
+  // Most-used quick utilities
+  { key: "copy-sentence",    label: "Copy sentence",            icon: ClipboardCopy },
+  { key: "copy-checklist",   label: "Copy full checklist",      icon: ClipboardList },
+  { key: "insert-link",      label: "Insert checklist link",    icon: Link2 },
+  { key: "add",              label: "Add new checkbox",         icon: Plus },
+  { key: "duplicate-item",   label: "Duplicate checkbox",       icon: CopyPlus },
   { key: "media-gallery",    label: "Media Gallery",            icon: Library },
   { key: "bg",               label: "Change checklist background", icon: Palette },
 
