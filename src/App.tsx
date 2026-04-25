@@ -7,6 +7,7 @@ import { AuthProvider, useAuth } from "@/hooks/useAuth";
 import Login from "./pages/Login";
 import SignUp from "./pages/SignUp";
 import Checklist from "./pages/Checklist";
+import ActionQueue from "./pages/ActionQueue";
 import NotFound from "./pages/NotFound.tsx";
 
 const queryClient = new QueryClient();
@@ -34,6 +35,7 @@ const App = () => (
         <AuthProvider>
           <Routes>
             <Route path="/" element={<RequireAuth><Checklist /></RequireAuth>} />
+            <Route path="/queue" element={<RequireAuth><ActionQueue /></RequireAuth>} />
             <Route path="/login" element={<PublicOnly><Login /></PublicOnly>} />
             <Route path="/signup" element={<PublicOnly><SignUp /></PublicOnly>} />
             <Route path="*" element={<NotFound />} />
