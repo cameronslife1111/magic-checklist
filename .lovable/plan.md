@@ -1,41 +1,81 @@
-# Add Stop button for running jobs in Action Queue
+# Goal
+Whenever the app shows a list of checklists to pick from, sort them by **title** in this order:
+1. Emojis / symbols (anything that isn't a letter or digit) first
+2. Numbers next
+3. Letters last
+4. Within each group, ascending alphabetical (case-insensitive, locale-aware) — e.g. `0` before `9`, `apple` before `banana`.
 
-## Goal
-Add a **Stop** button to running jobs in the Action Queue Dashboard that truly cancels in-flight AI generation (not just a status flip).
+This matches your description: a title starting with `0` ranks above one starting with `B`, and a title starting with an emoji ranks above one starting with `0`.
 
-## How cancellation will actually work
+# Where this applies
+All four picker/search components currently sort by `updated_at desc`. They will be switched to title-based sorting:
+- `src/components/SendToChecklistDialog.tsx`
+- `src/components/ChecklistPickerDialog.tsx` (insert checklist link)
+- `src/components/ChecklistSearch.tsx` (home screen search)
+- `src/components/ContextAttacher.tsx` (attach checklist context)
 
-The worker (`process-action-queue`) currently `await`s each upstream AI call (OpenAI / Lovable AI / Fal / Perplexity) to completion with no way to abort. To make Stop *real*, we need cooperative cancellation:
+# Implementation
 
-1. Client marks the job `cancelled` in the DB.
-2. Worker polls the job's status during the fetch and aborts the upstream HTTP request via `AbortController` the moment it sees `cancelled`.
-3. Worker writes the final `cancelled` state and skips result-insert / retry logic.
+## 1. New shared sort helper — `src/lib/sortChecklists.ts`
+```ts
+// Bucket: 0 = emoji/symbol, 1 = number, 2 = letter, 3 = empty/other
+const bucket = (title: string): number => {
+  const ch = (title ?? "").trim();
+  if (!ch) return 3;
+  // Use first code point to handle multi-code-unit emoji
+  const cp = ch.codePointAt(0)!;
+  const first = String.fromCodePoint(cp);
+  if (/\p{L}/u.test(first)) return 2;       // letter
+  if (/\p{N}/u.test(first)) return 1;       // number/digit
+  return 0;                                  // emoji / symbol / punctuation
+};
 
-This is the only way to stop work that's already left the browser — there is no persistent socket to the worker.
+export function sortChecklistsByTitle<T extends { title: string }>(rows: T[]): T[] {
+  return [...rows].sort((a, b) => {
+    const ba = bucket(a.title);
+    const bb = bucket(b.title);
+    if (ba !== bb) return ba - bb;
+    return a.title.localeCompare(b.title, undefined, { sensitivity: "base", numeric: true });
+  });
+}
+```
+Notes:
+- Uses Unicode property escapes (`\p{L}`, `\p{N}`) so accented letters and non-Latin digits behave correctly.
+- `numeric: true` makes `2` sort before `10` within the number bucket.
+- `sensitivity: "base"` makes letter sort case-insensitive.
 
-## Changes
+## 2. Update each picker
+In each of the four files, change the Supabase query and post-process with the helper:
 
-### 1. `supabase/functions/process-action-queue/index.ts`
-- Change `callFn(name, body)` → `callFn(name, body, signal?: AbortSignal)`; pass `signal` into the upstream `fetch(...)`.
-- Add a `runWithCancellation(supabase, jobId, work)` helper:
-  - Creates an `AbortController`.
-  - `setInterval` every ~2s re-reads `action_jobs.status` for `jobId`; if `cancelled`, calls `controller.abort()`.
-  - Awaits inner `work(controller.signal)`, clears the interval in `finally`.
-- In `runJob`, thread the signal through every `callFn(...)` (text-text, web-search, text-image, image-image/remix, image-video/video-video, analyze-image).
-- In the main loop catch: if the error is an `AbortError` **or** a fresh DB read shows status is `cancelled`, set `status = 'cancelled'`, `completed_at = now()`; **do not** retry, **do not** insert a result item, **do not** enqueue the next recurrence. Otherwise keep existing failed/retry behavior.
-- Existing claim filter `.in("status", ["pending","scheduled"])` already prevents claiming a job cancelled before it ran — no extra code.
+**Before**
+```ts
+let query = supabase.from("checklists").select("id,title")
+  .order("updated_at", { ascending: false }).limit(30);
+if (q.trim()) query = query.ilike("title", `%${q.trim()}%`);
+const { data } = await query;
+setResults(data ?? []);
+```
 
-### 2. `src/pages/ActionQueue.tsx`
-- In `JobRow`, when `j.status === "running"`, render a destructive **Stop** button (Square icon from lucide-react). Clicking calls `update(j.id, { status: "cancelled" })` and toasts: "Stopping… this may take a few seconds."
-- Keep Pause only for `pending` / `scheduled` (already gated by `canPause`).
-- Update the **Failed** tab to also include `cancelled` jobs and relabel it "Failed / Stopped":
-  - `failed = jobs.filter(j => j.status === "failed" || j.status === "cancelled")`
-- For `cancelled` rows: hide the red error block; keep Re-run and Delete buttons.
+**After**
+```ts
+let query = supabase.from("checklists").select("id,title")
+  .order("title", { ascending: true }).limit(200);
+if (q.trim()) query = query.ilike("title", `%${q.trim()}%`);
+const { data } = await query;
+setResults(sortChecklistsByTitle(data ?? []));
+```
+Why bump the limit to 200: server-side `ORDER BY title` won't match our custom emoji/number/letter ordering, so we need a wider window to re-sort client-side and still show the right top-of-list items. 200 is a safe ceiling for these dialogs and keeps payloads small.
 
-### 3. No DB migration needed
-`status` is a free `text` column. `'cancelled'` is already in the TS union. RLS already permits owners to update their own jobs.
+For `SendToChecklistDialog` and `ChecklistPickerDialog`, the existing `excludeId` filter is applied after `sortChecklistsByTitle`, unchanged.
 
-## Caveats (will share after shipping)
-- Stop takes up to ~2 seconds to take effect (the worker's poll interval).
-- For video jobs, Fal may have already started GPU work and may still bill for it after we abort the connection.
-- If the job finished within the same worker tick, Stop is a no-op and the UI just refreshes to the final state.
+## 3. Out of scope
+- The Action Queue dashboard, the active checklist page itself, and other non-picker views are not affected.
+- No DB schema changes, no RLS changes, no edge function changes.
+
+# Verification
+After approval I'll:
+- Add the helper file
+- Patch the four picker components
+- Spot-check by viewing the diffs
+
+Approve and I'll roll it out.

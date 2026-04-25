@@ -3,7 +3,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-
+import { sortChecklistsByTitle } from "@/lib/sortChecklists";
 export type SendPosition = "top" | "bottom" | "current";
 
 type Props = {
@@ -30,10 +30,10 @@ export const SendToChecklistDialog = ({ open, excludeId, onClose, onSend }: Prop
     if (!open) return;
     let cancelled = false;
     (async () => {
-      let query = supabase.from("checklists").select("id,title").order("updated_at", { ascending: false }).limit(30);
+      let query = supabase.from("checklists").select("id,title").order("title", { ascending: true }).limit(200);
       if (q.trim()) query = query.ilike("title", `%${q.trim()}%`);
       const { data } = await query;
-      if (!cancelled) setResults((data ?? []).filter((r) => r.id !== excludeId));
+      if (!cancelled) setResults(sortChecklistsByTitle((data ?? []).filter((r) => r.id !== excludeId)));
     })();
     return () => { cancelled = true; };
   }, [q, open, excludeId]);

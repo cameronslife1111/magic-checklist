@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Checkbox } from "@/components/ui/checkbox";
 import { FileText, Image as ImageIcon, Video, Music, X, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { sortChecklistsByTitle } from "@/lib/sortChecklists";
 
 export type AttachedMedia = { url: string; path: string; type: "image" | "video" | "audio"; name: string };
 export type AttachedContext = {
@@ -161,10 +162,10 @@ const ChecklistMultiPicker = ({ open, excludeId, selected, onClose, onConfirm }:
     if (!open) return;
     let cancelled = false;
     (async () => {
-      let query = supabase.from("checklists").select("id,title").order("updated_at", { ascending: false }).limit(50);
+      let query = supabase.from("checklists").select("id,title").order("title", { ascending: true }).limit(200);
       if (q.trim()) query = query.ilike("title", `%${q.trim()}%`);
       const { data } = await query;
-      if (!cancelled) setResults((data ?? []).filter((r) => r.id !== excludeId));
+      if (!cancelled) setResults(sortChecklistsByTitle((data ?? []).filter((r) => r.id !== excludeId)));
     })();
     return () => { cancelled = true; };
   }, [q, open, excludeId]);

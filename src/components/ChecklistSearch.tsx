@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
 import { markPickJustHappened } from "@/lib/clickGuard";
+import { sortChecklistsByTitle } from "@/lib/sortChecklists";
 
 type Props = {
   onPick: (id: string) => void;
@@ -25,10 +26,10 @@ export const ChecklistSearch = ({ onPick }: Props) => {
   useEffect(() => {
     let cancelled = false;
     const t = setTimeout(async () => {
-      let query = supabase.from("checklists").select("id,title").order("updated_at", { ascending: false }).limit(20);
+      let query = supabase.from("checklists").select("id,title").order("title", { ascending: true }).limit(200);
       if (q.trim()) query = query.ilike("title", `%${q.trim()}%`);
       const { data } = await query;
-      if (!cancelled) setResults(data ?? []);
+      if (!cancelled) setResults(sortChecklistsByTitle(data ?? []));
     }, 150);
     return () => { cancelled = true; clearTimeout(t); };
   }, [q]);
