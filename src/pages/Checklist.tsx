@@ -7,6 +7,7 @@ import { ChecklistSearch } from "@/components/ChecklistSearch";
 import { ItemRow } from "@/components/ItemRow";
 import { ActionsSheet, ActionKey } from "@/components/ActionsSheet";
 import { Button } from "@/components/ui/button";
+import { Check } from "lucide-react";
 import { TextPromptDialog } from "@/components/TextPromptDialog";
 import { ChecklistPickerDialog } from "@/components/ChecklistPickerDialog";
 import { SendToChecklistDialog, SendPosition } from "@/components/SendToChecklistDialog";
