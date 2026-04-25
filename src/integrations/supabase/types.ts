@@ -14,6 +14,75 @@ export type Database = {
   }
   public: {
     Tables: {
+      action_jobs: {
+        Row: {
+          action_type: string
+          attempts: number
+          checklist_id: string
+          completed_at: string | null
+          created_at: string
+          error_fix: string | null
+          error_friendly: string | null
+          error_raw: string | null
+          id: string
+          max_attempts: number
+          parent_job_id: string | null
+          payload: Json
+          recurrence: string | null
+          result: Json | null
+          scheduled_for: string | null
+          source_item_id: string | null
+          started_at: string | null
+          status: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          action_type: string
+          attempts?: number
+          checklist_id: string
+          completed_at?: string | null
+          created_at?: string
+          error_fix?: string | null
+          error_friendly?: string | null
+          error_raw?: string | null
+          id?: string
+          max_attempts?: number
+          parent_job_id?: string | null
+          payload?: Json
+          recurrence?: string | null
+          result?: Json | null
+          scheduled_for?: string | null
+          source_item_id?: string | null
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          action_type?: string
+          attempts?: number
+          checklist_id?: string
+          completed_at?: string | null
+          created_at?: string
+          error_fix?: string | null
+          error_friendly?: string | null
+          error_raw?: string | null
+          id?: string
+          max_attempts?: number
+          parent_job_id?: string | null
+          payload?: Json
+          recurrence?: string | null
+          result?: Json | null
+          scheduled_for?: string | null
+          source_item_id?: string | null
+          started_at?: string | null
+          status?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       checklist_items: {
         Row: {
           checked: boolean
