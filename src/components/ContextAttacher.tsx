@@ -88,22 +88,18 @@ export const ContextAttacher = ({ userId, excludeChecklistId, value, onChange, o
         <Button type="button" variant="outline" size="sm" onClick={() => setPickerOpen(true)} className="justify-start">
           <FileText className="h-4 w-4" /> Add Text Context
         </Button>
-        <Button type="button" variant="outline" size="sm" onClick={() => imgRef.current?.click()} className="justify-start">
+        <Button type="button" variant="outline" size="sm" onClick={() => openGallery("image")} className="justify-start">
           <ImageIcon className="h-4 w-4" /> Add Image Context
         </Button>
-        <Button type="button" variant="outline" size="sm" onClick={() => vidRef.current?.click()} className="justify-start">
+        <Button type="button" variant="outline" size="sm" onClick={() => openGallery("video")} className="justify-start">
           <Video className="h-4 w-4" /> Add Video Context
         </Button>
-        <Button type="button" variant="outline" size="sm" onClick={() => audRef.current?.click()} className="justify-start">
+        <Button type="button" variant="outline" size="sm" onClick={() => openGallery("audio")} className="justify-start">
           <Music className="h-4 w-4" /> Add Audio Context
         </Button>
       </div>
 
-      <input ref={imgRef} type="file" accept="image/*" multiple className="hidden" onChange={(e) => { handleFiles(e.target.files, "image"); e.target.value = ""; }} />
-      <input ref={vidRef} type="file" accept="video/*" multiple className="hidden" onChange={(e) => { handleFiles(e.target.files, "video"); e.target.value = ""; }} />
-      <input ref={audRef} type="file" accept="audio/*" multiple className="hidden" onChange={(e) => { handleFiles(e.target.files, "audio"); e.target.value = ""; }} />
-
-      {(value.checklists.length > 0 || value.media.length > 0 || uploadingCount > 0) && (
+      {(value.checklists.length > 0 || value.media.length > 0) && (
         <div className="flex flex-wrap gap-1.5 max-h-32 overflow-y-auto pt-1">
           {value.checklists.map((c) => (
             <span key={c.id} className="inline-flex items-center gap-1 text-xs bg-background border rounded-full pl-2 pr-1 py-0.5 max-w-[180px]">
@@ -119,11 +115,6 @@ export const ContextAttacher = ({ userId, excludeChecklistId, value, onChange, o
               <button onClick={() => removeMedia(m)} className="hover:bg-muted rounded-full p-0.5"><X className="h-3 w-3" /></button>
             </span>
           ))}
-          {uploadingCount > 0 && (
-            <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-              <Loader2 className="h-3 w-3 animate-spin" /> Uploading {uploadingCount}…
-            </span>
-          )}
         </div>
       )}
 
@@ -134,6 +125,19 @@ export const ContextAttacher = ({ userId, excludeChecklistId, value, onChange, o
         onClose={() => setPickerOpen(false)}
         onConfirm={(picks) => { onChange({ ...value, checklists: picks }); setPickerOpen(false); }}
       />
+
+      {galleryKind && (
+        <MediaGalleryPicker
+          open={!!galleryKind}
+          userId={userId}
+          kind={galleryKind}
+          mode="multi"
+          maxSelected={MAX_PER_KIND}
+          initialSelectedIds={initialIdsForKind(galleryKind)}
+          onClose={() => setGalleryKind(null)}
+          onConfirm={onGalleryConfirm}
+        />
+      )}
     </div>
   );
 };
