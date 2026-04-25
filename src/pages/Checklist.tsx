@@ -9,6 +9,7 @@ import { ActionsSheet, ActionKey } from "@/components/ActionsSheet";
 import { Button } from "@/components/ui/button";
 import { TextPromptDialog } from "@/components/TextPromptDialog";
 import { ChecklistPickerDialog } from "@/components/ChecklistPickerDialog";
+import { SendToChecklistDialog, SendPosition } from "@/components/SendToChecklistDialog";
 import { BackgroundPickerDialog } from "@/components/BackgroundPickerDialog";
 import { MediaActionDialog, GenOptions } from "@/components/MediaActionDialog";
 import { MediaViewer } from "@/components/MediaViewer";
