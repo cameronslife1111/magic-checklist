@@ -84,6 +84,7 @@ const ChecklistPage = () => {
   }, [theme]);
 
   const itemRefs = useRef<Record<string, HTMLLIElement | null>>({});
+  const didAutoFocusRef = useRef<string | null>(null);
   const registerRef = useCallback((id: string, el: HTMLLIElement | null) => {
     itemRefs.current[id] = el;
   }, []);
