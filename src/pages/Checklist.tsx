@@ -9,6 +9,7 @@ import { ActionsSheet, ActionKey } from "@/components/ActionsSheet";
 import { Button } from "@/components/ui/button";
 import { TextPromptDialog } from "@/components/TextPromptDialog";
 import { ChecklistPickerDialog } from "@/components/ChecklistPickerDialog";
+import { SendToChecklistDialog, SendPosition } from "@/components/SendToChecklistDialog";
 import { BackgroundPickerDialog } from "@/components/BackgroundPickerDialog";
 import { MediaActionDialog, GenOptions } from "@/components/MediaActionDialog";
 import { MediaViewer } from "@/components/MediaViewer";
@@ -31,6 +32,7 @@ type DialogState =
   | { kind: "new" }
   | { kind: "edit-title" }
   | { kind: "insert-link" }
+  | { kind: "send-to" }
   | { kind: "bg" }
   | { kind: "media"; action: "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "analyze-image"; sourceItem: ChecklistItem };
 
@@ -308,6 +310,13 @@ const ChecklistPage = () => {
         }
         setDialog({ kind: "insert-link" });
         break;
+      case "send-to":
+        if (!highestUnchecked) {
+          toast.error("No unchecked checkbox found.");
+          return;
+        }
+        setDialog({ kind: "send-to" });
+        break;
       case "web-search":
         await runWebSearch();
         break;
@@ -546,6 +555,60 @@ const ChecklistPage = () => {
     }
   };
 
+  const handleSendTo = async (targetId: string, _title: string, where: SendPosition) => {
+    if (!user) return;
+    const src = highestUnchecked;
+    if (!src) {
+      toast.error("No unchecked checkbox found.");
+      setDialog({ kind: "none" });
+      return;
+    }
+    try {
+      const { data: targetItems, error: fetchErr } = await supabase
+        .from("checklist_items")
+        .select("id,position,checked")
+        .eq("checklist_id", targetId)
+        .order("position", { ascending: true });
+      if (fetchErr) throw fetchErr;
+      const list = (targetItems ?? []) as { id: string; position: number; checked: boolean }[];
+
+      let position: number;
+      if (list.length === 0) {
+        position = POS_STEP;
+      } else if (where === "top") {
+        position = list[0].position - POS_STEP;
+      } else if (where === "bottom") {
+        position = list[list.length - 1].position + POS_STEP;
+      } else {
+        const idx = list.findIndex((i) => !i.checked);
+        if (idx === -1) {
+          position = list[list.length - 1].position + POS_STEP;
+        } else {
+          const cur = list[idx];
+          const next = list[idx + 1];
+          position = next ? (cur.position + next.position) / 2 : cur.position + POS_STEP;
+        }
+      }
+
+      const { error: insErr } = await supabase.from("checklist_items").insert({
+        checklist_id: targetId,
+        user_id: user.id,
+        text: src.text ?? "",
+        position,
+        external_link: src.external_link ?? null,
+        linked_checklist_id: src.linked_checklist_id ?? null,
+        media_url: src.media_url ?? null,
+        media_type: src.media_type ?? null,
+      });
+      if (insErr) throw insErr;
+      toast.success("Sent to checklist.");
+    } catch {
+      toast.error("Could not send. Try again.");
+    } finally {
+      setDialog({ kind: "none" });
+    }
+  };
+
   if (loading || !checklist) {
     return <div className="min-h-screen flex items-center justify-center text-muted-foreground">Loading…</div>;
   }
@@ -671,6 +734,13 @@ const ChecklistPage = () => {
           await insertItemAfter(src?.id ?? null, { text: title, linked_checklist_id: id });
           setDialog({ kind: "none" });
         }}
+      />
+
+      <SendToChecklistDialog
+        open={dialog.kind === "send-to"}
+        excludeId={checklist.id}
+        onClose={() => setDialog({ kind: "none" })}
+        onSend={handleSendTo}
       />
 
       <BackgroundPickerDialog
