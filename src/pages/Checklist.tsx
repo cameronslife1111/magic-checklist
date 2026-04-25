@@ -435,6 +435,13 @@ const ChecklistPage = () => {
         }
         setDialog({ kind: "send-to" });
         break;
+      case "send-to-blank":
+        if (!highestUnchecked) {
+          toast.error("No unchecked checkbox found.");
+          return;
+        }
+        setDialog({ kind: "send-to-blank" });
+        break;
       case "web-search":
         await runWebSearch();
         break;
