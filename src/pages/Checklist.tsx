@@ -102,9 +102,19 @@ const ChecklistPage = () => {
     if (!user) return;
     (async () => {
       setLoading(true);
-      const { data: lists } = await supabase
-        .from("checklists").select("*").order("updated_at", { ascending: false }).limit(1);
-      let active = lists?.[0] as Checklist | undefined;
+      // Prefer the last-opened checklist on this device, if it still exists.
+      const savedId = localStorage.getItem("mc-last-checklist");
+      let active: Checklist | undefined;
+      if (savedId) {
+        const { data } = await supabase
+          .from("checklists").select("*").eq("id", savedId).maybeSingle();
+        if (data) active = data as Checklist;
+      }
+      if (!active) {
+        const { data: lists } = await supabase
+          .from("checklists").select("*").order("updated_at", { ascending: false }).limit(1);
+        active = lists?.[0] as Checklist | undefined;
+      }
       if (!active) {
         const { data: created } = await supabase
           .from("checklists").insert({ user_id: user.id, title: "My first checklist" })
@@ -126,6 +136,7 @@ const ChecklistPage = () => {
   const openChecklist = async (id: string) => {
     didAutoFocusRef.current = null;
     stopSpeech();
+    try { localStorage.setItem("mc-last-checklist", id); } catch {}
     const { data: cl } = await supabase.from("checklists").select("*").eq("id", id).single();
     const { data: its } = await supabase
       .from("checklist_items").select("*").eq("checklist_id", id).order("position", { ascending: true });
