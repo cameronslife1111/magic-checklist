@@ -914,7 +914,14 @@ const ChecklistPage = () => {
                   const { data } = await supabase.from("checklists").select("id,title");
                   const sorted = sortChecklistsByTitle(data ?? []);
                   const top = sorted[0];
-                  if (top && top.id !== checklist.id) await openChecklist(top.id);
+                  if (!top) return;
+                  if (top.id !== checklist.id) {
+                    await openChecklist(top.id);
+                    return;
+                  }
+                  if (highestUnchecked?.linked_checklist_id) {
+                    await openChecklist(highestUnchecked.linked_checklist_id);
+                  }
                 }}
                 className="w-16 h-14 rounded-2xl text-2xl leading-none shadow-floating select-none"
               >
