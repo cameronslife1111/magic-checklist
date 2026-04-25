@@ -235,6 +235,9 @@ const ChecklistPage = () => {
       case "bg":
         setDialog({ kind: "bg" });
         break;
+      case "theme":
+        setTheme((t) => (t === "dark" ? "light" : "dark"));
+        break;
       case "sign-out":
         try { await signOut(); navigate("/login", { replace: true }); }
         catch { toast.error("Could not sign out. Try again."); }
