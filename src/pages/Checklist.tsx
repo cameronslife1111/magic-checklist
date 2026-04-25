@@ -36,6 +36,17 @@ const ChecklistPage = () => {
   const [dialog, setDialog] = useState<DialogState>({ kind: "none" });
   const [viewer, setViewer] = useState<{ url: string; type: string } | null>(null);
   const [focusItemId, setFocusItemId] = useState<string | null>(null);
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    if (typeof window === "undefined") return "light";
+    return (localStorage.getItem("mc-theme") as "light" | "dark") ?? "light";
+  });
+
+  useEffect(() => {
+    const root = document.documentElement;
+    if (theme === "dark") root.classList.add("dark");
+    else root.classList.remove("dark");
+    localStorage.setItem("mc-theme", theme);
+  }, [theme]);
 
   const itemRefs = useRef<Record<string, HTMLLIElement | null>>({});
   const registerRef = useCallback((id: string, el: HTMLLIElement | null) => {
@@ -109,6 +120,23 @@ const ChecklistPage = () => {
     const trimmed = text.trim();
     const externalLink = isUrl(trimmed) ? trimmed : null;
     await supabase.from("checklist_items").update({ text, external_link: externalLink }).eq("id", item.id);
+  };
+
+  const handleDelete = async (item: ChecklistItem) => {
+    if (item.media_url) {
+      const marker = "/generated-media/";
+      const idx = item.media_url.indexOf(marker);
+      if (idx !== -1) {
+        const path = item.media_url.slice(idx + marker.length).split("?")[0];
+        try { await supabase.storage.from("generated-media").remove([path]); } catch {}
+      }
+    }
+    const { error } = await supabase.from("checklist_items").delete().eq("id", item.id);
+    if (error) {
+      toast.error("Could not delete. Try again.");
+      return;
+    }
+    setItems((prev) => prev.filter((i) => i.id !== item.id));
   };
 
   const positionAfter = (sourceId: string | null) => {
@@ -206,6 +234,9 @@ const ChecklistPage = () => {
         break;
       case "bg":
         setDialog({ kind: "bg" });
+        break;
+      case "theme":
+        setTheme((t) => (t === "dark" ? "light" : "dark"));
         break;
       case "sign-out":
         try { await signOut(); navigate("/login", { replace: true }); }
@@ -432,10 +463,12 @@ const ChecklistPage = () => {
                 key={it.id}
                 item={it}
                 autoFocus={focusItemId === it.id}
+                isActive={highestUnchecked?.id === it.id}
                 onToggle={handleToggle}
                 onTextChange={handleTextChange}
                 onOpenLinkedChecklist={openChecklist}
                 onOpenMedia={(url, type) => setViewer({ url, type })}
+                onDelete={handleDelete}
                 registerRef={registerRef}
               />
             ))}
@@ -457,7 +490,7 @@ const ChecklistPage = () => {
         </div>
       </div>
 
-      <ActionsSheet open={actionsOpen} onOpenChange={setActionsOpen} onPick={onPick} />
+      <ActionsSheet open={actionsOpen} onOpenChange={setActionsOpen} onPick={onPick} currentTheme={theme} />
 
       <TextPromptDialog
         open={dialog.kind === "new"}

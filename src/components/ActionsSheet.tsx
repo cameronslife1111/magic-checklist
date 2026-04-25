@@ -2,15 +2,15 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import {
   Plus, FilePlus, Copy, Pencil, Scissors, Type, Image as ImageIcon, Images, Wand2,
-  Film, Video, Link2, Eye, Search, Palette, LogOut,
+  Film, Video, Link2, Eye, Search, Palette, LogOut, Moon, Sun,
 } from "lucide-react";
 
 export type ActionKey =
   | "add" | "new" | "duplicate" | "edit-title" | "split"
   | "text-text" | "text-image" | "image-image" | "remix" | "image-video" | "video-video"
-  | "insert-link" | "analyze-image" | "web-search" | "bg" | "sign-out";
+  | "insert-link" | "analyze-image" | "web-search" | "bg" | "theme" | "sign-out";
 
-const ITEMS: { key: ActionKey; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: "add",            label: "Add new checkbox",        icon: Plus },
   { key: "new",            label: "New checklist",           icon: FilePlus },
   { key: "duplicate",      label: "Duplicate checklist",     icon: Copy },
@@ -26,16 +26,22 @@ const ITEMS: { key: ActionKey; label: string; icon: React.ComponentType<{ classN
   { key: "analyze-image",  label: "Analyze image",           icon: Eye },
   { key: "web-search",     label: "Text to web search",      icon: Search },
   { key: "bg",             label: "Change checklist background", icon: Palette },
-  { key: "sign-out",       label: "Sign out",                icon: LogOut },
 ];
 
 type Props = {
   open: boolean;
   onOpenChange: (o: boolean) => void;
   onPick: (k: ActionKey) => void;
+  currentTheme: "light" | "dark";
 };
 
-export const ActionsSheet = ({ open, onOpenChange, onPick }: Props) => {
+export const ActionsSheet = ({ open, onOpenChange, onPick, currentTheme }: Props) => {
+  const themeItem = currentTheme === "dark"
+    ? { key: "theme" as const, label: "Switch to light mode", icon: Sun }
+    : { key: "theme" as const, label: "Switch to dark mode", icon: Moon };
+  const signOutItem = { key: "sign-out" as const, label: "Sign out", icon: LogOut };
+  const items = [...STATIC_ITEMS, themeItem, signOutItem];
+
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent
@@ -48,7 +54,7 @@ export const ActionsSheet = ({ open, onOpenChange, onPick }: Props) => {
         <h2 className="px-5 text-lg font-semibold pb-2">Actions</h2>
         <div className="flex-1 overflow-y-auto px-3 pb-6 safe-bottom">
           <ul className="flex flex-col gap-1">
-            {ITEMS.map((it) => {
+            {items.map((it) => {
               const Icon = it.icon;
               return (
                 <li key={it.key}>

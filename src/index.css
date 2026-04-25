@@ -96,4 +96,8 @@
   }
   .shadow-soft { box-shadow: var(--shadow-soft); }
   .shadow-floating { box-shadow: var(--shadow-floating); }
+  .glow-active {
+    box-shadow: 0 0 0 2px hsl(48 96% 60% / 0.6), 0 0 20px 4px hsl(48 96% 60% / 0.45);
+    background-color: hsl(48 96% 60% / 0.1);
+  }
 }
