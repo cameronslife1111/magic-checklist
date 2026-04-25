@@ -44,10 +44,37 @@ const ChecklistPage = () => {
   const [dialog, setDialog] = useState<DialogState>({ kind: "none" });
   const [viewer, setViewer] = useState<{ url: string; type: string } | null>(null);
   const [focusItemId, setFocusItemId] = useState<string | null>(null);
+  const [reorderMode, setReorderMode] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
     return (localStorage.getItem("mc-theme") as "light" | "dark") ?? "light";
   });
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(TouchSensor, { activationConstraint: { delay: 150, tolerance: 8 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  );
+
+  const handleDragEnd = async (e: DragEndEvent) => {
+    const { active, over } = e;
+    if (!over || active.id === over.id) return;
+    const oldIndex = items.findIndex((i) => i.id === active.id);
+    const newIndex = items.findIndex((i) => i.id === over.id);
+    if (oldIndex < 0 || newIndex < 0) return;
+    const reordered = arrayMove(items, oldIndex, newIndex);
+    const moved = reordered[newIndex];
+    const before = reordered[newIndex - 1];
+    const after = reordered[newIndex + 1];
+    let newPos: number;
+    if (!before) newPos = (after?.position ?? POS_STEP) - POS_STEP;
+    else if (!after) newPos = (before.position ?? 0) + POS_STEP;
+    else newPos = ((before.position ?? 0) + (after.position ?? 0)) / 2;
+    const updated = reordered.map((i) => (i.id === moved.id ? { ...i, position: newPos } : i));
+    setItems(updated);
+    const { error } = await supabase.from("checklist_items").update({ position: newPos }).eq("id", moved.id);
+    if (error) toast.error("Could not save order. Try again.");
+  };
 
   useEffect(() => {
     const root = document.documentElement;
