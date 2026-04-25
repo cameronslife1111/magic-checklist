@@ -14,6 +14,7 @@ import { SendToChecklistDialog, SendPosition } from "@/components/SendToChecklis
 import { BackgroundPickerDialog } from "@/components/BackgroundPickerDialog";
 import { MediaActionDialog, GenOptions } from "@/components/MediaActionDialog";
 import { MediaViewer } from "@/components/MediaViewer";
+import { ScheduleActionDialog, SchedulePick } from "@/components/ScheduleActionDialog";
 import { toast } from "sonner";
 import { primeSpeech, speak, stopSpeech, isMuted, setMuted } from "@/lib/speech";
 import { wasPickJustNow } from "@/lib/clickGuard";
