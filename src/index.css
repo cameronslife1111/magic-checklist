@@ -85,6 +85,15 @@
     -webkit-font-smoothing: antialiased;
     font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Inter, sans-serif;
   }
+  /* Prevent iOS Safari auto-zoom on focus by ensuring inputs render at >=16px on mobile */
+  input, textarea, select {
+    font-size: 16px;
+  }
+  @media (min-width: 768px) {
+    input, textarea, select {
+      font-size: 14px;
+    }
+  }
 }
 
 @layer utilities {
