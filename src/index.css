@@ -50,26 +50,26 @@
   }
 
   .dark {
-    --background: 220 15% 10%;
-    --foreground: 220 10% 95%;
-    --card: 220 15% 12%;
-    --card-foreground: 220 10% 95%;
-    --popover: 220 15% 12%;
-    --popover-foreground: 220 10% 95%;
-    --primary: 220 80% 60%;
-    --primary-foreground: 0 0% 100%;
+    --background: 220 18% 7%;
+    --foreground: 220 15% 96%;
+    --card: 220 16% 13%;
+    --card-foreground: 220 15% 96%;
+    --popover: 220 16% 13%;
+    --popover-foreground: 220 15% 96%;
+    --primary: 220 90% 68%;
+    --primary-foreground: 220 20% 10%;
     --secondary: 220 14% 18%;
-    --secondary-foreground: 220 10% 95%;
-    --muted: 220 14% 18%;
-    --muted-foreground: 220 10% 65%;
-    --accent: 220 14% 20%;
-    --accent-foreground: 220 10% 95%;
-    --destructive: 0 70% 50%;
+    --secondary-foreground: 220 15% 95%;
+    --muted: 220 14% 16%;
+    --muted-foreground: 220 12% 70%;
+    --accent: 220 14% 22%;
+    --accent-foreground: 220 15% 95%;
+    --destructive: 0 70% 55%;
     --destructive-foreground: 0 0% 100%;
     --border: 220 14% 22%;
     --input: 220 14% 22%;
-    --ring: 220 80% 60%;
-    --checked: 220 8% 50%;
+    --ring: 220 90% 68%;
+    --checked: 220 10% 55%;
   }
 }
 
@@ -98,6 +98,12 @@
   .shadow-floating { box-shadow: var(--shadow-floating); }
   .glow-active {
     box-shadow: 0 0 0 2px hsl(48 96% 60% / 0.6), 0 0 20px 4px hsl(48 96% 60% / 0.45);
-    background-color: hsl(48 96% 60% / 0.1);
+    background-color: hsl(48 96% 60% / 0.12);
+    color: hsl(40 30% 12%);
+  }
+  .dark .glow-active {
+    box-shadow: 0 0 0 2px hsl(48 96% 60% / 0.7), 0 0 22px 4px hsl(48 96% 60% / 0.35);
+    background-color: hsl(48 96% 55% / 0.18);
+    color: hsl(48 100% 92%);
   }
 }
