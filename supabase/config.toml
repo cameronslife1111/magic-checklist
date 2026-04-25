@@ -14,3 +14,12 @@ verify_jwt = true
 
 [functions.perplexity-search]
 verify_jwt = true
+
+[functions.enqueue-action]
+verify_jwt = true
+
+[functions.process-action-queue]
+verify_jwt = false
+
+[functions.explain-error]
+verify_jwt = false
