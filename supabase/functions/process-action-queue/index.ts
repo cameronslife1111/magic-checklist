@@ -63,11 +63,12 @@ async function explainErrorInline(action_type: string, error_raw: string): Promi
   }
 }
 
-async function callFn(name: string, body: any) {
+async function callFn(name: string, body: any, signal?: AbortSignal) {
   const r = await fetch(`${SUPABASE_URL}/functions/v1/${name}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${SERVICE_KEY}`, "Content-Type": "application/json", apikey: SERVICE_KEY },
     body: JSON.stringify(body),
+    signal,
   });
   const text = await r.text();
   let json: any = {};
