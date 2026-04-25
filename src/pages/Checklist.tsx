@@ -169,6 +169,14 @@ const ChecklistPage = () => {
     });
   };
 
+  const focusAndSpeakHighestUnchecked = (list: ChecklistItem[]) => {
+    const next = list.find((i) => !i.checked);
+    if (!next) { stopSpeech(); return; }
+    scrollItemToCenter(next.id);
+    const text = next.linked_checklist_id ? (next.text || "Open checklist") : next.text;
+    if (text) speak(text);
+  };
+
   const handleToggle = async (item: ChecklistItem, next: boolean) => {
     primeSpeech();
     const targetIdx = items.findIndex((i) => i.id === item.id);
@@ -234,7 +242,11 @@ const ChecklistPage = () => {
       toast.error("Could not delete. Try again.");
       return;
     }
-    setItems((prev) => prev.filter((i) => i.id !== item.id));
+    setItems((prev) => {
+      const nextList = prev.filter((i) => i.id !== item.id);
+      focusAndSpeakHighestUnchecked(nextList);
+      return nextList;
+    });
   };
 
   const positionAfter = (sourceId: string | null) => {
@@ -684,7 +696,11 @@ const ChecklistPage = () => {
 
       const { error: delErr } = await supabase.from("checklist_items").delete().eq("id", src.id);
       if (delErr) throw delErr;
-      setItems((prev) => prev.filter((i) => i.id !== src.id));
+      setItems((prev) => {
+        const nextList = prev.filter((i) => i.id !== src.id);
+        focusAndSpeakHighestUnchecked(nextList);
+        return nextList;
+      });
 
       toast.success("Sent to checklist.");
     } catch {
