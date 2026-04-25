@@ -24,6 +24,7 @@ import { toast } from "sonner";
 import { primeSpeech, speak, stopSpeech, isMuted, setMuted } from "@/lib/speech";
 import { wasPickJustNow } from "@/lib/clickGuard";
 import { extractFirstUrl, isUrl, splitTextWithLinks } from "@/lib/split";
+import { sortChecklistsByTitle } from "@/lib/sortChecklists";
 import {
   DndContext, DragEndEvent, PointerSensor, TouchSensor, KeyboardSensor,
   useSensor, useSensors, closestCenter,
@@ -906,6 +907,18 @@ const ChecklistPage = () => {
                 className="flex-1 h-14 rounded-2xl text-base font-semibold shadow-floating select-none touch-none"
               >
                 Actions
+              </Button>
+              <Button
+                aria-label="Open top checklist"
+                onClick={async () => {
+                  const { data } = await supabase.from("checklists").select("id,title");
+                  const sorted = sortChecklistsByTitle(data ?? []);
+                  const top = sorted[0];
+                  if (top && top.id !== checklist.id) await openChecklist(top.id);
+                }}
+                className="w-16 h-14 rounded-2xl text-2xl leading-none shadow-floating select-none"
+              >
+                🏠
               </Button>
               <Button
                 aria-label="Check current and advance"
