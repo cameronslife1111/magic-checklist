@@ -36,12 +36,24 @@ export function primeSpeech() {
   } catch {}
 }
 
+function stripEmojis(text: string) {
+  return text
+    .replace(/\p{Extended_Pictographic}/gu, "")
+    .replace(/\p{Emoji_Modifier}/gu, "")
+    .replace(/\p{Regional_Indicator}/gu, "")
+    .replace(/[\u200D\uFE0F]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function speak(text: string) {
   if (muted) return;
   if (!("speechSynthesis" in window)) return;
+  const cleaned = stripEmojis(text);
   try {
     window.speechSynthesis.cancel();
-    const u = new SpeechSynthesisUtterance(text);
+    if (!cleaned) return;
+    const u = new SpeechSynthesisUtterance(cleaned);
     u.rate = 1;
     u.pitch = 1;
     window.speechSynthesis.speak(u);
