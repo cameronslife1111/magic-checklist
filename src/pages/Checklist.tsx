@@ -378,6 +378,10 @@ const ChecklistPage = () => {
         await addNewAfterCurrent();
         break;
       }
+      case "duplicate-item": {
+        await duplicateCurrentItem();
+        break;
+      }
       case "new":
         setDialog({ kind: "new" });
         break;
