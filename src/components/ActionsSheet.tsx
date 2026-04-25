@@ -29,6 +29,8 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "web-search",     label: "Text to web search",      icon: Search },
   { key: "bg",             label: "Change checklist background", icon: Palette },
   { key: "rearrange",      label: "Rearrange checkboxes",    icon: ArrowUpDown },
+  { key: "copy-sentence",  label: "Copy sentence",           icon: ClipboardCopy },
+  { key: "copy-checklist", label: "Copy full checklist",     icon: ClipboardList },
 ];
 
 type Props = {
