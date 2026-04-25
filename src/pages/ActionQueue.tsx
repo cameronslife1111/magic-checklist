@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ArrowLeft, Pause, Play, Trash2, RotateCw, Repeat, AlertTriangle, ExternalLink, Copy, Check } from "lucide-react";
 import { toast } from "sonner";
+import { stopSpeech } from "@/lib/speech";
 
 type Job = {
   id: string;
@@ -62,6 +63,8 @@ const ActionQueue = () => {
   const navigate = useNavigate();
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => { stopSpeech(); }, []);
 
   useEffect(() => {
     if (!user) return;
