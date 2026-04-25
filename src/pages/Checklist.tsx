@@ -1129,6 +1129,16 @@ const ChecklistPage = () => {
         onSend={handleSendTo}
       />
 
+      <TextPromptDialog
+        open={dialog.kind === "send-to-blank"}
+        title="Send to new checklist"
+        label="Title for the new checklist"
+        initial={highestUnchecked?.text?.slice(0, 80) ?? ""}
+        saveLabel="Create & send"
+        onClose={() => setDialog({ kind: "none" })}
+        onSave={handleSendToBlank}
+      />
+
       <BackgroundPickerDialog
         open={dialog.kind === "bg"}
         current={checklist.background_color}
