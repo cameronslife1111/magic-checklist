@@ -7,6 +7,7 @@ import { ChecklistSearch } from "@/components/ChecklistSearch";
 import { ItemRow } from "@/components/ItemRow";
 import { ActionsSheet, ActionKey } from "@/components/ActionsSheet";
 import { Button } from "@/components/ui/button";
+import { Check } from "lucide-react";
 import { TextPromptDialog } from "@/components/TextPromptDialog";
 import { ChecklistPickerDialog } from "@/components/ChecklistPickerDialog";
 import { SendToChecklistDialog, SendPosition } from "@/components/SendToChecklistDialog";
@@ -86,6 +87,8 @@ const ChecklistPage = () => {
   }, [theme]);
 
   const itemRefs = useRef<Record<string, HTMLLIElement | null>>({});
+  const longPressTimerRef = useRef<number | null>(null);
+  const longPressFiredRef = useRef(false);
   const didAutoFocusRef = useRef<string | null>(null);
   const registerRef = useCallback((id: string, el: HTMLLIElement | null) => {
     itemRefs.current[id] = el;
@@ -262,7 +265,15 @@ const ChecklistPage = () => {
     return newItem;
   };
 
+  const addNewAfterCurrent = async () => {
+    const sourceId = highestUnchecked?.id ?? (items[items.length - 1]?.id ?? null);
+    const created = await insertItemAfter(sourceId, { text: "" });
+    if (created) setFocusItemId(created.id);
+    return created;
+  };
+
   // ---------- Action Handlers ----------
+
 
   const onPick = async (key: ActionKey) => {
     setActionsOpen(false);
@@ -270,9 +281,7 @@ const ChecklistPage = () => {
 
     switch (key) {
       case "add": {
-        const sourceId = highestUnchecked?.id ?? (items[items.length - 1]?.id ?? null);
-        const created = await insertItemAfter(sourceId, { text: "" });
-        if (created) setFocusItemId(created.id);
+        await addNewAfterCurrent();
         break;
       }
       case "new":
@@ -688,12 +697,46 @@ const ChecklistPage = () => {
               Done
             </Button>
           ) : (
-            <Button
-              onClick={() => { primeSpeech(); setActionsOpen(true); }}
-              className="w-full h-14 rounded-2xl text-base font-semibold shadow-floating"
-            >
-              Actions
-            </Button>
+            <div className="flex gap-3">
+              <Button
+                onClick={() => { primeSpeech(); setActionsOpen(true); }}
+                className="flex-1 h-14 rounded-2xl text-base font-semibold shadow-floating"
+              >
+                Actions
+              </Button>
+              <Button
+                aria-label="Check current and advance"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  longPressFiredRef.current = false;
+                  if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
+                  longPressTimerRef.current = window.setTimeout(async () => {
+                    longPressFiredRef.current = true;
+                    primeSpeech();
+                    await addNewAfterCurrent();
+                  }, 600);
+                }}
+                onPointerUp={(e) => {
+                  e.preventDefault();
+                  if (longPressTimerRef.current) {
+                    window.clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                  }
+                  if (longPressFiredRef.current) return;
+                  if (highestUnchecked) handleToggle(highestUnchecked, true);
+                }}
+                onPointerCancel={() => {
+                  if (longPressTimerRef.current) {
+                    window.clearTimeout(longPressTimerRef.current);
+                    longPressTimerRef.current = null;
+                  }
+                }}
+                onContextMenu={(e) => e.preventDefault()}
+                className="h-14 w-14 rounded-2xl shadow-floating select-none touch-none"
+              >
+                <Check className="h-6 w-6" />
+              </Button>
+            </div>
           )}
         </div>
       </div>
