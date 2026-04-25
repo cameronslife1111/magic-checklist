@@ -324,8 +324,7 @@ const ActionQueue = () => {
             </div>
 
             <AttachmentsBlock a={j.attachments} onOpenChecklist={(id) => navigate(`/?c=${id}`)} />
-
-
+            {isFailed && (
               <div className="mt-2 rounded-lg bg-destructive/10 p-2 text-sm">
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex items-start gap-2 min-w-0 flex-1">
