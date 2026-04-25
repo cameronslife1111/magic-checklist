@@ -33,6 +33,16 @@ export const ChecklistSearch = ({ onPick }: Props) => {
   }, [q]);
 
   const handlePick = (id: string) => {
+    // Swallow the synthesized click that follows the pointerdown on touch devices,
+    // so it doesn't bubble to elements underneath (e.g. the checklist title <h1>).
+    const swallow = (e: MouseEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+    };
+    window.addEventListener("click", swallow, { capture: true, once: true });
+    // Safety net: if no click ever fires, remove the listener after a short delay.
+    setTimeout(() => window.removeEventListener("click", swallow, { capture: true } as any), 500);
+
     onPick(id);
     setQ("");
     setOpen(false);
