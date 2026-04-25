@@ -64,6 +64,8 @@ const ActionQueue = () => {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
 
+  useEffect(() => { stopSpeech(); }, []);
+
   useEffect(() => {
     if (!user) return;
     let mounted = true;
