@@ -297,7 +297,7 @@ const ActionQueue = () => {
               : <ul className="flex flex-col gap-2 mt-3">{completed.map((j) => <JobRow key={j.id} j={j} />)}</ul>}
           </TabsContent>
           <TabsContent value="failed">
-            {failed.length === 0 ? <p className="text-muted-foreground text-sm py-6 text-center">No failed actions.</p>
+            {failed.length === 0 ? <p className="text-muted-foreground text-sm py-6 text-center">No failed or stopped actions.</p>
               : <ul className="flex flex-col gap-2 mt-3">{failed.map((j) => <JobRow key={j.id} j={j} />)}</ul>}
           </TabsContent>
         </Tabs>
