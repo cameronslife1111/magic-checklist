@@ -14,7 +14,93 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      checklist_items: {
+        Row: {
+          checked: boolean
+          checklist_id: string
+          created_at: string
+          external_link: string | null
+          id: string
+          linked_checklist_id: string | null
+          media_type: string | null
+          media_url: string | null
+          position: number
+          text: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          checked?: boolean
+          checklist_id: string
+          created_at?: string
+          external_link?: string | null
+          id?: string
+          linked_checklist_id?: string | null
+          media_type?: string | null
+          media_url?: string | null
+          position?: number
+          text?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          checked?: boolean
+          checklist_id?: string
+          created_at?: string
+          external_link?: string | null
+          id?: string
+          linked_checklist_id?: string | null
+          media_type?: string | null
+          media_url?: string | null
+          position?: number
+          text?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "checklist_items_checklist_id_fkey"
+            columns: ["checklist_id"]
+            isOneToOne: false
+            referencedRelation: "checklists"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "checklist_items_linked_checklist_id_fkey"
+            columns: ["linked_checklist_id"]
+            isOneToOne: false
+            referencedRelation: "checklists"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      checklists: {
+        Row: {
+          background_color: string
+          created_at: string
+          id: string
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          background_color?: string
+          created_at?: string
+          id?: string
+          title?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          background_color?: string
+          created_at?: string
+          id?: string
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
