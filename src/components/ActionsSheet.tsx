@@ -14,6 +14,7 @@ export type ActionKey =
 
 const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   { key: "add",            label: "Add new checkbox",        icon: Plus },
+  { key: "send-to",        label: "Send to checklist",       icon: Send },
   { key: "new",            label: "New checklist",           icon: FilePlus },
   { key: "duplicate",      label: "Duplicate checklist",     icon: Copy },
   { key: "edit-title",     label: "Edit checklist title",    icon: Pencil },

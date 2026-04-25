@@ -601,6 +601,11 @@ const ChecklistPage = () => {
         media_type: src.media_type ?? null,
       });
       if (insErr) throw insErr;
+
+      const { error: delErr } = await supabase.from("checklist_items").delete().eq("id", src.id);
+      if (delErr) throw delErr;
+      setItems((prev) => prev.filter((i) => i.id !== src.id));
+
       toast.success("Sent to checklist.");
     } catch {
       toast.error("Could not send. Try again.");
