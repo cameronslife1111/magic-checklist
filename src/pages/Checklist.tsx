@@ -122,6 +122,23 @@ const ChecklistPage = () => {
     await supabase.from("checklist_items").update({ text, external_link: externalLink }).eq("id", item.id);
   };
 
+  const handleDelete = async (item: ChecklistItem) => {
+    if (item.media_url) {
+      const marker = "/generated-media/";
+      const idx = item.media_url.indexOf(marker);
+      if (idx !== -1) {
+        const path = item.media_url.slice(idx + marker.length).split("?")[0];
+        try { await supabase.storage.from("generated-media").remove([path]); } catch {}
+      }
+    }
+    const { error } = await supabase.from("checklist_items").delete().eq("id", item.id);
+    if (error) {
+      toast.error("Could not delete. Try again.");
+      return;
+    }
+    setItems((prev) => prev.filter((i) => i.id !== item.id));
+  };
+
   const positionAfter = (sourceId: string | null) => {
     if (!sourceId) {
       const last = items[items.length - 1];
