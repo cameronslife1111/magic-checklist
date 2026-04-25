@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { Checkbox } from "@/components/ui/checkbox";
 import { FileText, Image as ImageIcon, Video, Music, X, Loader2 } from "lucide-react";
 import { toast } from "sonner";
+import { sortChecklistsByTitle } from "@/lib/sortChecklists";
 
 export type AttachedMedia = { url: string; path: string; type: "image" | "video" | "audio"; name: string };
 export type AttachedContext = {
