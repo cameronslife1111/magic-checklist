@@ -101,6 +101,95 @@ const StatusBadge = ({ s }: { s: Job["status"] }) => {
   return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${map[s]}`}>{s}</span>;
 };
 
+type Thumb = { url: string; type: "image" | "video" | "audio"; name?: string; label: string };
+
+const MediaThumb = ({ t }: { t: Thumb }) => {
+  const common = "block h-14 w-14 rounded-md overflow-hidden border border-border bg-muted shrink-0 relative";
+  if (t.type === "image") {
+    return (
+      <a href={t.url} target="_blank" rel="noreferrer" className={common} aria-label={t.label} title={t.name || t.label}>
+        <img src={t.url} alt={t.name || t.label} loading="lazy" className="h-full w-full object-cover" />
+      </a>
+    );
+  }
+  if (t.type === "video") {
+    return (
+      <a href={t.url} target="_blank" rel="noreferrer" className={common} aria-label={t.label} title={t.name || t.label}>
+        <video src={t.url} muted preload="metadata" className="h-full w-full object-cover" />
+        <span className="absolute inset-0 flex items-center justify-center bg-black/30">
+          <PlayIcon className="h-5 w-5 text-white" />
+        </span>
+      </a>
+    );
+  }
+  return (
+    <a href={t.url} target="_blank" rel="noreferrer" className={`${common} flex flex-col items-center justify-center p-1`} aria-label={t.label} title={t.name || t.label}>
+      <Music className="h-5 w-5 text-muted-foreground" />
+      <span className="text-[9px] leading-tight text-muted-foreground truncate w-full text-center mt-0.5">
+        {t.name || "audio"}
+      </span>
+    </a>
+  );
+};
+
+const AttachmentsBlock = ({
+  a, onOpenChecklist,
+}: { a: Attachments; onOpenChecklist: (id: string) => void }) => {
+  const hasSources = a.sources.length > 0;
+  const hasCtxLists = a.contextChecklists.length > 0;
+  const hasCtxMedia = a.contextMedia.length > 0;
+  if (!hasSources && !hasCtxLists && !hasCtxMedia) return null;
+
+  return (
+    <div className="mt-2 rounded-lg border border-border/60 bg-muted/30 p-2 space-y-2">
+      {hasSources && (
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Source media</p>
+          <div className="flex flex-wrap gap-1.5">
+            {a.sources.map((s, i) => (
+              <MediaThumb key={`src-${i}-${s.url}`} t={{ url: s.url, type: s.type, label: `Open source ${s.type}` }} />
+            ))}
+          </div>
+        </div>
+      )}
+      {hasCtxLists && (
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1 inline-flex items-center gap-1">
+            <ListChecks className="h-3 w-3" /> Context checklists
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {a.contextChecklists.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => onOpenChecklist(c.id)}
+                aria-label={`Open checklist ${c.title}`}
+                className="inline-flex items-center rounded-full border border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80 px-2.5 py-0.5 text-xs font-medium max-w-[14rem] truncate"
+                title={c.title}
+              >
+                {c.title}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {hasCtxMedia && (
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Context media</p>
+          <div className="flex flex-wrap gap-1.5">
+            {a.contextMedia.map((m, i) => (
+              <MediaThumb
+                key={`ctx-${i}-${m.url}`}
+                t={{ url: m.url, type: m.type, name: m.name, label: `Open attached ${m.type}${m.name ? `: ${m.name}` : ""}` }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
 const ActionQueue = () => {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
