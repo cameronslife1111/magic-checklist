@@ -710,10 +710,17 @@ const ChecklistPage = () => {
                 onPointerDown={(e) => {
                   e.preventDefault();
                   longPressFiredRef.current = false;
+                  // Focus the hidden keepalive input synchronously inside the
+                  // user gesture. On iOS this is required so the keyboard can
+                  // be shown later when we hand focus over to the new textarea.
+                  keepaliveRef.current?.focus({ preventScroll: true });
                   if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
                   longPressTimerRef.current = window.setTimeout(async () => {
                     longPressFiredRef.current = true;
                     primeSpeech();
+                    // Re-focus right before the async insert to keep the
+                    // keyboard session alive across the await.
+                    keepaliveRef.current?.focus({ preventScroll: true });
                     await addNewAfterCurrent();
                   }, 600);
                 }}
@@ -724,6 +731,9 @@ const ChecklistPage = () => {
                     longPressTimerRef.current = null;
                   }
                   if (longPressFiredRef.current) return;
+                  // Short tap: drop the keepalive focus so the keyboard does
+                  // not appear, then toggle the current item.
+                  keepaliveRef.current?.blur();
                   if (highestUnchecked) handleToggle(highestUnchecked, true);
                 }}
                 onPointerCancel={() => {
@@ -731,6 +741,7 @@ const ChecklistPage = () => {
                     window.clearTimeout(longPressTimerRef.current);
                     longPressTimerRef.current = null;
                   }
+                  keepaliveRef.current?.blur();
                 }}
                 onContextMenu={(e) => e.preventDefault()}
                 className="flex-1 h-14 rounded-2xl shadow-floating select-none touch-none"
@@ -741,6 +752,18 @@ const ChecklistPage = () => {
           )}
         </div>
       </div>
+
+      {/* Hidden input used to keep the iOS keyboard alive across async work
+          when long-pressing the Check button to add a new item. */}
+      <input
+        ref={keepaliveRef}
+        type="text"
+        aria-hidden="true"
+        tabIndex={-1}
+        readOnly
+        className="fixed bottom-0 left-0 w-px h-px opacity-0 pointer-events-none"
+        style={{ fontSize: "16px" }}
+      />
 
       <ActionsSheet open={actionsOpen} onOpenChange={setActionsOpen} onPick={onPick} currentTheme={theme} />
 
