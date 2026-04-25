@@ -536,42 +536,48 @@ const ChecklistPage = () => {
     }
   };
 
-  const runTextToText = async () => {
-    if (!highestUnchecked) {
-      toast.error("No unchecked checkbox found.");
-      return;
-    }
-    const src = highestUnchecked;
-    const t = toast.loading("Generating text…");
-    try {
-      const { data, error } = await supabase.functions.invoke("openai-text", {
-        body: { prompt: src.text },
-      });
-      if (error || !data?.text) throw new Error(data?.error ?? error?.message ?? "fail");
-      await insertItemAfter(src.id, { text: data.text });
-      toast.success("Done", { id: t });
-    } catch {
-      toast.error("Text generation failed. Try again.", { id: t });
-    }
+  const requestEnqueue = (args: { action_type: string; actionLabel: string; payload: any; source_item_id: string | null }) => {
+    setPendingEnqueue(args);
   };
 
-  const runWebSearch = async () => {
-    if (!highestUnchecked) {
-      toast.error("No unchecked checkbox found.");
-      return;
+  const submitEnqueue = async (pick: SchedulePick) => {
+    if (!pendingEnqueue || !checklist) { setPendingEnqueue(null); return; }
+    const body: any = {
+      action_type: pendingEnqueue.action_type,
+      checklist_id: checklist.id,
+      source_item_id: pendingEnqueue.source_item_id,
+      payload: pendingEnqueue.payload,
+    };
+    if (pick.mode === "later") body.scheduled_for = pick.scheduled_for;
+    if (pick.mode === "recurring") {
+      body.scheduled_for = pick.scheduled_for;
+      body.recurrence = pick.recurrence;
     }
-    const src = highestUnchecked;
-    const t = toast.loading("Searching the web…");
-    try {
-      const { data, error } = await supabase.functions.invoke("perplexity-search", {
-        body: { query: src.text },
-      });
-      if (error || !data?.text) throw new Error(data?.error ?? error?.message ?? "fail");
-      await insertItemAfter(src.id, { text: data.text });
-      toast.success("Done", { id: t });
-    } catch {
-      toast.error("Web search failed. Try again.", { id: t });
-    }
+    const { error } = await supabase.functions.invoke("enqueue-action", { body });
+    setPendingEnqueue(null);
+    setDialog({ kind: "none" });
+    if (error) toast.error("Could not queue. Try again.");
+    else toast.success(pick.mode === "now" ? "Queued — running in background." : "Scheduled.");
+  };
+
+  const runTextToText = () => {
+    if (!highestUnchecked) { toast.error("No unchecked checkbox found."); return; }
+    requestEnqueue({
+      action_type: "text-text",
+      actionLabel: "Text to text",
+      payload: { prompt: highestUnchecked.text },
+      source_item_id: highestUnchecked.id,
+    });
+  };
+
+  const runWebSearch = () => {
+    if (!highestUnchecked) { toast.error("No unchecked checkbox found."); return; }
+    requestEnqueue({
+      action_type: "web-search",
+      actionLabel: "Web search",
+      payload: { prompt: highestUnchecked.text },
+      source_item_id: highestUnchecked.id,
+    });
   };
 
   const fileToBase64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
