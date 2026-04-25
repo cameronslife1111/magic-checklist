@@ -5,9 +5,15 @@ import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { ArrowLeft, Pause, Play, Trash2, RotateCw, Repeat, AlertTriangle, ExternalLink, Copy, Check, Square, RefreshCw } from "lucide-react";
+import { ArrowLeft, Pause, Play, Trash2, RotateCw, Repeat, AlertTriangle, ExternalLink, Copy, Check, Square, RefreshCw, Music, Play as PlayIcon, ListChecks } from "lucide-react";
 import { toast } from "sonner";
 import { stopSpeech } from "@/lib/speech";
+
+type Attachments = {
+  sources: { url: string; type: "image" | "video" }[];
+  contextChecklists: { id: string; title: string }[];
+  contextMedia: { url: string; type: "image" | "video" | "audio"; name: string }[];
+};
 
 type Job = {
   id: string;
@@ -26,10 +32,45 @@ type Job = {
   max_attempts: number;
   created_at: string;
   completed_at: string | null;
+  attachments: Attachments;
 };
 
-// Lightweight column list — never select payload/result here, they can be huge.
-const JOB_COLS = "id,user_id,checklist_id,source_item_id,action_type,status,prompt_preview,error_raw,error_friendly,error_fix,scheduled_for,recurrence,attempts,max_attempts,created_at,completed_at";
+// Payloads are bounded to <=200KB by enqueue-action; safe to fetch for the dashboard.
+const JOB_COLS = "id,user_id,checklist_id,source_item_id,action_type,status,prompt_preview,error_raw,error_friendly,error_fix,scheduled_for,recurrence,attempts,max_attempts,created_at,completed_at,payload";
+
+const isHttpUrl = (u: unknown): u is string =>
+  typeof u === "string" && (u.startsWith("http://") || u.startsWith("https://"));
+
+const deriveAttachments = (action_type: string, payload: any): Attachments => {
+  const sources: Attachments["sources"] = [];
+  const p = payload ?? {};
+
+  // Source/reference media (gallery URLs only — skip legacy data URLs).
+  if (Array.isArray(p.refImageUrls)) {
+    for (const u of p.refImageUrls) if (isHttpUrl(u)) sources.push({ url: u, type: "image" });
+  }
+  if (isHttpUrl(p.sourceUrl)) {
+    const t: "image" | "video" = action_type === "video-video" ? "video" : "image";
+    sources.push({ url: p.sourceUrl, type: t });
+  }
+  if (isHttpUrl(p.imageUrl)) {
+    sources.push({ url: p.imageUrl, type: "image" });
+  }
+
+  const ctx = p.context ?? {};
+  const contextChecklists = Array.isArray(ctx.checklists)
+    ? ctx.checklists
+        .filter((c: any) => c && typeof c.id === "string")
+        .map((c: any) => ({ id: c.id, title: typeof c.title === "string" ? c.title : "Untitled" }))
+    : [];
+  const contextMedia = Array.isArray(ctx.media)
+    ? ctx.media
+        .filter((m: any) => m && isHttpUrl(m.url) && (m.type === "image" || m.type === "video" || m.type === "audio"))
+        .map((m: any) => ({ url: m.url, type: m.type, name: typeof m.name === "string" ? m.name : "" }))
+    : [];
+
+  return { sources, contextChecklists, contextMedia };
+};
 
 const ACTION_LABELS: Record<string, string> = {
   "text-text": "Text to text",
@@ -58,6 +99,95 @@ const StatusBadge = ({ s }: { s: Job["status"] }) => {
     cancelled: "bg-muted text-muted-foreground line-through",
   };
   return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${map[s]}`}>{s}</span>;
+};
+
+type Thumb = { url: string; type: "image" | "video" | "audio"; name?: string; label: string };
+
+const MediaThumb = ({ t }: { t: Thumb }) => {
+  const common = "block h-14 w-14 rounded-md overflow-hidden border border-border bg-muted shrink-0 relative";
+  if (t.type === "image") {
+    return (
+      <a href={t.url} target="_blank" rel="noreferrer" className={common} aria-label={t.label} title={t.name || t.label}>
+        <img src={t.url} alt={t.name || t.label} loading="lazy" className="h-full w-full object-cover" />
+      </a>
+    );
+  }
+  if (t.type === "video") {
+    return (
+      <a href={t.url} target="_blank" rel="noreferrer" className={common} aria-label={t.label} title={t.name || t.label}>
+        <video src={t.url} muted preload="metadata" className="h-full w-full object-cover" />
+        <span className="absolute inset-0 flex items-center justify-center bg-black/30">
+          <PlayIcon className="h-5 w-5 text-white" />
+        </span>
+      </a>
+    );
+  }
+  return (
+    <a href={t.url} target="_blank" rel="noreferrer" className={`${common} flex flex-col items-center justify-center p-1`} aria-label={t.label} title={t.name || t.label}>
+      <Music className="h-5 w-5 text-muted-foreground" />
+      <span className="text-[9px] leading-tight text-muted-foreground truncate w-full text-center mt-0.5">
+        {t.name || "audio"}
+      </span>
+    </a>
+  );
+};
+
+const AttachmentsBlock = ({
+  a, onOpenChecklist,
+}: { a: Attachments; onOpenChecklist: (id: string) => void }) => {
+  const hasSources = a.sources.length > 0;
+  const hasCtxLists = a.contextChecklists.length > 0;
+  const hasCtxMedia = a.contextMedia.length > 0;
+  if (!hasSources && !hasCtxLists && !hasCtxMedia) return null;
+
+  return (
+    <div className="mt-2 rounded-lg border border-border/60 bg-muted/30 p-2 space-y-2">
+      {hasSources && (
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Source media</p>
+          <div className="flex flex-wrap gap-1.5">
+            {a.sources.map((s, i) => (
+              <MediaThumb key={`src-${i}-${s.url}`} t={{ url: s.url, type: s.type, label: `Open source ${s.type}` }} />
+            ))}
+          </div>
+        </div>
+      )}
+      {hasCtxLists && (
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1 inline-flex items-center gap-1">
+            <ListChecks className="h-3 w-3" /> Context checklists
+          </p>
+          <div className="flex flex-wrap gap-1.5">
+            {a.contextChecklists.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => onOpenChecklist(c.id)}
+                aria-label={`Open checklist ${c.title}`}
+                className="inline-flex items-center rounded-full border border-transparent bg-secondary text-secondary-foreground hover:bg-secondary/80 px-2.5 py-0.5 text-xs font-medium max-w-[14rem] truncate"
+                title={c.title}
+              >
+                {c.title}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {hasCtxMedia && (
+        <div>
+          <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Context media</p>
+          <div className="flex flex-wrap gap-1.5">
+            {a.contextMedia.map((m, i) => (
+              <MediaThumb
+                key={`ctx-${i}-${m.url}`}
+                t={{ url: m.url, type: m.type, name: m.name, label: `Open attached ${m.type}${m.name ? `: ${m.name}` : ""}` }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 };
 
 const ActionQueue = () => {
@@ -90,7 +220,26 @@ const ActionQueue = () => {
       setLoading(false);
       return;
     }
-    setJobs((data ?? []) as Job[]);
+    const mapped: Job[] = (data ?? []).map((r: any) => ({
+      id: r.id,
+      user_id: r.user_id,
+      checklist_id: r.checklist_id,
+      source_item_id: r.source_item_id ?? null,
+      action_type: r.action_type,
+      status: r.status,
+      prompt_preview: r.prompt_preview ?? (typeof r.payload?.prompt === "string" ? String(r.payload.prompt).slice(0, 500) : null),
+      error_raw: r.error_raw ?? null,
+      error_friendly: r.error_friendly ?? null,
+      error_fix: r.error_fix ?? null,
+      scheduled_for: r.scheduled_for ?? null,
+      recurrence: r.recurrence ?? null,
+      attempts: r.attempts ?? 0,
+      max_attempts: r.max_attempts ?? 3,
+      created_at: r.created_at,
+      completed_at: r.completed_at ?? null,
+      attachments: deriveAttachments(r.action_type, r.payload),
+    }));
+    setJobs(mapped);
     setLoading(false);
   }, []);
 
@@ -134,6 +283,7 @@ const ActionQueue = () => {
             max_attempts: raw.max_attempts ?? 3,
             created_at: raw.created_at,
             completed_at: raw.completed_at ?? null,
+            attachments: deriveAttachments(raw.action_type, raw.payload),
           };
           setJobs((prev) => {
             if (payload.eventType === "DELETE") return prev.filter((j) => j.id !== row.id);
@@ -166,7 +316,7 @@ const ActionQueue = () => {
   const completed = useMemo(() => jobs.filter((j) => j.status === "completed"), [jobs]);
   const failed = useMemo(() => jobs.filter((j) => j.status === "failed" || j.status === "cancelled"), [jobs]);
 
-  const update = async (id: string, patch: Partial<Job>) => {
+  const update = async (id: string, patch: { status?: Job["status"] }) => {
     const { error } = await supabase.from("action_jobs").update(patch).eq("id", id);
     if (error) toast.error("Could not update job.");
   };
@@ -262,6 +412,7 @@ const ActionQueue = () => {
               {j.completed_at && ` · Done ${fmt(j.completed_at)}`}
             </div>
 
+            <AttachmentsBlock a={j.attachments} onOpenChecklist={(id) => navigate(`/?c=${id}`)} />
             {isFailed && (
               <div className="mt-2 rounded-lg bg-destructive/10 p-2 text-sm">
                 <div className="flex items-start justify-between gap-2">
