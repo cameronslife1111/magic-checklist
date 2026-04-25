@@ -127,30 +127,101 @@ async function insertResultItem(
   if (error) throw new Error(`insert item failed: ${error.message}`);
 }
 
+type ResolvedContext = {
+  textBlock: string;
+  imageUrls: string[];
+  videoUrls: string[];
+  audioUrls: string[];
+  mediaRefsBlock: string;
+};
+
+async function resolveContext(supabase: any, payload: any): Promise<ResolvedContext> {
+  const ctx = payload?.context ?? {};
+  const checklistIds: string[] = Array.isArray(ctx.checklists) ? ctx.checklists : [];
+  const media: { url: string; type: string; name: string }[] = Array.isArray(ctx.media) ? ctx.media : [];
+
+  let textBlock = "";
+  if (checklistIds.length) {
+    const { data: lists } = await supabase.from("checklists").select("id,title").in("id", checklistIds);
+    const { data: items } = await supabase
+      .from("checklist_items")
+      .select("checklist_id,text,position")
+      .in("checklist_id", checklistIds)
+      .order("position", { ascending: true });
+    const titleMap = new Map((lists ?? []).map((l: any) => [l.id, l.title]));
+    const grouped = new Map<string, string[]>();
+    for (const it of (items ?? []) as any[]) {
+      if (!it.text) continue;
+      const arr = grouped.get(it.checklist_id) ?? [];
+      arr.push(it.text);
+      grouped.set(it.checklist_id, arr);
+    }
+    const blocks: string[] = [];
+    for (const id of checklistIds) {
+      const title = titleMap.get(id) ?? "Untitled";
+      const lines = grouped.get(id) ?? [];
+      blocks.push(`### Context from checklist "${title}"\n${lines.map((l) => `- ${l}`).join("\n")}`);
+    }
+    textBlock = blocks.join("\n\n");
+  }
+
+  const imageUrls = media.filter((m) => m.type === "image").map((m) => m.url);
+  const videoUrls = media.filter((m) => m.type === "video").map((m) => m.url);
+  const audioUrls = media.filter((m) => m.type === "audio").map((m) => m.url);
+  const mediaRefsLines: string[] = [];
+  for (const m of media) mediaRefsLines.push(`- ${m.url} (${m.type}${m.name ? `: ${m.name}` : ""})`);
+  const mediaRefsBlock = mediaRefsLines.length ? `### Attached media references\n${mediaRefsLines.join("\n")}` : "";
+
+  return { textBlock, imageUrls, videoUrls, audioUrls, mediaRefsBlock };
+}
+
+function buildPrompt(basePrompt: string, ctx: ResolvedContext, includeMediaRefs: boolean): string {
+  const parts: string[] = [];
+  if (ctx.textBlock) parts.push(ctx.textBlock);
+  if (includeMediaRefs && ctx.mediaRefsBlock) parts.push(ctx.mediaRefsBlock);
+  parts.push(basePrompt ?? "");
+  return parts.filter(Boolean).join("\n\n");
+}
+
+async function urlToDataUrl(url: string): Promise<string> {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`fetch context url failed: ${r.status}`);
+  const blob = await r.blob();
+  const buf = await blob.arrayBuffer();
+  const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)));
+  return `data:${blob.type || "application/octet-stream"};base64,${b64}`;
+}
+
 async function runJob(supabase: any, job: Job): Promise<{ result: any }> {
   const p = job.payload ?? {};
+  const ctx = await resolveContext(supabase, p);
   switch (job.action_type) {
     case "text-text": {
-      const out = await callFn("openai-text", { prompt: p.prompt });
+      const prompt = buildPrompt(p.prompt, ctx, true);
+      const out = await callFn("openai-text", { prompt });
       await insertResultItem(supabase, job, { text: out.text });
       return { result: { text: out.text } };
     }
     case "web-search": {
-      const out = await callFn("perplexity-search", { query: p.prompt });
+      const prompt = buildPrompt(p.prompt, ctx, true);
+      const out = await callFn("perplexity-search", { query: prompt });
       await insertResultItem(supabase, job, { text: out.text });
       return { result: { text: out.text } };
     }
     case "text-image": {
-      const out = await callFn("lovable-image", { prompt: p.prompt, aspectRatio: p.aspectRatio, quality: p.quality });
+      const prompt = buildPrompt(p.prompt, ctx, false);
+      const extraRefs = await Promise.all(ctx.imageUrls.map(urlToDataUrl));
+      const out = await callFn("lovable-image", { prompt, aspectRatio: p.aspectRatio, quality: p.quality, refImages: extraRefs });
       const url = await uploadDataUrl(supabase, job.user_id, out.dataUrl, "png");
       await insertResultItem(supabase, job, { text: "Generated image", media_url: url, media_type: "image" });
       return { result: { media_url: url } };
     }
     case "image-image":
     case "remix": {
-      const out = await callFn("lovable-image", {
-        prompt: p.prompt, aspectRatio: p.aspectRatio, quality: p.quality, refImages: p.refImages ?? [],
-      });
+      const prompt = buildPrompt(p.prompt, ctx, false);
+      const extraRefs = await Promise.all(ctx.imageUrls.map(urlToDataUrl));
+      const refImages = [...(p.refImages ?? []), ...extraRefs].slice(0, 16);
+      const out = await callFn("lovable-image", { prompt, aspectRatio: p.aspectRatio, quality: p.quality, refImages });
       const url = await uploadDataUrl(supabase, job.user_id, out.dataUrl, "png");
       await insertResultItem(supabase, job, {
         text: job.action_type === "remix" ? "Remixed image" : "Edited image",
@@ -160,9 +231,15 @@ async function runJob(supabase: any, job: Job): Promise<{ result: any }> {
     }
     case "image-video":
     case "video-video": {
+      const prompt = buildPrompt(p.prompt, ctx, true);
+      let sourceDataUrl = p.sourceDataUrl;
+      if (!sourceDataUrl) {
+        const fallback = job.action_type === "video-video" ? ctx.videoUrls[0] : ctx.imageUrls[0];
+        if (fallback) sourceDataUrl = await urlToDataUrl(fallback);
+      }
       const out = await callFn("fal-video", {
-        prompt: p.prompt,
-        sourceDataUrl: p.sourceDataUrl,
+        prompt,
+        sourceDataUrl,
         sourceKind: job.action_type === "video-video" ? "video" : "image",
         aspectRatio: p.aspectRatio,
       });
@@ -170,7 +247,10 @@ async function runJob(supabase: any, job: Job): Promise<{ result: any }> {
       return { result: { media_url: out.url } };
     }
     case "analyze-image": {
-      const out = await callFn("openai-vision", { prompt: p.prompt, imageDataUrl: p.imageDataUrl });
+      const prompt = buildPrompt(p.prompt, ctx, ctx.imageUrls.length > 1);
+      let imageDataUrl = p.imageDataUrl;
+      if (!imageDataUrl && ctx.imageUrls[0]) imageDataUrl = await urlToDataUrl(ctx.imageUrls[0]);
+      const out = await callFn("openai-vision", { prompt, imageDataUrl });
       await insertResultItem(supabase, job, { text: out.text });
       return { result: { text: out.text } };
     }
@@ -178,6 +258,7 @@ async function runJob(supabase: any, job: Job): Promise<{ result: any }> {
       throw new Error(`unknown action_type: ${job.action_type}`);
   }
 }
+
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
