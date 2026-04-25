@@ -474,6 +474,30 @@ const ChecklistPage = () => {
     }
   };
 
+  const duplicateCurrentItem = async () => {
+    const src = highestUnchecked;
+    if (!src) {
+      toast.error("No unchecked checkbox found.");
+      return;
+    }
+    const created = await insertItemAfter(src.id, {
+      text: src.text,
+      external_link: src.external_link,
+      linked_checklist_id: src.linked_checklist_id,
+      media_url: src.media_url,
+      media_type: src.media_type,
+      checked: false,
+    });
+    if (!created) {
+      toast.error("Could not duplicate. Try again.");
+      return;
+    }
+    if (!src.external_link && !src.linked_checklist_id) {
+      setFocusItemId(created.id);
+    }
+    toast.success("Checkbox duplicated.");
+  };
+
   const duplicateCurrent = async () => {
     if (!checklist || !user) return;
     const newTitle = `${checklist.title} Copy`;
