@@ -1,7 +1,7 @@
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Button } from "@/components/ui/button";
 import {
-  Plus, FilePlus, Copy, CopyPlus, Pencil, Scissors, Type, Image as ImageIcon, Images, Wand2,
+  Plus, FilePlus, FilePlus2, Copy, CopyPlus, Pencil, Scissors, Type, Image as ImageIcon, Images, Wand2,
   Film, Video, Link2, Eye, Search, Palette, LogOut, Moon, Sun, ArrowUpDown,
   ClipboardCopy, ClipboardList, Send, Volume2, VolumeX, ListChecks, Trash2, Library,
 } from "lucide-react";
