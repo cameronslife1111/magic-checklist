@@ -736,6 +736,13 @@ const ChecklistPage = () => {
         }}
       />
 
+      <SendToChecklistDialog
+        open={dialog.kind === "send-to"}
+        excludeId={checklist.id}
+        onClose={() => setDialog({ kind: "none" })}
+        onSend={handleSendTo}
+      />
+
       <BackgroundPickerDialog
         open={dialog.kind === "bg"}
         current={checklist.background_color}
