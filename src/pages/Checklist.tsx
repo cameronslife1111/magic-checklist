@@ -236,6 +236,19 @@ const ChecklistPage = () => {
     return ((cur.position ?? 0) + (next.position ?? 0)) / 2;
   };
 
+  const positionBefore = (sourceId: string | null) => {
+    if (!sourceId) {
+      const first = items[0];
+      if (!first) return POS_STEP;
+      return (first.position ?? POS_STEP) - POS_STEP;
+    }
+    const idx = items.findIndex((i) => i.id === sourceId);
+    const cur = items[idx];
+    const prev = items[idx - 1];
+    if (!prev) return (cur.position ?? POS_STEP) - POS_STEP;
+    return ((prev.position ?? 0) + (cur.position ?? 0)) / 2;
+  };
+
   const insertItemAfter = async (sourceId: string | null, payload: Partial<ChecklistItem>): Promise<ChecklistItem | null> => {
     if (!checklist || !user) return null;
     const position = positionAfter(sourceId);
@@ -266,9 +279,46 @@ const ChecklistPage = () => {
     return newItem;
   };
 
+  const insertItemBefore = async (sourceId: string | null, payload: Partial<ChecklistItem>): Promise<ChecklistItem | null> => {
+    if (!checklist || !user) return null;
+    const position = positionBefore(sourceId);
+    const { data, error } = await supabase
+      .from("checklist_items")
+      .insert({
+        checklist_id: checklist.id,
+        user_id: user.id,
+        text: payload.text ?? "",
+        position,
+        external_link: payload.external_link ?? null,
+        linked_checklist_id: payload.linked_checklist_id ?? null,
+        media_url: payload.media_url ?? null,
+        media_type: payload.media_type ?? null,
+      })
+      .select().single();
+    if (error || !data) {
+      toast.error("Could not save. Try again.");
+      return null;
+    }
+    const newItem = data as ChecklistItem;
+    setItems((prev) => {
+      const idx = sourceId ? prev.findIndex((i) => i.id === sourceId) : 0;
+      const arr = [...prev];
+      arr.splice(idx, 0, newItem);
+      return arr;
+    });
+    return newItem;
+  };
+
   const addNewAfterCurrent = async () => {
     const sourceId = highestUnchecked?.id ?? (items[items.length - 1]?.id ?? null);
     const created = await insertItemAfter(sourceId, { text: "" });
+    if (created) setFocusItemId(created.id);
+    return created;
+  };
+
+  const addNewBeforeCurrent = async () => {
+    const sourceId = highestUnchecked?.id ?? (items[0]?.id ?? null);
+    const created = await insertItemBefore(sourceId, { text: "" });
     if (created) setFocusItemId(created.id);
     return created;
   };
