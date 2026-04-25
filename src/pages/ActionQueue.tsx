@@ -284,7 +284,7 @@ const ActionQueue = () => {
           <TabsList className="grid grid-cols-3 w-full">
             <TabsTrigger value="queue">In queue <Badge variant="secondary" className="ml-2">{inQueue.length}</Badge></TabsTrigger>
             <TabsTrigger value="completed">Completed <Badge variant="secondary" className="ml-2">{completed.length}</Badge></TabsTrigger>
-            <TabsTrigger value="failed">Failed <Badge variant="secondary" className="ml-2">{failed.length}</Badge></TabsTrigger>
+            <TabsTrigger value="failed">Failed / Stopped <Badge variant="secondary" className="ml-2">{failed.length}</Badge></TabsTrigger>
           </TabsList>
 
           <TabsContent value="queue">
