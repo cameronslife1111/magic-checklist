@@ -503,9 +503,13 @@ const ChecklistPage = () => {
     return <div className="min-h-screen flex items-center justify-center text-muted-foreground">Loading…</div>;
   }
 
+  const isDark = theme === "dark";
+  const pageBgStyle = isDark ? undefined : { backgroundColor: checklist.background_color };
+  const headerBgStyle = isDark ? undefined : { backgroundColor: `${checklist.background_color}cc` };
+
   return (
-    <div className="min-h-screen flex flex-col" style={{ backgroundColor: checklist.background_color }}>
-      <header className="sticky top-0 z-20 px-4 pt-3 pb-3 backdrop-blur-md" style={{ backgroundColor: `${checklist.background_color}cc` }}>
+    <div className={`min-h-screen flex flex-col ${isDark ? "bg-background text-foreground" : ""}`} style={pageBgStyle}>
+      <header className={`sticky top-0 z-20 px-4 pt-3 pb-3 backdrop-blur-md ${isDark ? "bg-background/80" : ""}`} style={headerBgStyle}>
         <ChecklistSearch onPick={openChecklist} />
         <h1
           className="mt-3 text-xl font-semibold leading-tight cursor-text"
