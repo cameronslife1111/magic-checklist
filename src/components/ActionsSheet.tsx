@@ -5,6 +5,7 @@ import {
   Film, Video, Link2, Eye, Search, Palette, LogOut, Moon, Sun, ArrowUpDown,
   ClipboardCopy, ClipboardList, Send, Volume2, VolumeX, ListChecks, Trash2,
 } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 export type ActionKey =
   | "mute" | "queue"
@@ -13,29 +14,39 @@ export type ActionKey =
   | "insert-link" | "analyze-image" | "web-search" | "bg" | "rearrange"
   | "copy-sentence" | "copy-checklist" | "send-to" | "theme" | "sign-out";
 
+const AI_KEYS = new Set<ActionKey>([
+  "text-text", "text-image", "image-image", "remix",
+  "image-video", "video-video", "analyze-image", "web-search",
+]);
+
 const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
-  { key: "add",            label: "Add new checkbox",        icon: Plus },
-  { key: "duplicate-item", label: "Duplicate checkbox",      icon: CopyPlus },
-  { key: "send-to",        label: "Send to checklist",       icon: Send },
-  { key: "queue",          label: "Action Queue Dashboard",  icon: ListChecks },
-  { key: "new",            label: "New checklist",           icon: FilePlus },
-  { key: "duplicate",      label: "Duplicate checklist",     icon: Copy },
-  { key: "delete-checklist", label: "Delete checklist",      icon: Trash2 },
-  { key: "edit-title",     label: "Edit checklist title",    icon: Pencil },
-  { key: "split",          label: "Split current checkbox",  icon: Scissors },
-  { key: "text-text",      label: "Text to text",            icon: Type },
-  { key: "text-image",     label: "Text to image",           icon: ImageIcon },
-  { key: "image-image",    label: "Image to image",          icon: Wand2 },
-  { key: "remix",          label: "Remix multiple images",   icon: Images },
-  { key: "image-video",    label: "Image to video",          icon: Film },
-  { key: "video-video",    label: "Video to video",          icon: Video },
-  { key: "insert-link",    label: "Insert checklist link",   icon: Link2 },
-  { key: "analyze-image",  label: "Analyze image",           icon: Eye },
-  { key: "web-search",     label: "Text to web search",      icon: Search },
-  { key: "bg",             label: "Change checklist background", icon: Palette },
-  { key: "rearrange",      label: "Rearrange checkboxes",    icon: ArrowUpDown },
-  { key: "copy-sentence",  label: "Copy sentence",           icon: ClipboardCopy },
-  { key: "copy-checklist", label: "Copy full checklist",     icon: ClipboardList },
+  // Top: most-used quick utilities
+  { key: "copy-sentence",    label: "Copy sentence",            icon: ClipboardCopy },
+  { key: "copy-checklist",   label: "Copy full checklist",      icon: ClipboardList },
+  { key: "rearrange",        label: "Rearrange checkboxes",     icon: ArrowUpDown },
+  { key: "insert-link",      label: "Insert checklist link",    icon: Link2 },
+  { key: "add",              label: "Add new checkbox",         icon: Plus },
+  { key: "duplicate-item",   label: "Duplicate checkbox",       icon: CopyPlus },
+  { key: "split",            label: "Split current checkbox",   icon: Scissors },
+  { key: "send-to",          label: "Send to checklist",        icon: Send },
+  { key: "queue",            label: "Action Queue Dashboard",   icon: ListChecks },
+  { key: "bg",               label: "Change checklist background", icon: Palette },
+
+  // Middle: AI actions (rendered in blue)
+  { key: "text-text",        label: "Text to text",             icon: Type },
+  { key: "text-image",       label: "Text to image",            icon: ImageIcon },
+  { key: "image-image",      label: "Image to image",           icon: Wand2 },
+  { key: "remix",            label: "Remix multiple images",    icon: Images },
+  { key: "image-video",      label: "Image to video",           icon: Film },
+  { key: "video-video",      label: "Video to video",           icon: Video },
+  { key: "analyze-image",    label: "Analyze image",            icon: Eye },
+  { key: "web-search",       label: "Text to web search",       icon: Search },
+
+  // Bottom: rare / destructive
+  { key: "edit-title",       label: "Edit checklist title",     icon: Pencil },
+  { key: "new",              label: "New checklist",            icon: FilePlus },
+  { key: "duplicate",        label: "Duplicate checklist",      icon: Copy },
+  { key: "delete-checklist", label: "Delete checklist",         icon: Trash2 },
 ];
 
 type Props = {
@@ -70,14 +81,18 @@ export const ActionsSheet = ({ open, onOpenChange, onPick, currentTheme, muted }
           <ul className="flex flex-col gap-1">
             {items.map((it) => {
               const Icon = it.icon;
+              const isAI = AI_KEYS.has(it.key as ActionKey);
               return (
                 <li key={it.key}>
                   <Button
                     variant="ghost"
                     onClick={() => onPick(it.key)}
-                    className="w-full h-12 justify-start gap-3 text-base font-medium"
+                    className={cn(
+                      "w-full h-12 justify-start gap-3 text-base font-medium",
+                      isAI && "text-blue-500 hover:text-blue-500",
+                    )}
                   >
-                    <Icon className="h-5 w-5 text-muted-foreground" />
+                    <Icon className={cn("h-5 w-5", isAI ? "text-blue-500" : "text-muted-foreground")} />
                     {it.label}
                   </Button>
                 </li>

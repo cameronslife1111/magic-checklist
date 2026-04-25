@@ -1,25 +1,59 @@
-## Problem
+## Goal
+Reorganize the Actions pop-up (`src/components/ActionsSheet.tsx`) so frequently used actions sit on top and rarely used / destructive ones move to the bottom. Also visually distinguish AI-powered actions by coloring their icon + label blue.
 
-When you tap the title to rename the current checklist, the dialog shows the title of a *different* checklist (typically the previously-opened one), not the one you're on.
+## 1. New button order
 
-## Root Cause
+I'll reorder the `STATIC_ITEMS` array. The mute toggle stays pinned at the very top and the theme + sign-out items stay pinned at the very bottom (these are dynamic and already handled separately).
 
-`TextPromptDialog` (`src/components/TextPromptDialog.tsx`) initializes its internal input state once with `useState(initial)`, and only re-syncs to the latest `initial` prop inside `onOpenAutoFocus`. That handler runs only the **first time** the underlying Radix Dialog mounts/auto-focuses. After that, the same dialog instance is reused for every subsequent "Edit title" / "Duplicate" / "New checklist" open, so the input keeps the stale value from the first open instead of picking up the current `checklist.title`.
+**Top (most-used / quick utilities):**
+1. Copy sentence
+2. Copy full checklist
+3. Rearrange checkboxes
+4. Insert checklist link
+5. Add new checkbox
+6. Duplicate checkbox
+7. Split current checkbox
+8. Send to checklist
+9. Action Queue Dashboard
+10. Change checklist background
 
-Because the `edit-title`, `duplicate-title`, and `new-checklist` dialogs all share this single component, switching checklists and then opening "Edit title" shows the title from whichever checklist was active the first time the dialog opened.
+**Middle (AI actions — these get the blue treatment):**
+11. Text to text
+12. Text to image
+13. Image to image
+14. Remix multiple images
+15. Image to video
+16. Video to video
+17. Analyze image
+18. Text to web search
 
-## Fix
+**Bottom (rare / destructive):**
+19. Edit checklist title
+20. New checklist
+21. Duplicate checklist
+22. Delete checklist
 
-Update `src/components/TextPromptDialog.tsx` so the input value is reliably reset to the current `initial` prop **every time the dialog opens**:
+Then the existing dynamic items append after `STATIC_ITEMS`: theme toggle, sign out.
 
-- Add a `useEffect` that watches `open` and `initial`. Whenever `open` becomes `true`, set `value` to `initial`.
-- Keep `onClose` behavior unchanged.
-- Remove the brittle `onOpenAutoFocus={() => setValue(initial)}` reset (no longer needed; the effect handles it for all opens, not just the first).
+## 2. Blue styling for AI actions
 
-This guarantees the Edit dialog always shows the title of the checklist the user is currently on, the Duplicate dialog always shows `"<current title> Copy"`, and the New dialog always opens blank.
+Define a set of AI keys:
+```ts
+const AI_KEYS = new Set<ActionKey>([
+  "text-text", "text-image", "image-image", "remix",
+  "image-video", "video-video", "analyze-image", "web-search",
+]);
+```
 
-## Files to change
+In the render loop, when `AI_KEYS.has(it.key)`:
+- Apply `text-blue-500` to the `<Button>` (overriding default foreground) and a hover variant like `hover:text-blue-500` so it stays blue on hover.
+- Apply `text-blue-500` to the `<Icon>` (overriding the current `text-muted-foreground`).
 
-- `src/components/TextPromptDialog.tsx` — add `useEffect` to sync `value` from `initial` on every open; drop the `onOpenAutoFocus` reset.
+Non-AI items keep their current styling (icon = `text-muted-foreground`, label = default).
 
-No backend, schema, or other component changes needed. The callers in `src/pages/Checklist.tsx` already pass the correct `initial={checklist.title}`, so once the dialog respects the latest prop the bug is gone.
+Using `text-blue-500` (Tailwind built-in) keeps it consistent in both light and dark modes without needing new design tokens. No other files change.
+
+## 3. Files touched
+- `src/components/ActionsSheet.tsx` — reorder `STATIC_ITEMS`, add `AI_KEYS` set, conditionally apply blue classes in the map.
+
+No backend, routing, or behavior changes — purely presentational.
