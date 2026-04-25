@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Input } from "@/components/ui/input";
+import { markPickJustHappened } from "@/lib/clickGuard";
 
 type Props = {
   onPick: (id: string) => void;
@@ -33,14 +34,17 @@ export const ChecklistSearch = ({ onPick }: Props) => {
   }, [q]);
 
   const handlePick = (id: string) => {
-    // Swallow the synthesized click that follows the pointerdown on touch devices,
-    // so it doesn't bubble to elements underneath (e.g. the checklist title <h1>).
+    // Mark the moment of pick so any follow-up "ghost click" within ~500ms
+    // (synthesized by iOS Safari after pointerdown) on elements underneath
+    // the dropdown can be ignored by their click handlers.
+    markPickJustHappened();
+
+    // Belt-and-suspenders: also try to swallow the next click event itself.
     const swallow = (e: MouseEvent) => {
       e.stopPropagation();
       e.preventDefault();
     };
     window.addEventListener("click", swallow, { capture: true, once: true });
-    // Safety net: if no click ever fires, remove the listener after a short delay.
     setTimeout(() => window.removeEventListener("click", swallow, { capture: true } as any), 500);
 
     onPick(id);

@@ -16,6 +16,7 @@ import { MediaActionDialog, GenOptions } from "@/components/MediaActionDialog";
 import { MediaViewer } from "@/components/MediaViewer";
 import { toast } from "sonner";
 import { primeSpeech, speak, stopSpeech, isMuted, setMuted } from "@/lib/speech";
+import { wasPickJustNow } from "@/lib/clickGuard";
 import { extractFirstUrl, isUrl, splitTextWithLinks } from "@/lib/split";
 import {
   DndContext, DragEndEvent, PointerSensor, TouchSensor, KeyboardSensor,
@@ -696,7 +697,10 @@ const ChecklistPage = () => {
         <ChecklistSearch onPick={openChecklist} />
         <h1
           className="mt-3 text-xl font-semibold leading-tight cursor-text"
-          onClick={() => setDialog({ kind: "edit-title" })}
+          onClick={() => {
+            if (wasPickJustNow()) return;
+            setDialog({ kind: "edit-title" });
+          }}
           title="Tap to rename"
         >
           {checklist.title}
