@@ -270,6 +270,34 @@ const ChecklistPage = () => {
       case "rearrange":
         setReorderMode(true);
         break;
+      case "copy-sentence": {
+        const text = highestUnchecked?.text?.trim();
+        if (!text) {
+          toast.error("No sentence to copy.");
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(text);
+          toast.success("Sentence copied.");
+        } catch {
+          toast.error("Could not copy. Try again.");
+        }
+        break;
+      }
+      case "copy-checklist": {
+        const text = items.map((i) => i.text ?? "").filter((t) => t.trim().length > 0).join("\n");
+        if (!text) {
+          toast.error("Checklist is empty.");
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(text);
+          toast.success("Checklist copied.");
+        } catch {
+          toast.error("Could not copy. Try again.");
+        }
+        break;
+      }
       case "theme":
         setTheme((t) => (t === "dark" ? "light" : "dark"));
         break;
