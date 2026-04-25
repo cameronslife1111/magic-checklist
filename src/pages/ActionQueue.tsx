@@ -9,6 +9,12 @@ import { ArrowLeft, Pause, Play, Trash2, RotateCw, Repeat, AlertTriangle, Extern
 import { toast } from "sonner";
 import { stopSpeech } from "@/lib/speech";
 
+type Attachments = {
+  sources: { url: string; type: "image" | "video" }[];
+  contextChecklists: { id: string; title: string }[];
+  contextMedia: { url: string; type: "image" | "video" | "audio"; name: string }[];
+};
+
 type Job = {
   id: string;
   user_id: string;
@@ -26,10 +32,45 @@ type Job = {
   max_attempts: number;
   created_at: string;
   completed_at: string | null;
+  attachments: Attachments;
 };
 
-// Lightweight column list — never select payload/result here, they can be huge.
-const JOB_COLS = "id,user_id,checklist_id,source_item_id,action_type,status,prompt_preview,error_raw,error_friendly,error_fix,scheduled_for,recurrence,attempts,max_attempts,created_at,completed_at";
+// Payloads are bounded to <=200KB by enqueue-action; safe to fetch for the dashboard.
+const JOB_COLS = "id,user_id,checklist_id,source_item_id,action_type,status,prompt_preview,error_raw,error_friendly,error_fix,scheduled_for,recurrence,attempts,max_attempts,created_at,completed_at,payload";
+
+const isHttpUrl = (u: unknown): u is string =>
+  typeof u === "string" && (u.startsWith("http://") || u.startsWith("https://"));
+
+const deriveAttachments = (action_type: string, payload: any): Attachments => {
+  const sources: Attachments["sources"] = [];
+  const p = payload ?? {};
+
+  // Source/reference media (gallery URLs only — skip legacy data URLs).
+  if (Array.isArray(p.refImageUrls)) {
+    for (const u of p.refImageUrls) if (isHttpUrl(u)) sources.push({ url: u, type: "image" });
+  }
+  if (isHttpUrl(p.sourceUrl)) {
+    const t: "image" | "video" = action_type === "video-video" ? "video" : "image";
+    sources.push({ url: p.sourceUrl, type: t });
+  }
+  if (isHttpUrl(p.imageUrl)) {
+    sources.push({ url: p.imageUrl, type: "image" });
+  }
+
+  const ctx = p.context ?? {};
+  const contextChecklists = Array.isArray(ctx.checklists)
+    ? ctx.checklists
+        .filter((c: any) => c && typeof c.id === "string")
+        .map((c: any) => ({ id: c.id, title: typeof c.title === "string" ? c.title : "Untitled" }))
+    : [];
+  const contextMedia = Array.isArray(ctx.media)
+    ? ctx.media
+        .filter((m: any) => m && isHttpUrl(m.url) && (m.type === "image" || m.type === "video" || m.type === "audio"))
+        .map((m: any) => ({ url: m.url, type: m.type, name: typeof m.name === "string" ? m.name : "" }))
+    : [];
+
+  return { sources, contextChecklists, contextMedia };
+};
 
 const ACTION_LABELS: Record<string, string> = {
   "text-text": "Text to text",
