@@ -263,7 +263,15 @@ const ChecklistPage = () => {
     return newItem;
   };
 
+  const addNewAfterCurrent = async () => {
+    const sourceId = highestUnchecked?.id ?? (items[items.length - 1]?.id ?? null);
+    const created = await insertItemAfter(sourceId, { text: "" });
+    if (created) setFocusItemId(created.id);
+    return created;
+  };
+
   // ---------- Action Handlers ----------
+
 
   const onPick = async (key: ActionKey) => {
     setActionsOpen(false);
