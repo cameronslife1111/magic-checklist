@@ -1,114 +1,69 @@
-# Action Queue Dashboard
+## Goal
 
-A true background job system for all 8 AI actions (text-to-text, text-to-image, image-to-image, remix, image-to-video, video-to-video, analyze-image, web search). Every AI action gets queued, runs server-side via a cron worker, and results land back in the originating checklist exactly where they would have appeared if run inline. The dashboard manages the queue, schedules, recurrence, pause, retry, and AI-explained errors.
+Before choosing **Now / Later / Recurring**, the user can attach context that gets sent to the API alongside the source checkbox text. Context travels with the job — including for scheduled and recurring runs — and works even when the app is closed.
 
----
+## First-principles design
 
-## 1. Database (migration)
+**Two kinds of context, two storage strategies:**
 
-### `action_jobs` table
-- `id uuid pk`
-- `user_id uuid` (RLS: own rows)
-- `checklist_id uuid`, `source_item_id uuid` — where the result inserts back
-- `action_type text` — one of the 8 actions
-- `status text` — `pending` | `scheduled` | `running` | `completed` | `failed` | `paused` | `cancelled`
-- `payload jsonb` — prompt, aspect ratio, quality, base64-uploaded source URLs (NOT raw files; uploaded to `generated-media` first), etc.
-- `result jsonb` — output URLs/text once done (kept for "save & re-run")
-- `error_raw text`, `error_friendly text`, `error_fix text` — AI-translated error
-- `scheduled_for timestamptz` — null = run now
-- `recurrence text` — null | `hourly` | `daily` | `weekly` | `monthly` | `yearly`
-- `parent_job_id uuid` — links recurring children to template
-- `attempts int default 0`, `max_attempts int default 3`
-- `started_at`, `completed_at`, `created_at`, `updated_at`
+1. **Text context = checklist references.** Store only an array of `checklist_id`s in `payload.context.checklists` (≤15). At execution time, the **worker re-fetches** their items fresh. Tiny payload, always current — ideal for recurring jobs.
+2. **Media context = files.** Upload to the existing `generated-media` storage bucket the moment the user attaches them, then store `[{ url, type, name }]` in `payload.context.media` (≤15 each for image/video/audio). Worker fetches URLs at run time. Persists for scheduled/recurring runs even if the user closes the tab.
 
-**RLS:** owner-only select/insert/update/delete (mirrors existing `checklists` policies).
+**Why upload immediately (not at "Run" time)?** If the user picks Schedule or Recurring, the local `File` object would be gone. Uploading on attach guarantees the job is self-contained the moment it's enqueued.
 
-### `action_jobs_realtime`
-Add table to `supabase_realtime` publication so the dashboard updates live.
+## Changes
 
-### `pg_cron` + `pg_net`
-Enable extensions; schedule `process-action-queue` edge function every minute.
+### 1. New component: `src/components/ContextAttacher.tsx`
+Renders the 4 buttons inside `ScheduleActionDialog` above the Now/Later/Recurring tabs:
+- **Add Text Context** → opens a multi-select checklist picker (search + checkboxes, max 15). Stores selected `{id, title}` pairs.
+- **Add Image Context** / **Add Video Context** / **Add Audio Context** → opens a hidden `<input type="file" accept="image/*|video/*|audio/*" multiple>` (max 15 each). On selection: upload each file to `generated-media/{user_id}/context/{uuid}.{ext}`, show progress + thumbnails, store `{url, type, name}` per item. Each chip has an X to remove (also deletes from storage).
+- Shows live counts: "3 checklists · 2 images · 1 audio attached".
 
----
+### 2. `src/components/ScheduleActionDialog.tsx`
+- Accept a new prop `attachedContext` + `onContextChange`. Render `<ContextAttacher>` at the top of the dialog (above the Now/Later/Recurring buttons).
+- `SchedulePick` payload unchanged — context is owned by the parent (`Checklist.tsx`), not the dialog, so it cleanly threads through to enqueue.
+- Add a small `excludeChecklistId` prop so the current checklist isn't selectable as its own context.
 
-## 2. Edge functions
+### 3. `src/pages/Checklist.tsx`
+- Extend `pendingEnqueue` state with `context: { checklists: string[]; media: { url: string; type: "image"|"video"|"audio"; name: string }[] }`.
+- Initialize empty when any `requestEnqueue(...)` is called.
+- Render the dialog with `attachedContext` + `onContextChange` wired up.
+- In `submitEnqueue`, merge `context` into `payload.context` before calling `enqueue-action`.
+- Reset context on close/cancel; keep it across switching Now/Later/Recurring tabs (same dialog session).
 
-### `enqueue-action` (new, `verify_jwt = true`)
-Single endpoint the client calls instead of invoking AI functions directly. Validates input with Zod, uploads any file payloads to `generated-media`, then inserts a row into `action_jobs`. Returns the job id.
+### 4. `supabase/functions/enqueue-action/index.ts`
+- Validate optional `payload.context`:
+  - `context.checklists`: array of UUIDs, max 15, must belong to the user (verified via RLS — the function already runs with the user's auth token, so a `select id from checklists where id in (...)` enforces ownership).
+  - `context.media`: array of `{url, type, name}`, max 15 per type, URLs must be in the project's storage public URL prefix.
+- Reject with 400 on violations. Otherwise pass through into `action_jobs.payload`.
 
-### `process-action-queue` (new, `verify_jwt = false` — called by cron)
-- Selects up to N rows where `status='pending'` AND (`scheduled_for IS NULL` OR `scheduled_for <= now()`), order by `created_at`.
-- Uses Postgres `FOR UPDATE SKIP LOCKED` style claim (sets `status='running'`, `started_at=now()`) so concurrent ticks don't double-process.
-- Dispatches to internal handlers that contain the same logic currently in `openai-text`, `openai-vision`, `lovable-image`, `fal-video`, `perplexity-search`. (We refactor those handlers into shared functions or have the worker call them with service-role JWT.)
-- On success: writes `result`, inserts the resulting checklist item via the service role (matching existing `insertItemAfter` shape), sets `status='completed'`.
-- On failure: increments `attempts`. If under `max_attempts`, leaves as `pending` with backoff via `scheduled_for`. If exhausted, sets `status='failed'`, then calls `explain-error` inline and stores the friendly explanation.
-- Recurring jobs: when a recurring job completes, insert a new `pending` child for the next interval (`scheduled_for = now() + interval`).
+### 5. `supabase/functions/process-action-queue/index.ts` — context resolution
+Add a `resolveContext(supabase, job)` helper that runs before each action:
+- For each `context.checklists` ID: fetch `checklist_items.text` ordered by position, join into a labeled block:
+  ```
+  ### Context from checklist "<title>"
+  - item 1
+  - item 2
+  ```
+- For each `context.media`: keep URLs grouped by type.
 
-### `explain-error` (new, `verify_jwt = false`, called server-side)
-Takes raw error + action_type + payload summary, calls Lovable AI (`google/gemini-2.5-flash`) with a strict system prompt: "Return JSON `{cause, fix}` in plain English, no jargon, no error codes." Stores into `error_friendly` and `error_fix`.
+Then per action:
+- **text-text / web-search**: prepend the text-context block to `payload.prompt`. For media context, append `Attached references:\n- <url> (<type>)` lines so the model can at least cite them.
+- **text-image / image-image / remix**: prepend text context to prompt. Append all `image` context URLs to `refImages` (download URL → base64 in worker, since `lovable-image` expects data URLs).
+- **image-video / video-video**: prepend text context to prompt. If video context exists and the source is missing, treat the first as `sourceDataUrl`; otherwise add as references in the prompt (fal-video doesn't take multiple inputs).
+- **analyze-image**: prepend text context to prompt. If extra image context exists, the call already supports one image; pass the first attached as a secondary reference by mentioning its URL in the prompt (vision endpoint is single-image today; document this gracefully).
 
-### Existing AI functions
-Stay deployed (used by the worker). Client no longer calls them directly.
+A small `urlToDataUrl(url)` helper in the worker does `fetch → blob → base64` for endpoints that need data URLs.
 
----
+### 6. Storage cleanup (light)
+- Context uploads live under `generated-media/{user_id}/context/...`. No automatic cleanup needed for v1 — they're cheap and the user explicitly attached them. Removing a chip in the dialog deletes the object via `supabase.storage.from("generated-media").remove([path])`.
 
-## 3. Client-side changes
+### 7. UI polish
+- The dialog grows in height; wrap context section in a max-height scroll area.
+- Disable the action buttons (Now/Later/Recurring) while any media upload is in progress.
+- Show a tiny "Context will be re-fetched fresh on each recurring run" hint when the recurring tab is active and text-context is attached.
 
-### `src/components/ScheduleActionDialog.tsx` (new)
-Popup shown EVERY time one of the 8 AI actions is triggered. Three options:
-1. **Run now** — enqueues with `scheduled_for=null`.
-2. **Schedule for later** — date/time picker → `scheduled_for=<future>`.
-3. **Recurring** — interval select (hourly/daily/weekly/monthly/yearly) + optional start time.
-
-Confirms with a single button; toast says "Queued — view in Action Queue Dashboard."
-
-### `src/pages/Checklist.tsx` (refactor)
-- Replace direct `supabase.functions.invoke("openai-text" | …)` calls in `runTextToText`, `runWebSearch`, and `runMediaAction` with: open `ScheduleActionDialog`, then on confirm call `enqueue-action` with the assembled payload (files uploaded to `generated-media` first).
-- Remove inline toast loaders; the dashboard owns status now.
-
-### `src/pages/ActionQueue.tsx` (new route `/queue`)
-Three tabs: **In Queue** (pending+running+scheduled), **Completed**, **Failed**. Each row shows:
-- Action type icon + checklist title + truncated prompt
-- Status badge (color-coded; failed = red)
-- Scheduled time / recurrence chip
-- Buttons: Pause/Resume, Cancel, Re-run, Save as recurring, Open source checklist
-- Failed rows expand to show `error_friendly` (plain-English cause) + `error_fix` (suggestion) + collapsed raw error
-
-Live updates via Supabase realtime subscription on `action_jobs`.
-
-### `ActionsSheet.tsx`
-Add new entry **"Action Queue Dashboard"** (icon: `ListChecks`). Picking it navigates to `/queue`.
-
-### `App.tsx`
-Register `/queue` under `RequireAuth`.
-
----
-
-## 4. Behavior guarantees
-
-- **Background:** worker runs every minute on the server via `pg_cron` → `pg_net` → `process-action-queue`. App can be closed; jobs still run.
-- **Result placement:** worker inserts the new checklist item exactly after `source_item_id` using the same position math as `insertItemAfter`. Results never appear in the dashboard — only in the originating checklist.
-- **Pause:** sets `status='paused'`; worker skips. Resume sets back to `pending`.
-- **Save & re-run:** "Save as recurring" turns a completed one-off into a recurring template.
-- **AI errors:** every failure auto-triggers `explain-error`; row turns red with friendly cause + fix.
-- **Security:** RLS on `action_jobs`; worker uses service role only inside the edge function; payloads validated with Zod.
-
----
-
-## Files
-
-**New**
-- `supabase/migrations/<ts>_action_jobs.sql`
-- `supabase/functions/enqueue-action/index.ts`
-- `supabase/functions/process-action-queue/index.ts`
-- `supabase/functions/explain-error/index.ts`
-- `src/components/ScheduleActionDialog.tsx`
-- `src/pages/ActionQueue.tsx`
-
-**Edited**
-- `src/pages/Checklist.tsx` — route AI actions through enqueue
-- `src/components/ActionsSheet.tsx` — add dashboard entry
-- `src/App.tsx` — add `/queue` route
-- `supabase/config.toml` — register new functions
-
-Approve and I'll build it end-to-end.
+## Out of scope (can follow up)
+- Editing context on already-queued jobs.
+- A dedicated "context library" for re-using attachments across actions.
+- Token-budget warnings when text context is huge.

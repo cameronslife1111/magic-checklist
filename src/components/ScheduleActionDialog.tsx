@@ -5,6 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Zap, Clock, Repeat } from "lucide-react";
+import { ContextAttacher, AttachedContext } from "@/components/ContextAttacher";
 
 export type SchedulePick =
   | { mode: "now" }
@@ -16,6 +17,10 @@ type Props = {
   actionLabel: string;
   onClose: () => void;
   onPick: (p: SchedulePick) => void;
+  userId?: string;
+  excludeChecklistId?: string;
+  context?: AttachedContext;
+  onContextChange?: (c: AttachedContext) => void;
 };
 
 const defaultLocal = () => {
@@ -25,12 +30,14 @@ const defaultLocal = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
-export const ScheduleActionDialog = ({ open, actionLabel, onClose, onPick }: Props) => {
+export const ScheduleActionDialog = ({ open, actionLabel, onClose, onPick, userId, excludeChecklistId, context, onContextChange }: Props) => {
   const [tab, setTab] = useState<"now" | "later" | "recurring">("now");
   const [when, setWhen] = useState<string>(defaultLocal());
   const [recurrence, setRecurrence] = useState<"hourly" | "daily" | "weekly" | "monthly" | "yearly">("daily");
+  const [uploading, setUploading] = useState(false);
 
   const submit = () => {
+    if (uploading) return;
     if (tab === "now") return onPick({ mode: "now" });
     const iso = new Date(when).toISOString();
     if (tab === "later") return onPick({ mode: "later", scheduled_for: iso });
@@ -39,10 +46,20 @@ export const ScheduleActionDialog = ({ open, actionLabel, onClose, onPick }: Pro
 
   return (
     <Dialog open={open} onOpenChange={(v) => !v && onClose()}>
-      <DialogContent className="max-w-md">
+      <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Run "{actionLabel}"</DialogTitle>
         </DialogHeader>
+
+        {userId && context && onContextChange && (
+          <ContextAttacher
+            userId={userId}
+            excludeChecklistId={excludeChecklistId}
+            value={context}
+            onChange={onContextChange}
+            onUploadingChange={setUploading}
+          />
+        )}
 
         <div className="grid grid-cols-3 gap-2">
           <Button
@@ -100,8 +117,8 @@ export const ScheduleActionDialog = ({ open, actionLabel, onClose, onPick }: Pro
 
         <div className="flex justify-end gap-2 pt-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={submit}>
-            {tab === "now" ? "Run now" : tab === "later" ? "Schedule" : "Save recurring"}
+          <Button onClick={submit} disabled={uploading}>
+            {uploading ? "Uploading…" : tab === "now" ? "Run now" : tab === "later" ? "Schedule" : "Save recurring"}
           </Button>
         </div>
       </DialogContent>
