@@ -455,6 +455,9 @@ const ChecklistPage = () => {
         }
         break;
       }
+      case "queue":
+        navigate("/queue");
+        break;
       case "theme":
         setTheme((t) => (t === "dark" ? "light" : "dark"));
         break;
