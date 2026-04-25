@@ -1,19 +1,19 @@
 project_id = "iedwmkdvwggpcmdyliii"
 
 [functions.openai-text]
-verify_jwt = true
+verify_jwt = false
 
 [functions.openai-vision]
-verify_jwt = true
+verify_jwt = false
 
 [functions.lovable-image]
-verify_jwt = true
+verify_jwt = false
 
 [functions.fal-video]
-verify_jwt = true
+verify_jwt = false
 
 [functions.perplexity-search]
-verify_jwt = true
+verify_jwt = false
 
 [functions.enqueue-action]
 verify_jwt = true
