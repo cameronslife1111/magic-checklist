@@ -28,6 +28,7 @@ export type Database = {
           max_attempts: number
           parent_job_id: string | null
           payload: Json
+          prompt_preview: string | null
           recurrence: string | null
           result: Json | null
           scheduled_for: string | null
@@ -50,6 +51,7 @@ export type Database = {
           max_attempts?: number
           parent_job_id?: string | null
           payload?: Json
+          prompt_preview?: string | null
           recurrence?: string | null
           result?: Json | null
           scheduled_for?: string | null
@@ -72,6 +74,7 @@ export type Database = {
           max_attempts?: number
           parent_job_id?: string | null
           payload?: Json
+          prompt_preview?: string | null
           recurrence?: string | null
           result?: Json | null
           scheduled_for?: string | null

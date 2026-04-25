@@ -70,6 +70,17 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Hard guardrail: reject jobs with giant inline media. The Media Gallery
+    // workflow stores files in Storage and only sends URLs, so legitimate jobs
+    // are tiny. Anything huge is a regression that would crash the worker and
+    // also make the dashboard unreadable.
+    const payloadSize = new TextEncoder().encode(JSON.stringify(payload ?? {})).length;
+    if (payloadSize > 200_000) {
+      return bad("payload too large — pick media from the Media Gallery instead of attaching files inline");
+    }
+
+    const promptPreview = typeof payload?.prompt === "string" ? String(payload.prompt).slice(0, 500) : null;
+
     const status = scheduled_for ? "scheduled" : "pending";
     const { data, error } = await supabase
       .from("action_jobs")
@@ -80,6 +91,7 @@ Deno.serve(async (req) => {
         action_type,
         status,
         payload: payload ?? {},
+        prompt_preview: promptPreview,
         scheduled_for: scheduled_for ?? null,
         recurrence: recurrence ?? null,
       })

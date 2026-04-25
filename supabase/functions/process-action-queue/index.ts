@@ -340,6 +340,22 @@ Deno.serve(async (req) => {
   const results: any[] = [];
   for (const j of (jobs ?? []) as Job[]) {
     try {
+      // Safety: if a legacy job somehow still has a giant inline media payload,
+      // fail it cleanly instead of OOM-crashing the worker (which would leave it stuck "running").
+      const payloadSize = new TextEncoder().encode(JSON.stringify(j.payload ?? {})).length;
+      if (payloadSize > 200_000) {
+        await supabase.from("action_jobs").update({
+          status: "failed",
+          error_raw: `payload too large (${payloadSize} bytes)`,
+          error_friendly: "This action was queued with files attached inline and is too large to run.",
+          error_fix: "Re-run it from the checklist using images selected from your Media Gallery.",
+          completed_at: new Date().toISOString(),
+          attempts: j.attempts + 1,
+        }).eq("id", j.id);
+        results.push({ id: j.id, ok: false, error: "payload too large" });
+        continue;
+      }
+
       const { result } = await runWithCancellation(supabase, j.id, (signal) => runJob(supabase, j, signal));
 
       // If user cancelled mid-flight but inner work still resolved, treat as cancelled.
