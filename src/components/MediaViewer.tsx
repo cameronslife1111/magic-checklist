@@ -13,6 +13,8 @@ export const MediaViewer = ({ open, url, type, onClose }: Props) => {
       <DialogContent className="max-w-[95vw] sm:max-w-2xl p-2 bg-background">
         {url && (type === "video" ? (
           <video src={url} controls autoPlay className="w-full h-auto rounded-lg" />
+        ) : type === "audio" ? (
+          <audio src={url} controls autoPlay className="w-full" />
         ) : (
           <img src={url} alt="Media" className="w-full h-auto rounded-lg" />
         ))}
