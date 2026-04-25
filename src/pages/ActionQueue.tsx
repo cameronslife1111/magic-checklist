@@ -131,7 +131,26 @@ const ActionQueue = () => {
       setLoading(false);
       return;
     }
-    setJobs((data ?? []) as Job[]);
+    const mapped: Job[] = (data ?? []).map((r: any) => ({
+      id: r.id,
+      user_id: r.user_id,
+      checklist_id: r.checklist_id,
+      source_item_id: r.source_item_id ?? null,
+      action_type: r.action_type,
+      status: r.status,
+      prompt_preview: r.prompt_preview ?? (typeof r.payload?.prompt === "string" ? String(r.payload.prompt).slice(0, 500) : null),
+      error_raw: r.error_raw ?? null,
+      error_friendly: r.error_friendly ?? null,
+      error_fix: r.error_fix ?? null,
+      scheduled_for: r.scheduled_for ?? null,
+      recurrence: r.recurrence ?? null,
+      attempts: r.attempts ?? 0,
+      max_attempts: r.max_attempts ?? 3,
+      created_at: r.created_at,
+      completed_at: r.completed_at ?? null,
+      attachments: deriveAttachments(r.action_type, r.payload),
+    }));
+    setJobs(mapped);
     setLoading(false);
   }, []);
 
