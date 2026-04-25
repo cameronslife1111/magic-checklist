@@ -490,7 +490,7 @@ const ChecklistPage = () => {
         </div>
       </div>
 
-      <ActionsSheet open={actionsOpen} onOpenChange={setActionsOpen} onPick={onPick} />
+      <ActionsSheet open={actionsOpen} onOpenChange={setActionsOpen} onPick={onPick} currentTheme={theme} />
 
       <TextPromptDialog
         open={dialog.kind === "new"}
