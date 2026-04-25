@@ -1,35 +1,56 @@
-## Problem
+## Plan
 
-The Action Queue Dashboard sometimes shows "No queued actions" / stays in "Loading…" forever even though jobs exist in the database (verified — there are 7 jobs for your user, including one currently `running`).
+I found the core problem: the dashboard is loading full action job records, but some older jobs still contain massive embedded base64 media payloads. Two rows are over 30 MB each, and the table currently holds about 69 MB of payload JSON. That makes the dashboard query time out, and the same oversized jobs are also causing backend worker memory-limit crashes.
 
-## Root cause
+### What I’ll build
 
-In `src/pages/ActionQueue.tsx` the initial fetch effect has three subtle bugs that combine into the failure you're seeing:
+1. **Make the dashboard read a lightweight job shape only**
+   - Update the dashboard so it no longer fetches full `payload` and `result` blobs.
+   - Add a dedicated lightweight field for display text (for example `prompt_preview`) so the UI can still show the prompt without loading huge media data.
+   - Keep the existing tabs, counts, refresh flow, and realtime behavior.
 
-1. **Auth race**: the effect runs as soon as `user` is non-null, but the Supabase client's auth header may not yet be attached for that request. RLS then silently returns **0 rows** instead of an error. `setJobs([])` + `setLoading(false)` fire and the dashboard "successfully" displays an empty queue.
-2. **No explicit `user_id` filter**: the query relies entirely on RLS. Combined with #1, there's no defense if the token is briefly missing.
-3. **Realtime never backfills**: the subscription only delivers *changes*. If the initial fetch came back empty, nothing ever repopulates until you hard-refresh — exactly what you're experiencing.
-4. **`if (!user) return;` early-exit** never resets `loading`, so a user/session flip mid-mount can leave the page stuck on "Loading…".
+2. **Clean up the oversized legacy queue data**
+   - Add a migration that backfills the new lightweight prompt field from existing jobs.
+   - Compact old completed/failed/cancelled jobs by removing embedded base64 media data that the dashboard does not need.
+   - For old pending/running jobs that still depend on giant embedded files, mark them failed with a clear message telling the user to re-run them from the Media Gallery. This stops them from hanging forever and crashing the worker.
 
-The Media Gallery work didn't break anything in the queue itself — it just added more auth-state churn (new route, new queries) that made this latent race trigger more often.
+3. **Harden the queue so this cannot happen again**
+   - Update `enqueue-action` to save the lightweight prompt field when a job is created.
+   - Add a payload-size guard so oversized inline media jobs are rejected early instead of being saved to the database.
+   - Update `process-action-queue` to detect legacy oversized jobs and fail them safely instead of repeatedly hitting memory limits.
 
-## Fix (single file: `src/pages/ActionQueue.tsx`)
+4. **Polish the dashboard behavior**
+   - Keep the current error/retry UX, but show the lightweight prompt field instead of reading from the full payload.
+   - Ensure new jobs appear immediately and old jobs still render correctly after the cleanup.
+   - Preserve the clean layout and current queue workflow.
 
-1. **Wait for auth to be ready** before fetching: use `loading` from `useAuth()` and only fetch once `loading === false` AND `user` exists. If `user` is null after auth resolves, set `loading=false` and show empty state cleanly.
-2. **Add an explicit `.eq("user_id", user.id)` filter** to both the initial fetch and as a `filter` on the realtime channel — defense in depth against the RLS-returns-empty race.
-3. **Re-fetch on visibility change & on realtime `SUBSCRIBED` event**: when the channel finishes (re)subscribing or the tab regains focus, run the list query again. This guarantees backfill even if the first attempt raced auth.
-4. **Surface fetch errors**: if `error` is returned, show a small inline error with a "Retry" button instead of silently rendering an empty list. (Right now errors are dropped on the floor.)
-5. **Add a manual "Refresh" button** in the header next to the back arrow as a final safety net.
-6. **Stable channel name per user** (`action_jobs_dashboard_${user.id}`) so reconnects don't collide.
+## Why this is the right fix
 
-## What I will NOT change
+This is not just a frontend loading bug. The timeout is happening because the dashboard is asking the database for far more data than it needs, and some historical rows are extremely large. Fixing only the React page would leave the worker unstable; fixing only the worker would still leave the dashboard slow. This plan fixes the read path, the bad historical data, and the future write path together.
 
-- Database schema (data is fine, RLS is correct, jobs exist).
-- Edge functions (`process-action-queue`, `enqueue-action`) — they're working; the latest job moved from `pending` → `running` correctly.
-- The job-row UI, tabs, status badges, or any other behavior. Same look, just reliable loading.
+## Technical details
 
-## Verification after the fix
+- Files to update:
+  - `src/pages/ActionQueue.tsx`
+  - `supabase/functions/enqueue-action/index.ts`
+  - `supabase/functions/process-action-queue/index.ts`
+  - new database migration for `action_jobs`
+- Database changes:
+  - add `prompt_preview text`
+  - backfill from `payload->>'prompt'`
+  - compact legacy payloads for non-active jobs
+  - safely fail oversized active legacy jobs
+- Query change:
+  - replace `select("*")` with a minimal column list used by the dashboard
+- Guardrails:
+  - reject future oversized inline payloads
+  - stop retry loops for jobs that are already known to exceed backend memory limits
 
-- Reload the dashboard — should populate immediately with your 7 jobs.
-- Sign out / sign back in — dashboard should populate without a manual refresh.
-- Trigger a new action from a checklist — should appear live via realtime, and remain after the realtime channel reconnects.
+## Validation
+
+After implementation, I’ll verify that:
+- the dashboard loads quickly even with historical jobs present
+- existing jobs show in the queue again
+- newly queued actions appear immediately
+- oversized legacy jobs no longer keep the worker in a crash loop
+- the clean dashboard UX stays intact
