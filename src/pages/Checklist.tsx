@@ -15,6 +15,7 @@ import { BackgroundPickerDialog } from "@/components/BackgroundPickerDialog";
 import { MediaActionDialog, GenOptions } from "@/components/MediaActionDialog";
 import { MediaViewer } from "@/components/MediaViewer";
 import { ScheduleActionDialog, SchedulePick } from "@/components/ScheduleActionDialog";
+import { AttachedContext } from "@/components/ContextAttacher";
 import { toast } from "sonner";
 import { primeSpeech, speak, stopSpeech, isMuted, setMuted } from "@/lib/speech";
 import { wasPickJustNow } from "@/lib/clickGuard";
@@ -54,6 +55,7 @@ const ChecklistPage = () => {
     payload: any;
     source_item_id: string | null;
   }>(null);
+  const [pendingContext, setPendingContext] = useState<AttachedContext>({ checklists: [], media: [] });
   const [focusItemId, setFocusItemId] = useState<string | null>(null);
   const [reorderMode, setReorderMode] = useState(false);
   const [muted, setMutedState] = useState<boolean>(() => isMuted());
@@ -540,16 +542,24 @@ const ChecklistPage = () => {
   };
 
   const requestEnqueue = (args: { action_type: string; actionLabel: string; payload: any; source_item_id: string | null }) => {
+    setPendingContext({ checklists: [], media: [] });
     setPendingEnqueue(args);
   };
 
   const submitEnqueue = async (pick: SchedulePick) => {
     if (!pendingEnqueue || !checklist) { setPendingEnqueue(null); return; }
+    const mergedPayload = {
+      ...pendingEnqueue.payload,
+      context: {
+        checklists: pendingContext.checklists.map((c) => c.id),
+        media: pendingContext.media.map((m) => ({ url: m.url, type: m.type, name: m.name })),
+      },
+    };
     const body: any = {
       action_type: pendingEnqueue.action_type,
       checklist_id: checklist.id,
       source_item_id: pendingEnqueue.source_item_id,
-      payload: pendingEnqueue.payload,
+      payload: mergedPayload,
     };
     if (pick.mode === "later") body.scheduled_for = pick.scheduled_for;
     if (pick.mode === "recurring") {
@@ -558,6 +568,7 @@ const ChecklistPage = () => {
     }
     const { error } = await supabase.functions.invoke("enqueue-action", { body });
     setPendingEnqueue(null);
+    setPendingContext({ checklists: [], media: [] });
     setDialog({ kind: "none" });
     if (error) toast.error("Could not queue. Try again.");
     else toast.success(pick.mode === "now" ? "Queued — running in background." : "Scheduled.");
@@ -971,8 +982,12 @@ const ChecklistPage = () => {
       <ScheduleActionDialog
         open={!!pendingEnqueue}
         actionLabel={pendingEnqueue?.actionLabel ?? ""}
-        onClose={() => setPendingEnqueue(null)}
+        onClose={() => { setPendingEnqueue(null); setPendingContext({ checklists: [], media: [] }); }}
         onPick={submitEnqueue}
+        userId={user?.id}
+        excludeChecklistId={checklist?.id}
+        context={pendingContext}
+        onContextChange={setPendingContext}
       />
     </div>
   );
