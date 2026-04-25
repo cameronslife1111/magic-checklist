@@ -177,13 +177,17 @@ const ActionQueue = () => {
   };
 
   const rerun = async (j: Job) => {
+    const { data: full, error: fetchErr } = await supabase
+      .from("action_jobs").select("payload").eq("id", j.id).maybeSingle();
+    if (fetchErr || !full) { toast.error("Could not re-run."); return; }
     const { error } = await supabase.from("action_jobs").insert({
       user_id: j.user_id,
       checklist_id: j.checklist_id,
       source_item_id: j.source_item_id,
       action_type: j.action_type,
       status: "pending",
-      payload: j.payload,
+      payload: full.payload ?? {},
+      prompt_preview: j.prompt_preview,
     });
     if (error) toast.error("Could not re-run.");
     else toast.success("Re-queued.");
@@ -194,13 +198,17 @@ const ActionQueue = () => {
     if (!next) return;
     const valid = ["hourly", "daily", "weekly", "monthly", "yearly"];
     if (!valid.includes(next)) { toast.error("Invalid interval."); return; }
+    const { data: full, error: fetchErr } = await supabase
+      .from("action_jobs").select("payload").eq("id", j.id).maybeSingle();
+    if (fetchErr || !full) { toast.error("Could not save recurring."); return; }
     const { error } = await supabase.from("action_jobs").insert({
       user_id: j.user_id,
       checklist_id: j.checklist_id,
       source_item_id: j.source_item_id,
       action_type: j.action_type,
       status: "scheduled",
-      payload: j.payload,
+      payload: full.payload ?? {},
+      prompt_preview: j.prompt_preview,
       scheduled_for: new Date(Date.now() + 60_000).toISOString(),
       recurrence: next,
     });
@@ -247,7 +255,7 @@ const ActionQueue = () => {
               )}
             </div>
             <p className="mt-1 text-sm text-muted-foreground line-clamp-2">
-              {j.payload?.prompt ?? "(no prompt)"}
+              {j.prompt_preview ?? "(no prompt)"}
             </p>
             <div className="mt-1 text-xs text-muted-foreground">
               {j.scheduled_for ? `Runs ${fmt(j.scheduled_for)}` : `Created ${fmt(j.created_at)}`}
