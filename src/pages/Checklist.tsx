@@ -242,7 +242,11 @@ const ChecklistPage = () => {
       toast.error("Could not delete. Try again.");
       return;
     }
-    setItems((prev) => prev.filter((i) => i.id !== item.id));
+    setItems((prev) => {
+      const nextList = prev.filter((i) => i.id !== item.id);
+      focusAndSpeakHighestUnchecked(nextList);
+      return nextList;
+    });
   };
 
   const positionAfter = (sourceId: string | null) => {
