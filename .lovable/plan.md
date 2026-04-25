@@ -1,45 +1,35 @@
 ## Goal
-1. Add a new **"Delete checklist"** action to the Actions popup that asks for confirmation, then deletes only the current checklist.
-2. Change **"Duplicate checklist"** so it opens a title prompt (pre-filled with `"<old title> Copy"`) before creating the duplicate, letting the user edit the new title first.
+Swap the **text-to-image** action to OpenAI's **GPT Image 2** via fal (using the existing `FAL_KEY`). Image-image, remix, image-video, video-video, and analyze-image stay on their current models. The Action Queue (Now / Schedule / Recurring) keeps working unchanged because the swap happens inside the existing edge function — `process-action-queue` just calls `lovable-image` like today and inserts the resulting image URL into the checklist.
 
 ## Changes
 
-### 1. `src/components/ActionsSheet.tsx`
-- Extend `ActionKey` union with `"delete-checklist"`.
-- Add a new `STATIC_ITEMS` entry:
-  - **Label**: `Delete checklist`
-  - **Icon**: `Trash2` (lucide-react)
-  - **Position**: right after `"duplicate"` ("Duplicate checklist") so checklist-level actions sit together.
+### 1. `supabase/functions/lovable-image/index.ts`
+Branch on the request: when there are **no `refImages`** (= text-to-image), call fal's `openai/gpt-image-2` queue. Otherwise keep the existing Lovable AI Gateway / Nano Banana path for edits & remix.
 
-### 2. `src/pages/Checklist.tsx`
+- Use `FAL_KEY` (already configured).
+- Submit to `https://queue.fal.run/openai/gpt-image-2` with:
+  - `prompt`: passed-through prompt (already includes any context block).
+  - `image_size`: mapped from current `aspectRatio` → fal preset:
+    - `1:1` → `square_hd`
+    - `16:9` → `landscape_16_9`
+    - `9:16` → `portrait_16_9`
+    - `4:3` → `landscape_4_3`
+    - `3:4` → `portrait_4_3`
+  - `quality: "high"` (per your choice — ignore the standard/high UI toggle for this model).
+  - `num_images: 1`, `output_format: "png"`.
+- Poll the returned `status_url` / `response_url` (reuse the same poll pattern already used in `fal-video/index.ts`).
+- Take `result.images[0].url`, fetch it, base64-encode it, and return `{ dataUrl }` — **same response shape as today**, so no caller changes needed.
+- Surface 429 / 402 / generic errors with the same status codes as the current function.
 
-**Dialog state**: extend `DialogState` union with two new variants:
-- `{ kind: "duplicate-title" }`
-- `{ kind: "delete-checklist" }`
+### 2. No other code changes needed
+- `process-action-queue/index.ts` already calls `lovable-image` for the `text-image` case and uploads the returned `dataUrl` to the `generated-media` bucket → inserts a checklist item with `media_type: "image"`. This continues to work unchanged for **Now**, **Schedule**, and **Recurring** jobs.
+- `MediaActionDialog.tsx` continues to collect aspect ratio (still respected) and quality (silently overridden to high for text-to-image — the field is still sent so other flows are unaffected).
+- No DB migrations, no config.toml change (function already deployed with `verify_jwt = false`), no client changes, no Action Queue dashboard changes.
 
-**Duplicate flow change**:
-- `case "duplicate":` no longer calls `duplicateCurrent()` directly. Instead it does `setDialog({ kind: "duplicate-title" })`.
-- Refactor `duplicateCurrent()` → `duplicateCurrentWithTitle(newTitle: string)` which uses the supplied title in the insert (fallback to `"${checklist.title} Copy"` if empty, but the dialog already enforces non-empty).
-- Render a new `<TextPromptDialog>`:
-  - `open={dialog.kind === "duplicate-title"}`
-  - `title="Duplicate checklist"`, `label="New checklist title"`
-  - `initial={\`${checklist.title} Copy\`}`
-  - `saveLabel="Duplicate"`
-  - `onSave`: call `duplicateCurrentWithTitle(title)` then close dialog.
+## Out of scope (per your answer)
+- Image-image and Remix stay on the current Nano Banana model. Fal's gpt-image-2 edit endpoint requires a separate OpenAI BYOK key, so we're not touching it.
 
-**Delete flow**:
-- New `case "delete-checklist":` → `setDialog({ kind: "delete-checklist" })`.
-- New handler `deleteCurrentChecklist()`:
-  - Delete `checklist_items` where `checklist_id = checklist.id` (RLS-scoped to the user).
-  - Delete the row from `checklists` where `id = checklist.id`.
-  - On error → `toast.error("Could not delete checklist. Try again.")` and keep dialog open.
-  - On success → `toast.success("Checklist deleted.")`, clear `localStorage["mc-last-checklist"]`, then load the user's next available checklist (query `checklists` for `user_id`, order by `updated_at desc`, limit 1) and call `openChecklist` on it. If none exists, mirror the bootstrap branch (insert a fresh "Untitled" checklist with a couple of starter items) so the page never lands on an empty/null state.
-- Render an `<AlertDialog>` (using existing `src/components/ui/alert-dialog.tsx`) bound to `dialog.kind === "delete-checklist"`:
-  - Title: `Delete this checklist?`
-  - Description: `"<title>" and all its checkboxes will be permanently deleted. This cannot be undone.`
-  - Cancel + destructive Confirm button (Confirm calls `deleteCurrentChecklist`).
-
-## Notes / Non-goals
-- Only the active checklist is deleted — no cascade to other checklists or to `action_jobs`.
-- No DB schema changes, no edge function changes, no new dependencies (`AlertDialog`, `Trash2`, `TextPromptDialog` all already exist).
-- `duplicateCurrentItem` (checkbox duplication) is untouched.
+## Verification after deploy
+- Live smoke-test the function with a simple prompt and confirm a PNG `dataUrl` comes back.
+- Run a Now text-to-image action from the UI → verify a new checklist item appears with the generated image.
+- Schedule a text-to-image action 1 minute out → verify the cron worker processes it and inserts the image.
