@@ -15,7 +15,7 @@ import { BackgroundPickerDialog } from "@/components/BackgroundPickerDialog";
 import { MediaActionDialog, GenOptions } from "@/components/MediaActionDialog";
 import { MediaViewer } from "@/components/MediaViewer";
 import { toast } from "sonner";
-import { primeSpeech, speak, stopSpeech } from "@/lib/speech";
+import { primeSpeech, speak, stopSpeech, isMuted, setMuted } from "@/lib/speech";
 import { extractFirstUrl, isUrl, splitTextWithLinks } from "@/lib/split";
 import {
   DndContext, DragEndEvent, PointerSensor, TouchSensor, KeyboardSensor,
@@ -48,6 +48,7 @@ const ChecklistPage = () => {
   const [viewer, setViewer] = useState<{ url: string; type: string } | null>(null);
   const [focusItemId, setFocusItemId] = useState<string | null>(null);
   const [reorderMode, setReorderMode] = useState(false);
+  const [muted, setMutedState] = useState<boolean>(() => isMuted());
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
     return (localStorage.getItem("mc-theme") as "light" | "dark") ?? "light";
@@ -331,6 +332,13 @@ const ChecklistPage = () => {
     if (!checklist || !user) return;
 
     switch (key) {
+      case "mute": {
+        const next = !muted;
+        setMuted(next);
+        setMutedState(next);
+        toast.success(next ? "Speech muted" : "Speech unmuted");
+        break;
+      }
       case "add": {
         await addNewAfterCurrent();
         break;
@@ -814,7 +822,7 @@ const ChecklistPage = () => {
         style={{ fontSize: "16px" }}
       />
 
-      <ActionsSheet open={actionsOpen} onOpenChange={setActionsOpen} onPick={onPick} currentTheme={theme} />
+      <ActionsSheet open={actionsOpen} onOpenChange={setActionsOpen} onPick={onPick} currentTheme={theme} muted={muted} />
 
       <TextPromptDialog
         open={dialog.kind === "new"}
