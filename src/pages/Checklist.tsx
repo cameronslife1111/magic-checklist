@@ -100,17 +100,14 @@ const ChecklistPage = () => {
     primeSpeech();
     setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, checked: next } : i)));
     await supabase.from("checklist_items").update({ checked: next }).eq("id", item.id);
-    if (next) {
-      // find next highest unchecked AFTER toggling
-      const updated = items.map((i) => (i.id === item.id ? { ...i, checked: true } : i));
-      const nxt = updated.find((i) => !i.checked);
-      if (nxt) {
-        scrollItemToCenter(nxt.id);
-        const speakText = nxt.linked_checklist_id ? (nxt.text || "Open checklist") : nxt.text;
-        if (speakText) speak(speakText);
-      } else {
-        stopSpeech();
-      }
+    const updated = items.map((i) => (i.id === item.id ? { ...i, checked: next } : i));
+    const nxt = updated.find((i) => !i.checked);
+    if (nxt) {
+      scrollItemToCenter(nxt.id);
+      const speakText = nxt.linked_checklist_id ? (nxt.text || "Open checklist") : nxt.text;
+      if (speakText) speak(speakText);
+    } else {
+      stopSpeech();
     }
   };
 
