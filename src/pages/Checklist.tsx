@@ -463,10 +463,12 @@ const ChecklistPage = () => {
                 key={it.id}
                 item={it}
                 autoFocus={focusItemId === it.id}
+                isActive={highestUnchecked?.id === it.id}
                 onToggle={handleToggle}
                 onTextChange={handleTextChange}
                 onOpenLinkedChecklist={openChecklist}
                 onOpenMedia={(url, type) => setViewer({ url, type })}
+                onDelete={handleDelete}
                 registerRef={registerRef}
               />
             ))}
