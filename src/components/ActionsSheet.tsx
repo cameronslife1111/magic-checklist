@@ -20,6 +20,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "queue",          label: "Action Queue Dashboard",  icon: ListChecks },
   { key: "new",            label: "New checklist",           icon: FilePlus },
   { key: "duplicate",      label: "Duplicate checklist",     icon: Copy },
+  { key: "delete-checklist", label: "Delete checklist",      icon: Trash2 },
   { key: "edit-title",     label: "Edit checklist title",    icon: Pencil },
   { key: "split",          label: "Split current checkbox",  icon: Scissors },
   { key: "text-text",      label: "Text to text",            icon: Type },
