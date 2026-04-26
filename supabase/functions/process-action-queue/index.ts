@@ -204,7 +204,11 @@ async function urlToDataUrl(url: string): Promise<string> {
   return `data:${blob.type || "application/octet-stream"};base64,${btoa(binary)}`;
 }
 
-async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ result: any }> {
+type JobOutcome =
+  | { kind: "result"; result: any }
+  | { kind: "handoff"; provider: string; status_url: string; response_url: string; request_id: string | null };
+
+async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<JobOutcome> {
   const p = job.payload ?? {};
   const ctx = await resolveContext(supabase, p);
   switch (job.action_type) {
