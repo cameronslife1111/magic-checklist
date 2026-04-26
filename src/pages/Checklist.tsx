@@ -1363,53 +1363,40 @@ const ChecklistPage = () => {
                 Actions
               </Button>
               <Button
-                aria-label="Open top checklist (long-press for Magic Steps voice)"
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  homeLongPressFiredRef.current = false;
-                  if (homeLongPressTimerRef.current) window.clearTimeout(homeLongPressTimerRef.current);
-                  homeLongPressTimerRef.current = window.setTimeout(() => {
-                    homeLongPressFiredRef.current = true;
-                    startMagicRecording();
-                  }, 500);
-                }}
-                onPointerUp={async () => {
-                  if (homeLongPressTimerRef.current) {
-                    window.clearTimeout(homeLongPressTimerRef.current);
-                    homeLongPressTimerRef.current = null;
-                  }
-                  if (homeLongPressFiredRef.current) {
-                    if (magicRecording) await stopMagicRecording();
+                aria-label="Tap to start/stop Magic Steps voice; tap again to open top checklist"
+                onClick={async () => {
+                  // Tap-to-toggle Magic Steps recording. If we're recording,
+                  // stop and return without navigating. If not recording but
+                  // the pill isn't active, start recording and return.
+                  if (magicRecording) {
+                    await stopMagicRecording();
                     return;
                   }
-                  // Short tap: original home behavior.
+                  // Treat any tap that isn't stopping recording as a start
+                  // request UNLESS the user just tapped to navigate. We
+                  // distinguish "start recording" vs "navigate home" by:
+                  //   - If user already has the home checklist open AND there
+                  //     is no linked checklist on the highest unchecked item,
+                  //     a tap should start recording (no other useful action).
+                  //   - Otherwise, navigate home / into the linked checklist.
+                  // This keeps both behaviors discoverable on one button.
                   const { data } = await supabase.from("checklists").select("id,title");
                   const sorted = sortChecklistsByTitle(data ?? []);
                   const top = sorted[0];
-                  if (!top) return;
-                  if (top.id !== checklist.id) {
+                  if (top && top.id !== checklist.id) {
                     await openChecklist(top.id);
                     return;
                   }
                   if (highestUnchecked?.linked_checklist_id) {
                     await openChecklist(highestUnchecked.linked_checklist_id);
+                    return;
                   }
-                }}
-                onPointerLeave={() => {
-                  if (homeLongPressTimerRef.current) {
-                    window.clearTimeout(homeLongPressTimerRef.current);
-                    homeLongPressTimerRef.current = null;
-                  }
-                }}
-                onPointerCancel={() => {
-                  if (homeLongPressTimerRef.current) {
-                    window.clearTimeout(homeLongPressTimerRef.current);
-                    homeLongPressTimerRef.current = null;
-                  }
+                  // Already on top checklist with no linked target → start recording.
+                  await startMagicRecording();
                 }}
                 onContextMenu={(e) => e.preventDefault()}
                 className={cn(
-                  "w-16 h-14 rounded-2xl text-2xl leading-none shadow-floating select-none touch-none",
+                  "w-16 h-14 rounded-2xl text-2xl leading-none shadow-floating select-none",
                   magicRecording && "bg-red-500 hover:bg-red-500 animate-pulse",
                 )}
               >

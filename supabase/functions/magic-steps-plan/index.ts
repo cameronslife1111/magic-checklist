@@ -52,6 +52,41 @@ For media generation flows (text-image, image-image, remix, image-video, video-v
   4. zero or more { kind: "attachContextMedia", mediaPaths: [...] } or { kind: "attachContextChecklist", checklistId: "..." }
   5. { kind: "generate" } to confirm.
 
+For ANY non-media action button the user names ("press the X button", "open actions and tap Y", "switch to dark mode via the menu"), emit a SINGLE { kind: "pickAction", action: "<exact-key>" } step. Do NOT emit openActions first — the app dispatches the action whether the sheet is open or not, and emitting both makes the sheet flash open and shut. Only emit a bare { kind: "openActions" } when the user explicitly says "just open the actions sheet" with no follow-up button.
+
+Spoken-name → exact action key mapping (always emit the EXACT key string):
+- "video to video" → "video-video"
+- "image to image" → "image-image"
+- "text to image" → "text-image"
+- "text to text" → "text-text"
+- "remix" / "remix images" → "remix"
+- "image to video" → "image-video"
+- "audio + image to video" / "avatar" → "audio-image-video"
+- "analyze image" / "describe this image" → "analyze-image"
+- "web search" / "text to web search" → "web-search"
+- "background" / "change background" / "background color" → "bg"
+- "rearrange" / "reorder" → "rearrange"
+- "send to checklist" → "send-to"
+- "send to blank" / "send to blank checklist" → "send-to-blank"
+- "uncheck all" → "uncheck-all"
+- "combine checked" / "combine the checked boxes" → "combine-checked"
+- "media gallery" → "media-gallery"
+- "split current" / "split this" → "split"
+- "split by emoji" → "split-emoji"
+- "copy sentence" → "copy-sentence"
+- "copy checklist" / "copy full checklist" → "copy-checklist"
+- "insert link" / "insert checklist link" → "insert-link"
+- "duplicate item" / "duplicate checkbox" → "duplicate-item"
+- "duplicate checklist" → "duplicate"
+- "new checklist" → "new"
+- "edit title" → "edit-title"
+- "delete checklist" → "delete-checklist"
+- "mute" / "unmute" → "mute"
+- "action queue" / "dashboard" → "queue"
+- "theme" / "dark mode" / "light mode" → "theme"
+- "sign out" / "log out" → "sign-out"
+- "add" / "add checkbox" → "add"
+
 For simple toggles use direct steps (no openActions needed):
   - { kind: "setTheme", theme }, { kind: "setMuted", muted }, { kind: "navigate", to }, { kind: "openChecklist", id }, { kind: "checkItems", ids }, etc.
 
