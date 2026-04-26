@@ -477,7 +477,7 @@ Deno.serve(async (req) => {
 
   const ids = (dueJobs ?? []).map((j) => j.id);
   if (ids.length === 0) {
-    return new Response(JSON.stringify({ processed: 0 }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ processed: pollResults.length, polled: pollResults }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
   // Claim by setting status=running only where still pending/scheduled (prevents double-run)
