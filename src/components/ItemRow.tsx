@@ -3,7 +3,7 @@ import { ChecklistItem } from "@/lib/types";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { ExternalLink, Link2, X } from "lucide-react";
-import { stopSpeech } from "@/lib/speech";
+import { notifyDictationStart, notifyDictationEnd } from "@/lib/speech";
 
 type Props = {
   item: ChecklistItem;
