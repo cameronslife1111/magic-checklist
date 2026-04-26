@@ -605,7 +605,7 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
           </div>
           <DialogFooter className="gap-2 px-6 py-3 border-t bg-background sm:rounded-b-lg">
             <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
-            <Button onClick={submit} disabled={busy}>{busy ? "Working…" : generateLabel}</Button>
+            <Button onClick={submit} disabled={busy || v2vDurationOver}>{busy ? "Working…" : generateLabel}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
