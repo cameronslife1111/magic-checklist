@@ -90,8 +90,22 @@ export const ItemRow = ({
             ref={taRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
-            onFocus={() => stopSpeech()}
-            onBlur={() => { if (text !== item.text) onTextChange(item, text); }}
+            onFocus={() => { dictatingRef.current = false; notifyDictationStart(); }}
+            onInput={(e) => {
+              const ne = e.nativeEvent as InputEvent;
+              // Safari/iOS reports dictation explicitly. Chrome Android often
+              // inserts multi-char chunks with null `data` and a generic type.
+              if (ne.inputType === "insertFromDictation" ||
+                  (ne.inputType === "insertText" && ne.data == null)) {
+                dictatingRef.current = true;
+              }
+            }}
+            onBlur={() => {
+              const wasDictating = dictatingRef.current;
+              dictatingRef.current = false;
+              if (text !== item.text) onTextChange(item, text);
+              if (wasDictating) notifyDictationEnd();
+            }}
             rows={1}
             className={cn(
               "w-full resize-none bg-transparent outline-none text-base md:text-[15px] leading-snug",
