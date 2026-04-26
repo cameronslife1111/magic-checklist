@@ -614,7 +614,7 @@ Deno.serve(async (req) => {
     }
   }
 
-  return new Response(JSON.stringify({ processed: results.length, results }), {
+  return new Response(JSON.stringify({ processed: results.length + pollResults.length, results, polled: pollResults }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 });
