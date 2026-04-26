@@ -593,6 +593,13 @@ const ChecklistPage = () => {
   const deleteCurrentChecklist = async () => {
     if (!checklist || !user) return;
     const deletedId = checklist.id;
+    // Clean up generated media (skipping anything tracked in the Media Gallery).
+    const { data: mediaRows } = await supabase
+      .from("checklist_items")
+      .select("media_url")
+      .eq("checklist_id", deletedId)
+      .not("media_url", "is", null);
+    await deleteOwnedGeneratedMedia((mediaRows ?? []).map((r: any) => r.media_url));
     const { error: itemsErr } = await supabase
       .from("checklist_items").delete().eq("checklist_id", deletedId);
     if (itemsErr) { toast.error("Could not delete checklist. Try again."); return; }
