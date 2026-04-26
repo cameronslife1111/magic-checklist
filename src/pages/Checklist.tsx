@@ -75,7 +75,21 @@ const ChecklistPage = () => {
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
     return (localStorage.getItem("mc-theme") as "light" | "dark") ?? "light";
-  });
+
+  // Magic Steps voice assistant state
+  const [magicOpen, setMagicOpen] = useState(false);
+  const [magicRecording, setMagicRecording] = useState(false);
+  const [magicTranscribing, setMagicTranscribing] = useState(false);
+  const [magicSending, setMagicSending] = useState(false);
+  const [magicExecuting, setMagicExecuting] = useState(false);
+  const [magicTranscript, setMagicTranscript] = useState("");
+  const [magicContext, setMagicContext] = useState<AttachedContext>({ checklists: [], media: [] });
+  const [magicClarify, setMagicClarify] = useState<string | null>(null);
+  const magicRecorderRef = useRef<MediaRecorder | null>(null);
+  const magicChunksRef = useRef<Blob[]>([]);
+  const magicStreamRef = useRef<MediaStream | null>(null);
+  const homeLongPressTimerRef = useRef<number | null>(null);
+  const homeLongPressFiredRef = useRef(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
