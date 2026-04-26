@@ -617,9 +617,9 @@ const ChecklistPage = () => {
       setMagicExecuting(true);
       const result = await runPlan(plan, ctx);
       setMagicExecuting(false);
-      if (result.ok) {
+      if (result.ok === true) {
         toast.success(plan.summary || "Magic Steps completed.");
-      } else {
+      } else if (result.ok === false) {
         toast.error(`Magic Steps stopped at step ${result.failedAtIndex + 1}: ${result.error}`);
       }
     } catch (e: any) {
