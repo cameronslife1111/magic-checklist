@@ -101,6 +101,37 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
   const imageRowRef = useRef<HTMLDivElement>(null);
   const audioRowRef = useRef<HTMLDivElement>(null);
 
+  // V2V: probed duration for the chosen reference video (seconds).
+  const [refVideoDuration, setRefVideoDuration] = useState<number | null>(null);
+
+  // Probe duration of selected V2V reference video so we can warn before submit.
+  useEffect(() => {
+    if (mode !== "video-video" || assets.length === 0) {
+      setRefVideoDuration(null);
+      return;
+    }
+    const a = assets[0];
+    if (typeof a.duration_seconds === "number" && a.duration_seconds > 0) {
+      setRefVideoDuration(a.duration_seconds);
+      return;
+    }
+    let cancelled = false;
+    const v = document.createElement("video");
+    v.preload = "metadata";
+    v.src = a.url;
+    v.onloadedmetadata = () => {
+      if (!cancelled && isFinite(v.duration)) setRefVideoDuration(v.duration);
+    };
+    v.onerror = () => { if (!cancelled) setRefVideoDuration(null); };
+    return () => { cancelled = true; v.removeAttribute("src"); v.load(); };
+  }, [mode, assets]);
+
+  const v2vDurationLimit = characterOrientation === "video" ? 30 : 10;
+  const v2vDurationOver =
+    mode === "video-video" &&
+    refVideoDuration !== null &&
+    refVideoDuration > v2vDurationLimit + 0.25; // small tolerance for metadata rounding
+
   useEffect(() => {
     if (open) {
       setAssets([]); setError(null); setHighlightField(null);
