@@ -372,6 +372,95 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // PHASE 1 — Poll any jobs already handed off to an async provider (Fal).
+  // We never wait long here: each poll is one HTTP round-trip per job.
+  // Throttle: only re-poll a job if it hasn't been polled in the last 8s.
+  // ─────────────────────────────────────────────────────────────────────────
+  const pollResults: any[] = [];
+  const pollCutoff = new Date(Date.now() - 8_000).toISOString();
+  const { data: pollJobs } = await supabase
+    .from("action_jobs")
+    .select("*")
+    .eq("status", "awaiting_provider")
+    .or(`provider_polled_at.is.null,provider_polled_at.lte.${pollCutoff}`)
+    .order("provider_polled_at", { ascending: true, nullsFirst: true })
+    .limit(MAX_BATCH);
+
+  for (const j of ((pollJobs ?? []) as Job[])) {
+    if (!j.provider_status_url || !j.provider_response_url) continue;
+    const fnName = j.provider === "fal-avatar" ? "fal-avatar" : "fal-video";
+    try {
+      // Mark polled-at first so a slow poll doesn't get re-claimed by an overlapping tick.
+      await supabase.from("action_jobs")
+        .update({ provider_polled_at: new Date().toISOString() })
+        .eq("id", j.id);
+
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/${fnName}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${SERVICE_KEY}`, "Content-Type": "application/json", apikey: SERVICE_KEY },
+        body: JSON.stringify({
+          mode: "poll",
+          statusUrl: j.provider_status_url,
+          responseUrl: j.provider_response_url,
+        }),
+      });
+      const out = await r.json().catch(() => ({}));
+
+      if (out?.status === "COMPLETED" && out?.url) {
+        const isAvatar = j.action_type === "audio-image-video";
+        await insertResultItem(supabase, j, {
+          text: isAvatar ? "Generated talking video" : "Generated video",
+          media_url: out.url,
+          media_type: "video",
+        });
+        await supabase.from("action_jobs").update({
+          status: "completed",
+          result: { media_url: out.url },
+          completed_at: new Date().toISOString(),
+        }).eq("id", j.id);
+
+        // Recurring: enqueue next occurrence (mirrors the sync path below).
+        const interval = recurrenceToInterval(j.recurrence);
+        if (interval) {
+          const nextRun = new Date(Date.now() + intervalMs(j.recurrence!)).toISOString();
+          await supabase.from("action_jobs").insert({
+            user_id: j.user_id,
+            checklist_id: j.checklist_id,
+            source_item_id: j.source_item_id,
+            action_type: j.action_type,
+            status: "scheduled",
+            payload: j.payload,
+            scheduled_for: nextRun,
+            recurrence: j.recurrence,
+            parent_job_id: j.id,
+          });
+        }
+        pollResults.push({ id: j.id, ok: true });
+      } else if (out?.status === "FAILED") {
+        const errMsg = String(out?.error ?? "fal job failed");
+        const friendly = await explainErrorInline(j.action_type, errMsg);
+        await supabase.from("action_jobs").update({
+          status: "failed",
+          error_raw: errMsg,
+          error_friendly: friendly.cause,
+          error_fix: friendly.fix,
+          completed_at: new Date().toISOString(),
+        }).eq("id", j.id);
+        pollResults.push({ id: j.id, ok: false, error: errMsg });
+      } else {
+        // IN_PROGRESS — leave as-is; we'll check again next tick.
+        pollResults.push({ id: j.id, ok: true, awaiting: true });
+      }
+    } catch (e) {
+      console.error("poll err", j.id, e);
+      pollResults.push({ id: j.id, ok: false, error: (e as Error).message });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // PHASE 2 — Claim & run new pending/scheduled jobs (existing flow).
+  // ─────────────────────────────────────────────────────────────────────────
   const nowIso = new Date().toISOString();
   const { data: dueJobs, error: dueErr } = await supabase
     .from("action_jobs")
