@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
-import { Image as ImageIcon, Video, Library, X } from "lucide-react";
+import { Image as ImageIcon, Video, Library, X, Mic2 } from "lucide-react";
 import { MediaGalleryPicker } from "@/components/MediaGalleryPicker";
 import { MediaAsset } from "@/lib/mediaAssets";
 
