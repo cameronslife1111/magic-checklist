@@ -457,6 +457,7 @@ const ChecklistPage = () => {
       case "remix":
       case "image-video":
       case "video-video":
+      case "audio-image-video":
       case "analyze-image": {
         if (!highestUnchecked) {
           toast.error("No unchecked checkbox found.");
