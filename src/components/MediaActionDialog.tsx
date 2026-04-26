@@ -506,6 +506,18 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
           />
         </>
       )}
+
+      {isHeyGen && (
+        <MediaGalleryPicker
+          open={audioPickerOpen}
+          userId={userId}
+          kind="audio"
+          mode="single"
+          initialSelectedIds={audioAsset ? [audioAsset.id] : []}
+          onClose={() => setAudioPickerOpen(false)}
+          onConfirm={(picked) => { setAudioAsset(picked[0] ?? null); setAudioPickerOpen(false); }}
+        />
+      )}
     </>
   );
 };
