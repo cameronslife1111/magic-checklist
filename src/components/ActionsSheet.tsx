@@ -22,9 +22,7 @@ const AI_KEYS = new Set<ActionKey>([
 const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   // Top: moved-up quick actions (right under Mute)
   { key: "split",            label: "Split current checkbox",   icon: Scissors },
-  { key: "send-to",          label: "Send to checklist",        icon: Send },
   { key: "send-to-blank",    label: "Send to blank checklist",  icon: FilePlus2 },
-  { key: "queue",            label: "Action Queue Dashboard",   icon: ListChecks },
   { key: "rearrange",        label: "Rearrange checkboxes",     icon: ArrowUpDown },
 
   // Most-used quick utilities
@@ -65,11 +63,13 @@ export const ActionsSheet = ({ open, onOpenChange, onPick, currentTheme, muted }
   const muteItem = muted
     ? { key: "mute" as const, label: "Unmute speech", icon: Volume2 }
     : { key: "mute" as const, label: "Mute speech", icon: VolumeX };
+  const sendToItem = { key: "send-to" as const, label: "Send to checklist", icon: Send };
+  const queueItem = { key: "queue" as const, label: "Action Queue Dashboard", icon: ListChecks };
   const themeItem = currentTheme === "dark"
     ? { key: "theme" as const, label: "Switch to light mode", icon: Sun }
     : { key: "theme" as const, label: "Switch to dark mode", icon: Moon };
   const signOutItem = { key: "sign-out" as const, label: "Sign out", icon: LogOut };
-  const items = [muteItem, ...STATIC_ITEMS, themeItem, signOutItem];
+  const items = [sendToItem, queueItem, muteItem, ...STATIC_ITEMS, themeItem, signOutItem];
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>

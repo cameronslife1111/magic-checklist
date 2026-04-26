@@ -943,6 +943,7 @@ const ChecklistPage = () => {
                     actionsLongPressTimerRef.current = null;
                   }
                   if (!actionsLongPressFiredRef.current) {
+                    stopSpeech();
                     setActionsOpen(true);
                   }
                 }}
@@ -1041,7 +1042,7 @@ const ChecklistPage = () => {
         style={{ fontSize: "16px" }}
       />
 
-      <ActionsSheet open={actionsOpen} onOpenChange={setActionsOpen} onPick={onPick} currentTheme={theme} muted={muted} />
+      <ActionsSheet open={actionsOpen} onOpenChange={(o) => { if (o) stopSpeech(); setActionsOpen(o); }} onPick={onPick} currentTheme={theme} muted={muted} />
 
       <TextPromptDialog
         open={dialog.kind === "new"}
