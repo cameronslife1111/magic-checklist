@@ -283,6 +283,26 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ r
       await insertResultItem(supabase, job, { text: "Generated video", media_url: out.url, media_type: "video" });
       return { result: { media_url: out.url } };
     }
+    case "audio-image-video": {
+      // HeyGen Avatar 4 — image (face) + audio (lip-sync) -> talking video.
+      const prompt = buildPrompt(p.prompt, ctx, false);
+      const imageUrl = p.imageUrl ?? ctx.imageUrls[0];
+      const audioUrl = p.audioUrl ?? ctx.audioUrls[0];
+      if (!imageUrl) throw new Error("missing reference image");
+      const out = await callFn("fal-avatar", {
+        imageUrl,
+        audioUrl,                                 // optional — falls back to prompt+voice if absent
+        prompt,
+        voice: p.voice,
+        talkingStyle: p.talkingStyle,
+        resolution: p.resolution,
+        aspectRatio: p.aspectRatio,
+        caption: p.caption,
+      }, signal);
+      if (signal.aborted) throw new DOMException("Aborted", "AbortError");
+      await insertResultItem(supabase, job, { text: "Generated talking video", media_url: out.url, media_type: "video" });
+      return { result: { media_url: out.url } };
+    }
     case "analyze-image": {
       const prompt = buildPrompt(p.prompt, ctx, ctx.imageUrls.length > 1);
       let imageDataUrl = p.imageDataUrl;

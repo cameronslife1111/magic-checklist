@@ -6,7 +6,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
-import { Image as ImageIcon, Video, Library, X } from "lucide-react";
+import { Image as ImageIcon, Video, Library, X, Mic2 } from "lucide-react";
 import { MediaGalleryPicker } from "@/components/MediaGalleryPicker";
 import { MediaAsset } from "@/lib/mediaAssets";
 
@@ -25,13 +25,18 @@ export type GenOptions = {
   characterOrientation?: "image" | "video";
   keepOriginalSound?: boolean;
   elementImageAsset?: MediaAsset | null;       // facial element (orientation="video" only)
+  // HeyGen Avatar 4 (audio + image -> video):
+  audioAsset?: MediaAsset | null;
+  talkingStyle?: "stable" | "expressive";
+  resolution?: "360p" | "480p" | "540p" | "720p" | "1080p";
+  caption?: boolean;
 };
 
 type Props = {
   open: boolean;
   title: string;
   prompt: string;
-  mode: "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "analyze-image";
+  mode: "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "audio-image-video" | "analyze-image";
   userId: string;
   onClose: () => void;
   onGenerate: (opts: GenOptions) => Promise<void> | void;
@@ -65,6 +70,13 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
   const [elementImage, setElementImage] = useState<MediaAsset | null>(null);
   const [elementPickerOpen, setElementPickerOpen] = useState(false);
 
+  // HeyGen Avatar 4 state
+  const [audioAsset, setAudioAsset] = useState<MediaAsset | null>(null);
+  const [audioPickerOpen, setAudioPickerOpen] = useState(false);
+  const [talkingStyle, setTalkingStyle] = useState<"stable" | "expressive">("stable");
+  const [resolution, setResolution] = useState<"360p" | "480p" | "540p" | "720p" | "1080p">("720p");
+  const [caption, setCaption] = useState<boolean>(false);
+
   useEffect(() => {
     if (open) {
       setAssets([]); setError(null);
@@ -72,26 +84,38 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
       setCfgScale(0.5); setEndImage(null);
       setReferenceImage(null); setCharacterOrientation("image");
       setKeepOriginalSound(true); setElementImage(null);
+      setAudioAsset(null); setTalkingStyle("stable"); setResolution("720p"); setCaption(false);
+      // HeyGen defaults to 16:9
+      if (mode === "audio-image-video") setAspect("16:9");
     }
-  }, [open]);
+  }, [open, mode]);
 
   const isKlingV3Image = mode === "image-video";
   const isKlingMotion = mode === "video-video";
+  const isHeyGen = mode === "audio-image-video";
   const needsMedia = mode !== "text-image";
   const needsVideo = mode === "video-video";
   const allowsMultiple = mode === "remix";
   const pickerKind: "image" | "video" = needsVideo ? "video" : "image";
   const pickerMode: "single" | "multi" = allowsMultiple ? "multi" : "single";
-  const showAspectAndQuality = mode !== "analyze-image" && !isKlingV3Image && !isKlingMotion;
+  const showAspectAndQuality = mode !== "analyze-image" && !isKlingV3Image && !isKlingMotion && !isHeyGen;
 
   const submit = async () => {
     setError(null);
     if (needsMedia && assets.length === 0) {
-      setError(needsVideo ? "Pick a reference video from your Media Gallery." : "Pick an image from your Media Gallery.");
+      setError(
+        needsVideo ? "Pick a reference video from your Media Gallery." :
+        isHeyGen ? "Pick a face image from your Media Gallery." :
+        "Pick an image from your Media Gallery."
+      );
       return;
     }
     if (isKlingMotion && !referenceImage) {
       setError("Pick a reference image (the appearance source) from your Media Gallery.");
+      return;
+    }
+    if (isHeyGen && !audioAsset) {
+      setError("Pick an audio clip from your Media Gallery.");
       return;
     }
     setBusy(true);
@@ -113,6 +137,12 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
         opts.characterOrientation = characterOrientation;
         opts.keepOriginalSound = keepOriginalSound;
         opts.elementImageAsset = characterOrientation === "video" ? elementImage : null;
+      }
+      if (isHeyGen) {
+        opts.audioAsset = audioAsset;
+        opts.talkingStyle = talkingStyle;
+        opts.resolution = resolution;
+        opts.caption = caption;
       }
       await onGenerate(opts);
     } catch (e: any) {
@@ -142,6 +172,7 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
                 <Label>
                   {allowsMultiple ? "Media (in order)" :
                    isKlingMotion ? "Reference video (motion source)" :
+                   isHeyGen ? "Face image" :
                    `Start ${pickerKind}`}
                 </Label>
                 <Button type="button" variant="outline" onClick={() => setPickerOpen(true)} className="w-full justify-start">
@@ -348,6 +379,77 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
               </>
             )}
 
+            {isHeyGen && (
+              <>
+                <div className="space-y-2">
+                  <Label>Audio clip (lip-sync source)</Label>
+                  {audioAsset ? (
+                    <div className="flex items-center gap-2 text-xs bg-background border rounded-lg p-2">
+                      <Mic2 className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <span className="truncate flex-1">{audioAsset.title}</span>
+                      <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => setAudioAsset(null)}>
+                        <X className="h-3 w-3" />
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => setAudioPickerOpen(true)}>Change</Button>
+                    </div>
+                  ) : (
+                    <Button type="button" variant="outline" onClick={() => setAudioPickerOpen(true)} className="w-full justify-start">
+                      <Library className="h-4 w-4" />
+                      Choose audio from gallery
+                    </Button>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    The avatar will lip-sync to this audio. Billed per second of output video.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Talking style</Label>
+                  <Select value={talkingStyle} onValueChange={(v) => setTalkingStyle(v as "stable" | "expressive")}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="stable">Stable — minimal movement</SelectItem>
+                      <SelectItem value="expressive">Expressive — more animation</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Resolution</Label>
+                  <Select value={resolution} onValueChange={(v) => setResolution(v as typeof resolution)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="360p">360p</SelectItem>
+                      <SelectItem value="480p">480p</SelectItem>
+                      <SelectItem value="540p">540p</SelectItem>
+                      <SelectItem value="720p">720p</SelectItem>
+                      <SelectItem value="1080p">1080p</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Aspect ratio</Label>
+                  <Select value={aspect} onValueChange={(v) => setAspect(v as GenOptions["aspectRatio"])}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="16:9">Landscape (16:9)</SelectItem>
+                      <SelectItem value="9:16">Portrait (9:16)</SelectItem>
+                      <SelectItem value="1:1">Square (1:1)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>Captions</Label>
+                    <p className="text-xs text-muted-foreground">Burn captions into the video.</p>
+                  </div>
+                  <Switch checked={caption} onCheckedChange={setCaption} />
+                </div>
+              </>
+            )}
+
             {error && <p className="text-sm text-destructive">{error}</p>}
           </div>
           <DialogFooter className="gap-2">
@@ -403,6 +505,18 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
             onConfirm={(picked) => { setElementImage(picked[0] ?? null); setElementPickerOpen(false); }}
           />
         </>
+      )}
+
+      {isHeyGen && (
+        <MediaGalleryPicker
+          open={audioPickerOpen}
+          userId={userId}
+          kind="audio"
+          mode="single"
+          initialSelectedIds={audioAsset ? [audioAsset.id] : []}
+          onClose={() => setAudioPickerOpen(false)}
+          onConfirm={(picked) => { setAudioAsset(picked[0] ?? null); setAudioPickerOpen(false); }}
+        />
       )}
     </>
   );

@@ -46,7 +46,7 @@ type DialogState =
   | { kind: "bg" }
   | { kind: "duplicate-title" }
   | { kind: "delete-checklist" }
-  | { kind: "media"; action: "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "analyze-image"; sourceItem: ChecklistItem };
+  | { kind: "media"; action: "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "audio-image-video" | "analyze-image"; sourceItem: ChecklistItem };
 
 const ChecklistPage = () => {
   const { user, signOut } = useAuth();
@@ -457,6 +457,7 @@ const ChecklistPage = () => {
       case "remix":
       case "image-video":
       case "video-video":
+      case "audio-image-video":
       case "analyze-image": {
         if (!highestUnchecked) {
           toast.error("No unchecked checkbox found.");
@@ -747,13 +748,14 @@ const ChecklistPage = () => {
     } catch { return null; }
   };
 
-  type MediaAction = "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "analyze-image";
+  type MediaAction = "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "audio-image-video" | "analyze-image";
   const MEDIA_LABELS: Record<MediaAction, string> = {
     "text-image": "Text to image",
     "image-image": "Image to image",
     "remix": "Remix images",
     "image-video": "Image to video",
     "video-video": "Video to video",
+    "audio-image-video": "Audio + image to video",
     "analyze-image": "Analyze image",
   };
   const runMediaAction = async (sourceItem: ChecklistItem, action: MediaAction, opts: GenOptions) => {
@@ -788,6 +790,16 @@ const ChecklistPage = () => {
           delete payload.aspectRatio;
           delete payload.quality;
         }
+      } else if (action === "audio-image-video") {
+        if (assets.length === 0) throw new Error("missing image");
+        if (!opts.audioAsset) throw new Error("missing audio");
+        payload.imageUrl = assets[0].url;
+        payload.audioUrl = opts.audioAsset.url;
+        payload.talkingStyle = opts.talkingStyle;
+        payload.resolution = opts.resolution;
+        payload.caption = opts.caption;
+        // HeyGen accepts 16:9 / 9:16 / 1:1 — keep aspectRatio, drop quality.
+        delete payload.quality;
       } else if (action === "analyze-image") {
         if (assets.length === 0) throw new Error("missing image");
         payload.imageUrl = assets[0].url;
@@ -1232,7 +1244,8 @@ const ChecklistPage = () => {
             dialog.action === "image-image" ? "Image to image" :
             dialog.action === "remix" ? "Remix multiple images" :
             dialog.action === "image-video" ? "Image to video" :
-            dialog.action === "video-video" ? "Video to video" : "Analyze image"
+            dialog.action === "video-video" ? "Video to video" :
+            dialog.action === "audio-image-video" ? "Audio + image to video" : "Analyze image"
           }
           prompt={dialog.sourceItem.text || "(empty)"}
           mode={dialog.action}
