@@ -639,6 +639,51 @@ const ChecklistPage = () => {
     }
   };
 
+  const combineCheckedItems = async () => {
+    setActionsOpen(false);
+    if (!checklist || !user) return;
+    const checkedItems = items.filter((i) => i.checked);
+    if (checkedItems.length === 0) {
+      toast.error("No checked checkboxes to combine.");
+      return;
+    }
+    if (checkedItems.length === 1) {
+      toast.error("Need at least 2 checked checkboxes to combine.");
+      return;
+    }
+    const keeper = checkedItems[0];
+    const rest = checkedItems.slice(1);
+    const joined = checkedItems.map((i) => i.text.trim()).filter(Boolean).join(" ");
+    const prev = items;
+    const nextItems = items
+      .filter((i) => !rest.some((r) => r.id === i.id))
+      .map((i) =>
+        i.id === keeper.id
+          ? { ...i, text: joined, external_link: null, linked_checklist_id: null, media_url: null, media_type: null }
+          : i,
+      );
+    setItems(nextItems);
+    primeSpeech();
+    focusAndSpeakHighestUnchecked(nextItems);
+    const { error: upErr } = await supabase
+      .from("checklist_items")
+      .update({ text: joined, external_link: null, linked_checklist_id: null, media_url: null, media_type: null })
+      .eq("id", keeper.id);
+    if (upErr) {
+      setItems(prev);
+      toast.error("Could not combine. Try again.");
+      return;
+    }
+    const { error: delErr } = await supabase
+      .from("checklist_items")
+      .delete()
+      .in("id", rest.map((r) => r.id));
+    if (delErr) {
+      setItems(prev);
+      toast.error("Could not combine. Try again.");
+    }
+  };
+
   const splitCurrentWith = async (
     splitter: (text: string) => string[],
     emptyMessage: string,
