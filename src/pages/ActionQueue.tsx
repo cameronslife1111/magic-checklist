@@ -564,6 +564,17 @@ const ActionQueue = () => {
           </TabsContent>
         </Tabs>
       </main>
+
+      {editDialog && (
+        <EditPromptRunDialog
+          open
+          mode={editDialog.mode}
+          actionLabel={editDialog.actionLabel}
+          initialPrompt={editDialog.initialPrompt}
+          onCancel={() => setEditDialog(null)}
+          onConfirm={submitEdit}
+        />
+      )}
     </div>
   );
 };
