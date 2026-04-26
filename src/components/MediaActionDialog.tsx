@@ -308,6 +308,14 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
                     Character actions in the output match this video. Whole / upper body visible, no obstruction.
                     Max 10s when orientation is "image", 30s when "video".
                   </p>
+                  {v2vDurationOver && (
+                    <p className="text-xs text-destructive font-medium">
+                      This clip is {refVideoDuration!.toFixed(1)}s — over the {v2vDurationLimit}s limit for the current orientation.{" "}
+                      {characterOrientation === "image"
+                        ? `Switch orientation below to "Match reference video" (≤30s) or pick a shorter clip.`
+                        : `Pick a shorter clip.`}
+                    </p>
+                  )}
                 </div>
 
                 {/* ② Reference image */}
