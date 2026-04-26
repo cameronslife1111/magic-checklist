@@ -18,22 +18,43 @@ const corsHeaders = {
 const json = (body: any, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
 
-async function uploadToFal(falKey: string, dataUrl: string): Promise<string> {
-  const match = dataUrl.match(/^data:(.+);base64,(.+)$/);
-  if (!match) throw new Error("invalid data url");
-  const contentType = match[1];
-  const bytes = Uint8Array.from(atob(match[2]), (c) => c.charCodeAt(0));
-  const ext = contentType.split("/")[1]?.split(";")[0] ?? "bin";
+async function uploadBytesToFal(falKey: string, bytes: Uint8Array, contentType: string, fileName: string): Promise<string> {
   const initRes = await fetch("https://rest.alpha.fal.ai/storage/upload/initiate", {
     method: "POST",
     headers: { Authorization: `Key ${falKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ content_type: contentType, file_name: `upload.${ext}` }),
+    body: JSON.stringify({ content_type: contentType, file_name: fileName }),
   });
   if (!initRes.ok) throw new Error(`fal upload init failed: ${initRes.status} ${await initRes.text()}`);
   const { upload_url, file_url } = await initRes.json();
   const putRes = await fetch(upload_url, { method: "PUT", headers: { "Content-Type": contentType }, body: bytes });
   if (!putRes.ok) throw new Error(`fal upload put failed: ${putRes.status}`);
   return file_url;
+}
+
+async function uploadDataUrlToFal(falKey: string, dataUrl: string): Promise<string> {
+  const match = dataUrl.match(/^data:(.+);base64,(.+)$/);
+  if (!match) throw new Error("invalid data url");
+  const contentType = match[1];
+  const bytes = Uint8Array.from(atob(match[2]), (c) => c.charCodeAt(0));
+  const ext = contentType.split("/")[1]?.split(";")[0] ?? "bin";
+  return uploadBytesToFal(falKey, bytes, contentType, `upload.${ext}`);
+}
+
+// If the URL is already on Fal's CDN, pass through. Otherwise, fetch & re-upload to Fal storage.
+// This eliminates 422s caused by Fal refusing/failing to fetch external (e.g. Supabase) URLs.
+async function hostOnFal(falKey: string, url: string): Promise<string> {
+  try {
+    const u = new URL(url);
+    if (/(^|\.)fal\.(media|ai|run)$/.test(u.hostname)) return url;
+  } catch { /* fall through and try to upload */ }
+
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`could not fetch source for re-upload (${res.status})`);
+  const contentType = res.headers.get("content-type") || "application/octet-stream";
+  const buf = new Uint8Array(await res.arrayBuffer());
+  const guessedExt = contentType.includes("/") ? contentType.split("/")[1].split(";")[0] : "bin";
+  const fileName = `rehost-${crypto.randomUUID()}.${guessedExt}`;
+  return uploadBytesToFal(falKey, buf, contentType, fileName);
 }
 
 // Pull a video URL from any of the shapes Fal has been observed to return.
@@ -49,6 +70,25 @@ function extractVideoUrl(result: any): string | null {
   );
 }
 
+// Turn whatever Fal returns on a 4xx into a single readable string.
+function readableFalError(status: number, text: string): string {
+  let parsed: any = null;
+  try { parsed = JSON.parse(text); } catch { /* not json */ }
+  if (parsed) {
+    if (Array.isArray(parsed.detail)) {
+      const msgs = parsed.detail.map((d: any) => {
+        const loc = Array.isArray(d.loc) ? d.loc.filter((x: any) => x !== "body").join(".") : "";
+        return loc ? `${loc}: ${d.msg ?? "invalid"}` : (d.msg ?? "invalid");
+      }).join("; ");
+      if (msgs) return `Fal ${status}: ${msgs}`;
+    }
+    if (typeof parsed.detail === "string") return `Fal ${status}: ${parsed.detail}`;
+    if (typeof parsed.message === "string") return `Fal ${status}: ${parsed.message}`;
+    if (typeof parsed.error === "string") return `Fal ${status}: ${parsed.error}`;
+  }
+  return `Fal ${status}: ${text.slice(0, 400)}`;
+}
+
 async function handleSubmit(req: any, falKey: string) {
   const {
     prompt, sourceDataUrl, sourceUrl, sourceKind, aspectRatio,
@@ -62,7 +102,13 @@ async function handleSubmit(req: any, falKey: string) {
     return json({ error: "Missing inputs (prompt + source + sourceKind required)" }, 400);
   }
 
-  const hostedSourceUrl = sourceUrl ?? await uploadToFal(falKey, sourceDataUrl);
+  // Resolve the primary source onto Fal storage.
+  let hostedSourceUrl: string;
+  if (sourceUrl) {
+    hostedSourceUrl = await hostOnFal(falKey, sourceUrl);
+  } else {
+    hostedSourceUrl = await uploadDataUrlToFal(falKey, sourceDataUrl);
+  }
 
   const model = sourceKind === "video"
     ? "fal-ai/kling-video/v3/pro/motion-control"
@@ -72,11 +118,12 @@ async function handleSubmit(req: any, falKey: string) {
   if (sourceKind === "video") {
     if (!imageUrl) return json({ error: "Missing reference image (image_url) for motion-control." }, 400);
     body.video_url = hostedSourceUrl;
-    body.image_url = imageUrl;
+    body.image_url = await hostOnFal(falKey, imageUrl);
     body.character_orientation = characterOrientation === "video" ? "video" : "image";
     if (typeof keepOriginalSound === "boolean") body.keep_original_sound = keepOriginalSound;
     if (elementImageUrl && body.character_orientation === "video") {
-      body.elements = [{ image_url: elementImageUrl }];
+      const hostedElement = await hostOnFal(falKey, elementImageUrl);
+      body.elements = [{ image_url: hostedElement }];
     }
   } else {
     body.start_image_url = hostedSourceUrl;
@@ -84,7 +131,7 @@ async function handleSubmit(req: any, falKey: string) {
     if (typeof generateAudio === "boolean") body.generate_audio = generateAudio;
     if (negativePrompt) body.negative_prompt = negativePrompt;
     if (typeof cfgScale === "number") body.cfg_scale = cfgScale;
-    if (endImageUrl) body.end_image_url = endImageUrl;
+    if (endImageUrl) body.end_image_url = await hostOnFal(falKey, endImageUrl);
   }
 
   const submit = await fetch(`https://queue.fal.run/${model}`, {
@@ -94,8 +141,9 @@ async function handleSubmit(req: any, falKey: string) {
   });
   if (!submit.ok) {
     const t = await submit.text();
-    console.error("fal submit err", submit.status, t);
-    return json({ error: `fal error ${submit.status}: ${t.slice(0, 400)}` }, 502);
+    const msg = readableFalError(submit.status, t);
+    console.error("fal submit err", submit.status, t.slice(0, 1500), "payload keys:", Object.keys(body));
+    return json({ error: msg }, 502);
   }
   const queued = await submit.json();
   return json({
