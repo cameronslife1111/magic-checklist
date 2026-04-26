@@ -461,7 +461,8 @@ const ChecklistPage = () => {
     magicChunksRef.current = [];
     if (blob.size === 0) {
       setMagicTranscribing(false);
-      return; // empty recording — leave dialog open so user can type
+      toast.error("No audio captured. Try again.");
+      return;
     }
 
     try {
@@ -477,9 +478,11 @@ const ChecklistPage = () => {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Transcription failed");
       setMagicTranscript((data.text ?? "").trim());
+      // Now that we have a transcript, open the review dialog.
+      setMagicOpen(true);
     } catch (e) {
       console.error(e);
-      toast.error("Could not transcribe. You can type it instead.");
+      toast.error("Could not transcribe. Tap the home button and try again.");
     } finally {
       setMagicTranscribing(false);
     }
