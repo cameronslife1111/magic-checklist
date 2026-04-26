@@ -68,9 +68,17 @@ export const runPlan = async (plan: Plan, ctx: ExecutorCtx): Promise<ExecutorRes
 
   for (let i = 0; i < plan.steps.length; i++) {
     const step = plan.steps[i];
+    const nextStep = plan.steps[i + 1];
     try {
       switch (step.kind) {
-        case "openActions": ctx.setActionsOpen(true); break;
+        case "openActions": {
+          // If the very next step is a pickAction, the sheet flash is just
+          // visual noise — the dispatcher runs the action whether the sheet
+          // is open or not. Skip the toggle to keep the UI smooth.
+          if (nextStep?.kind === "pickAction") break;
+          ctx.setActionsOpen(true);
+          break;
+        }
         case "closeActions": ctx.setActionsOpen(false); break;
 
         case "pickAction": {
