@@ -1,4 +1,7 @@
-// Fal.ai video generation: image-to-video (Kling V3 pro) or video-to-video (Luma Ray-2 modify).
+// Fal.ai video generation:
+//   image-to-video  -> fal-ai/kling-video/v3/pro/image-to-video
+//   video-to-video  -> fal-ai/kling-video/v3/pro/motion-control
+//                      (reference image for appearance + reference video for motion)
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
