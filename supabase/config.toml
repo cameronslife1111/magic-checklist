@@ -12,6 +12,9 @@ verify_jwt = false
 [functions.fal-video]
 verify_jwt = false
 
+[functions.fal-avatar]
+verify_jwt = false
+
 [functions.perplexity-search]
 verify_jwt = false
 
