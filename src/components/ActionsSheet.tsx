@@ -3,13 +3,13 @@ import { Button } from "@/components/ui/button";
 import {
   Plus, FilePlus, FilePlus2, Copy, CopyPlus, Pencil, Scissors, Type, Image as ImageIcon, Images, Wand2,
   Film, Video, Mic2, Link2, Eye, Search, Palette, LogOut, Moon, Sun, ArrowUpDown,
-  ClipboardCopy, ClipboardList, Send, Volume2, VolumeX, ListChecks, Trash2, Library, Square,
+  ClipboardCopy, ClipboardList, Send, Volume2, VolumeX, ListChecks, Trash2, Library, Square, Smile,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 export type ActionKey =
   | "mute" | "queue"
-  | "add" | "duplicate-item" | "new" | "duplicate" | "delete-checklist" | "edit-title" | "split"
+  | "add" | "duplicate-item" | "new" | "duplicate" | "delete-checklist" | "edit-title" | "split" | "split-emoji"
   | "text-text" | "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "audio-image-video"
   | "insert-link" | "analyze-image" | "web-search" | "bg" | "rearrange"
   | "copy-sentence" | "copy-checklist" | "send-to" | "send-to-blank" | "uncheck-all" | "media-gallery" | "theme" | "sign-out";
@@ -23,6 +23,7 @@ const AI_KEYS = new Set<ActionKey>([
 const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   // Top: moved-up quick actions (right under Mute)
   { key: "split",            label: "Split current checkbox",   icon: Scissors },
+  { key: "split-emoji",      label: "Split by emoji",           icon: Smile },
   { key: "send-to-blank",    label: "Send to blank checklist",  icon: FilePlus2 },
   { key: "rearrange",        label: "Rearrange checkboxes",     icon: ArrowUpDown },
 
