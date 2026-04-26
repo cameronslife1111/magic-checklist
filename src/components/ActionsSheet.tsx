@@ -12,7 +12,7 @@ export type ActionKey =
   | "add" | "duplicate-item" | "new" | "duplicate" | "delete-checklist" | "edit-title" | "split" | "split-emoji"
   | "text-text" | "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "audio-image-video"
   | "insert-link" | "analyze-image" | "web-search" | "bg" | "rearrange"
-  | "copy-sentence" | "copy-checklist" | "send-to" | "send-to-blank" | "uncheck-all" | "media-gallery" | "theme" | "sign-out";
+  | "copy-sentence" | "copy-checklist" | "send-to" | "send-to-blank" | "uncheck-all" | "combine-checked" | "media-gallery" | "theme" | "sign-out";
 
 const AI_KEYS = new Set<ActionKey>([
   "text-text", "text-image", "image-image", "remix",
