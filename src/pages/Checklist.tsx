@@ -1623,8 +1623,8 @@ const ChecklistPage = () => {
       />
 
       <MagicCommandDialog
-        open={magicOpen}
-        recording={magicRecording}
+        open={magicOpen && !magicRecording}
+        recording={false}
         transcribing={magicTranscribing}
         sending={magicSending}
         transcript={magicTranscript}
@@ -1639,8 +1639,15 @@ const ChecklistPage = () => {
         onSend={sendMagicCommand}
       />
 
+      <MagicRecordingPill
+        active={magicRecording}
+        onStop={stopMagicRecording}
+        onCancel={cancelMagic}
+      />
+
       <MagicGlowOverlay active={magicExecuting} variant="executing" />
-      <MagicGlowOverlay active={magicRecording && !magicOpen} variant="recording" />
+      <MagicGlowOverlay active={magicRecording} variant="recording" />
+      <MagicGlowOverlay active={magicTranscribing && !magicOpen} variant="executing" />
     </div>
   );
 };
