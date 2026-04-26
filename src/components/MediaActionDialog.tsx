@@ -70,6 +70,13 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
   const [elementImage, setElementImage] = useState<MediaAsset | null>(null);
   const [elementPickerOpen, setElementPickerOpen] = useState(false);
 
+  // HeyGen Avatar 4 state
+  const [audioAsset, setAudioAsset] = useState<MediaAsset | null>(null);
+  const [audioPickerOpen, setAudioPickerOpen] = useState(false);
+  const [talkingStyle, setTalkingStyle] = useState<"stable" | "expressive">("stable");
+  const [resolution, setResolution] = useState<"360p" | "480p" | "540p" | "720p" | "1080p">("720p");
+  const [caption, setCaption] = useState<boolean>(false);
+
   useEffect(() => {
     if (open) {
       setAssets([]); setError(null);
@@ -77,26 +84,38 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
       setCfgScale(0.5); setEndImage(null);
       setReferenceImage(null); setCharacterOrientation("image");
       setKeepOriginalSound(true); setElementImage(null);
+      setAudioAsset(null); setTalkingStyle("stable"); setResolution("720p"); setCaption(false);
+      // HeyGen defaults to 16:9
+      if (mode === "audio-image-video") setAspect("16:9");
     }
-  }, [open]);
+  }, [open, mode]);
 
   const isKlingV3Image = mode === "image-video";
   const isKlingMotion = mode === "video-video";
+  const isHeyGen = mode === "audio-image-video";
   const needsMedia = mode !== "text-image";
   const needsVideo = mode === "video-video";
   const allowsMultiple = mode === "remix";
   const pickerKind: "image" | "video" = needsVideo ? "video" : "image";
   const pickerMode: "single" | "multi" = allowsMultiple ? "multi" : "single";
-  const showAspectAndQuality = mode !== "analyze-image" && !isKlingV3Image && !isKlingMotion;
+  const showAspectAndQuality = mode !== "analyze-image" && !isKlingV3Image && !isKlingMotion && !isHeyGen;
 
   const submit = async () => {
     setError(null);
     if (needsMedia && assets.length === 0) {
-      setError(needsVideo ? "Pick a reference video from your Media Gallery." : "Pick an image from your Media Gallery.");
+      setError(
+        needsVideo ? "Pick a reference video from your Media Gallery." :
+        isHeyGen ? "Pick a face image from your Media Gallery." :
+        "Pick an image from your Media Gallery."
+      );
       return;
     }
     if (isKlingMotion && !referenceImage) {
       setError("Pick a reference image (the appearance source) from your Media Gallery.");
+      return;
+    }
+    if (isHeyGen && !audioAsset) {
+      setError("Pick an audio clip from your Media Gallery.");
       return;
     }
     setBusy(true);
@@ -118,6 +137,12 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
         opts.characterOrientation = characterOrientation;
         opts.keepOriginalSound = keepOriginalSound;
         opts.elementImageAsset = characterOrientation === "video" ? elementImage : null;
+      }
+      if (isHeyGen) {
+        opts.audioAsset = audioAsset;
+        opts.talkingStyle = talkingStyle;
+        opts.resolution = resolution;
+        opts.caption = caption;
       }
       await onGenerate(opts);
     } catch (e: any) {
