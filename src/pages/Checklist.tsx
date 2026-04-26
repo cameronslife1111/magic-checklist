@@ -1244,7 +1244,8 @@ const ChecklistPage = () => {
             dialog.action === "image-image" ? "Image to image" :
             dialog.action === "remix" ? "Remix multiple images" :
             dialog.action === "image-video" ? "Image to video" :
-            dialog.action === "video-video" ? "Video to video" : "Analyze image"
+            dialog.action === "video-video" ? "Video to video" :
+            dialog.action === "audio-image-video" ? "Audio + image to video" : "Analyze image"
           }
           prompt={dialog.sourceItem.text || "(empty)"}
           mode={dialog.action}
