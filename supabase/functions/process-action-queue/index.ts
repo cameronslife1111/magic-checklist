@@ -344,8 +344,8 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<Job
 async function runWithCancellation(
   supabase: any,
   jobId: string,
-  work: (signal: AbortSignal) => Promise<{ result: any }>,
-): Promise<{ result: any }> {
+  work: (signal: AbortSignal) => Promise<JobOutcome>,
+): Promise<JobOutcome> {
   const controller = new AbortController();
   const interval = setInterval(async () => {
     try {
