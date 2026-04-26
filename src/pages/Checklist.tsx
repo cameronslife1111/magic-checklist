@@ -23,7 +23,7 @@ import { AttachedContext } from "@/components/ContextAttacher";
 import { toast } from "sonner";
 import { primeSpeech, speak, stopSpeech, isMuted, setMuted } from "@/lib/speech";
 import { wasPickJustNow } from "@/lib/clickGuard";
-import { extractFirstUrl, isUrl, splitTextWithLinks } from "@/lib/split";
+import { extractFirstUrl, isUrl, splitTextWithLinks, splitTextByEmoji } from "@/lib/split";
 import { sortChecklistsByTitle } from "@/lib/sortChecklists";
 import {
   DndContext, DragEndEvent, PointerSensor, TouchSensor, KeyboardSensor,
@@ -449,6 +449,9 @@ const ChecklistPage = () => {
       case "split":
         await splitCurrent();
         break;
+      case "split-emoji":
+        await splitCurrentByEmoji();
+        break;
       case "text-text":
         await runTextToText();
         break;
@@ -632,19 +635,21 @@ const ChecklistPage = () => {
     }
   };
 
-  const splitCurrent = async () => {
+  const splitCurrentWith = async (
+    splitter: (text: string) => string[],
+    emptyMessage: string,
+  ) => {
     if (!checklist || !user) return;
     const src = highestUnchecked;
     if (!src) {
       toast.error("No unchecked checkbox found.");
       return;
     }
-    const parts = splitTextWithLinks(src.text);
+    const parts = splitter(src.text);
     if (parts.length <= 1) {
-      toast.error("This checkbox does not have enough punctuation to split.");
+      toast.error(emptyMessage);
       return;
     }
-    // Build inserts spaced between src.position and next item's position
     const idx = items.findIndex((i) => i.id === src.id);
     const next = items[idx + 1];
     const start = src.position;
@@ -664,16 +669,27 @@ const ChecklistPage = () => {
       return;
     }
     await supabase.from("checklist_items").delete().eq("id", src.id);
-    setItems((prev) => {
-      const without = prev.filter((i) => i.id !== src.id);
-      const merged = [...without, ...((inserted ?? []) as ChecklistItem[])].sort((a, b) => a.position - b.position);
-      return merged;
-    });
-    if (inserted?.[0]) {
-      scrollItemToCenter(inserted[0].id);
-      const speakText = inserted[0].text;
-      if (speakText) speak(speakText);
-    }
+    const without = items.filter((i) => i.id !== src.id);
+    const merged = [...without, ...((inserted ?? []) as ChecklistItem[])].sort(
+      (a, b) => a.position - b.position,
+    );
+    setItems(merged);
+    primeSpeech();
+    focusAndSpeakHighestUnchecked(merged);
+  };
+
+  const splitCurrent = async () => {
+    await splitCurrentWith(
+      splitTextWithLinks,
+      "This checkbox does not have enough punctuation to split.",
+    );
+  };
+
+  const splitCurrentByEmoji = async () => {
+    await splitCurrentWith(
+      splitTextByEmoji,
+      "This checkbox does not contain any emoji to split on.",
+    );
   };
 
   const requestEnqueue = (args: { action_type: string; actionLabel: string; payload: any; source_item_id: string | null }) => {
