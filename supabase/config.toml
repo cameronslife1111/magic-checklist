@@ -26,9 +26,3 @@ verify_jwt = false
 
 [functions.explain-error]
 verify_jwt = false
-
-[functions.transcribe-voice]
-verify_jwt = false
-
-[functions.magic-steps-plan]
-verify_jwt = false
