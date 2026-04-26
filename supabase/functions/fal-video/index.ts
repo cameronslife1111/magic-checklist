@@ -1,17 +1,15 @@
-// Fal.ai video generation: image-to-video or video-to-video.
+// Fal.ai video generation: image-to-video (Kling V3 pro) or video-to-video (Luma Ray-2 modify).
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
 async function uploadToFal(falKey: string, dataUrl: string): Promise<string> {
-  // Use fal storage upload endpoint to get a hosted URL.
   const match = dataUrl.match(/^data:(.+);base64,(.+)$/);
   if (!match) throw new Error("invalid data url");
   const contentType = match[1];
   const bytes = Uint8Array.from(atob(match[2]), (c) => c.charCodeAt(0));
   const ext = contentType.split("/")[1]?.split(";")[0] ?? "bin";
-  // Initiate upload
   const initRes = await fetch("https://rest.alpha.fal.ai/storage/upload/initiate", {
     method: "POST",
     headers: { Authorization: `Key ${falKey}`, "Content-Type": "application/json" },
@@ -28,8 +26,8 @@ async function uploadToFal(falKey: string, dataUrl: string): Promise<string> {
 }
 
 async function pollFal(falKey: string, statusUrl: string, resultUrl: string): Promise<any> {
-  for (let i = 0; i < 120; i++) {
-    // Faster polling early; videos still take a while but check sooner just in case.
+  // Kling V3 pro can take several minutes; allow ~8 min total.
+  for (let i = 0; i < 240; i++) {
     await new Promise((r) => setTimeout(r, i < 10 ? 1000 : 2000));
     const s = await fetch(statusUrl, { headers: { Authorization: `Key ${falKey}` } });
     if (!s.ok) continue;
@@ -46,24 +44,37 @@ async function pollFal(falKey: string, statusUrl: string, resultUrl: string): Pr
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
-    const { prompt, sourceDataUrl, sourceUrl, sourceKind, aspectRatio } = await req.json();
+    const {
+      prompt, sourceDataUrl, sourceUrl, sourceKind, aspectRatio,
+      // Kling V3 pro options (image-video only)
+      duration, generateAudio, negativePrompt, cfgScale, endImageUrl,
+    } = await req.json();
     if (!prompt || (!sourceDataUrl && !sourceUrl) || !sourceKind) {
       return new Response(JSON.stringify({ error: "Missing inputs" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
     const falKey = Deno.env.get("FAL_KEY");
     if (!falKey) throw new Error("FAL_KEY not configured");
 
-    // Fast path: if a public URL is provided, hand it directly to fal — no download/base64/re-upload.
     const hostedUrl = sourceUrl ?? await uploadToFal(falKey, sourceDataUrl);
 
-    // Pick a model for each mode.
     const model = sourceKind === "video"
       ? "fal-ai/luma-dream-machine/ray-2/modify"
-      : "fal-ai/kling-video/v2.1/standard/image-to-video";
+      : "fal-ai/kling-video/v3/pro/image-to-video";
+
     const body: any = { prompt };
-    if (sourceKind === "video") body.video_url = hostedUrl;
-    else body.image_url = hostedUrl;
-    if (aspectRatio) body.aspect_ratio = aspectRatio;
+    if (sourceKind === "video") {
+      body.video_url = hostedUrl;
+      if (aspectRatio) body.aspect_ratio = aspectRatio;
+    } else {
+      // Kling V3 pro image-to-video schema.
+      body.start_image_url = hostedUrl;
+      if (duration) body.duration = String(duration);                 // enum string "3"…"15"
+      if (typeof generateAudio === "boolean") body.generate_audio = generateAudio;
+      if (negativePrompt) body.negative_prompt = negativePrompt;
+      if (typeof cfgScale === "number") body.cfg_scale = cfgScale;
+      if (endImageUrl) body.end_image_url = endImageUrl;
+      // V3 pro does NOT accept aspect_ratio — intentionally omitted.
+    }
 
     const submit = await fetch(`https://queue.fal.run/${model}`, {
       method: "POST",
@@ -73,7 +84,7 @@ Deno.serve(async (req) => {
     if (!submit.ok) {
       const t = await submit.text();
       console.error("fal submit err", submit.status, t);
-      return new Response(JSON.stringify({ error: `fal error ${submit.status}` }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      return new Response(JSON.stringify({ error: `fal error ${submit.status}: ${t.slice(0, 300)}` }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
     const queued = await submit.json();
     const result = await pollFal(falKey, queued.status_url, queued.response_url);
