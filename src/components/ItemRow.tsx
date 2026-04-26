@@ -22,7 +22,7 @@ export const ItemRow = ({
 }: Props) => {
   const [text, setText] = useState(item.text);
   const taRef = useRef<HTMLTextAreaElement>(null);
-
+  const dictatingRef = useRef(false);
   useEffect(() => setText(item.text), [item.text]);
 
   useEffect(() => {
