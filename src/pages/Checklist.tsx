@@ -23,6 +23,7 @@ import { ScheduleActionDialog, SchedulePick } from "@/components/ScheduleActionD
 import { AttachedContext } from "@/components/ContextAttacher";
 import { MagicCommandDialog } from "@/components/MagicCommandDialog";
 import { MagicGlowOverlay } from "@/components/MagicGlowOverlay";
+import { MagicRecordingPill } from "@/components/MagicRecordingPill";
 import { buildAppSnapshot, type Plan } from "@/lib/magicSteps";
 import { runPlan, type ExecutorCtx } from "@/lib/magicExecutor";
 import type { MediaAsset } from "@/lib/mediaAssets";
