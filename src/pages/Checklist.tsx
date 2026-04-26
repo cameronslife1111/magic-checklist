@@ -748,13 +748,14 @@ const ChecklistPage = () => {
     } catch { return null; }
   };
 
-  type MediaAction = "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "analyze-image";
+  type MediaAction = "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "audio-image-video" | "analyze-image";
   const MEDIA_LABELS: Record<MediaAction, string> = {
     "text-image": "Text to image",
     "image-image": "Image to image",
     "remix": "Remix images",
     "image-video": "Image to video",
     "video-video": "Video to video",
+    "audio-image-video": "Audio + image to video",
     "analyze-image": "Analyze image",
   };
   const runMediaAction = async (sourceItem: ChecklistItem, action: MediaAction, opts: GenOptions) => {
