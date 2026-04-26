@@ -261,8 +261,17 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ r
       const body: any = {
         prompt,
         sourceKind: job.action_type === "video-video" ? "video" : "image",
-        aspectRatio: p.aspectRatio,
       };
+      if (job.action_type === "image-video") {
+        // Kling V3 pro options
+        if (p.duration) body.duration = p.duration;
+        if (typeof p.generateAudio === "boolean") body.generateAudio = p.generateAudio;
+        if (p.negativePrompt) body.negativePrompt = p.negativePrompt;
+        if (typeof p.cfgScale === "number") body.cfgScale = p.cfgScale;
+        if (p.endImageUrl) body.endImageUrl = p.endImageUrl;
+      } else {
+        if (p.aspectRatio) body.aspectRatio = p.aspectRatio;
+      }
       if (sourceUrl) body.sourceUrl = sourceUrl;
       else if (p.sourceDataUrl) body.sourceDataUrl = p.sourceDataUrl;
       const out = await callFn("fal-video", body, signal);
