@@ -46,7 +46,7 @@ type DialogState =
   | { kind: "bg" }
   | { kind: "duplicate-title" }
   | { kind: "delete-checklist" }
-  | { kind: "media"; action: "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "analyze-image"; sourceItem: ChecklistItem };
+  | { kind: "media"; action: "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "audio-image-video" | "analyze-image"; sourceItem: ChecklistItem };
 
 const ChecklistPage = () => {
   const { user, signOut } = useAuth();
