@@ -75,6 +75,7 @@ const ChecklistPage = () => {
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
     return (localStorage.getItem("mc-theme") as "light" | "dark") ?? "light";
+  });
 
   // Magic Steps voice assistant state
   const [magicOpen, setMagicOpen] = useState(false);
