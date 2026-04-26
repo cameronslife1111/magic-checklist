@@ -25,13 +25,18 @@ export type GenOptions = {
   characterOrientation?: "image" | "video";
   keepOriginalSound?: boolean;
   elementImageAsset?: MediaAsset | null;       // facial element (orientation="video" only)
+  // HeyGen Avatar 4 (audio + image -> video):
+  audioAsset?: MediaAsset | null;
+  talkingStyle?: "stable" | "expressive";
+  resolution?: "360p" | "480p" | "540p" | "720p" | "1080p";
+  caption?: boolean;
 };
 
 type Props = {
   open: boolean;
   title: string;
   prompt: string;
-  mode: "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "analyze-image";
+  mode: "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "audio-image-video" | "analyze-image";
   userId: string;
   onClose: () => void;
   onGenerate: (opts: GenOptions) => Promise<void> | void;
