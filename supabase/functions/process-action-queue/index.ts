@@ -260,26 +260,26 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<Job
     }
     case "image-video":
     case "video-video": {
+      // ASYNC: submit to Fal, return a handoff. The worker stores the queue handle
+      // on the job row and polls it on subsequent ticks (no synchronous wait → no 150s timeout).
       const prompt = buildPrompt(p.prompt, ctx, true);
-      // Prefer a public URL (fast path). Only fall back to data URL conversion for legacy jobs.
       let sourceUrl: string | undefined = p.sourceUrl;
       if (!sourceUrl) {
         const fallback = job.action_type === "video-video" ? ctx.videoUrls[0] : ctx.imageUrls[0];
         if (fallback) sourceUrl = fallback;
       }
       const body: any = {
+        mode: "submit",
         prompt,
         sourceKind: job.action_type === "video-video" ? "video" : "image",
       };
       if (job.action_type === "image-video") {
-        // Kling V3 pro image-to-video options
         if (p.duration) body.duration = p.duration;
         if (typeof p.generateAudio === "boolean") body.generateAudio = p.generateAudio;
         if (p.negativePrompt) body.negativePrompt = p.negativePrompt;
         if (typeof p.cfgScale === "number") body.cfgScale = p.cfgScale;
         if (p.endImageUrl) body.endImageUrl = p.endImageUrl;
       } else {
-        // Kling V3 pro motion-control (video-to-video) options
         if (p.imageUrl) body.imageUrl = p.imageUrl;
         if (p.characterOrientation) body.characterOrientation = p.characterOrientation;
         if (typeof p.keepOriginalSound === "boolean") body.keepOriginalSound = p.keepOriginalSound;
@@ -289,18 +289,25 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<Job
       else if (p.sourceDataUrl) body.sourceDataUrl = p.sourceDataUrl;
       const out = await callFn("fal-video", body, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-      await insertResultItem(supabase, job, { text: "Generated video", media_url: out.url, media_type: "video" });
-      return { kind: "result", result: { media_url: out.url } };
+      if (!out.status_url || !out.response_url) throw new Error("fal-video did not return a queue handle");
+      return {
+        kind: "handoff",
+        provider: "fal-video",
+        status_url: out.status_url,
+        response_url: out.response_url,
+        request_id: out.request_id ?? null,
+      };
     }
     case "audio-image-video": {
-      // HeyGen Avatar 4 — image (face) + audio (lip-sync) -> talking video.
+      // ASYNC: same submit/poll handoff pattern as the Kling video models.
       const prompt = buildPrompt(p.prompt, ctx, false);
       const imageUrl = p.imageUrl ?? ctx.imageUrls[0];
       const audioUrl = p.audioUrl ?? ctx.audioUrls[0];
       if (!imageUrl) throw new Error("missing reference image");
       const out = await callFn("fal-avatar", {
+        mode: "submit",
         imageUrl,
-        audioUrl,                                 // optional — falls back to prompt+voice if absent
+        audioUrl,
         prompt,
         voice: p.voice,
         talkingStyle: p.talkingStyle,
@@ -309,8 +316,14 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<Job
         caption: p.caption,
       }, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-      await insertResultItem(supabase, job, { text: "Generated talking video", media_url: out.url, media_type: "video" });
-      return { kind: "result", result: { media_url: out.url } };
+      if (!out.status_url || !out.response_url) throw new Error("fal-avatar did not return a queue handle");
+      return {
+        kind: "handoff",
+        provider: "fal-avatar",
+        status_url: out.status_url,
+        response_url: out.response_url,
+        request_id: out.request_id ?? null,
+      };
     }
     case "analyze-image": {
       const prompt = buildPrompt(p.prompt, ctx, ctx.imageUrls.length > 1);
