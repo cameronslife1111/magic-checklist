@@ -182,6 +182,15 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
         focusField("image");
         return;
       }
+      if (v2vDurationOver) {
+        setError(
+          `Reference video is ${refVideoDuration!.toFixed(1)}s — exceeds the ${v2vDurationLimit}s limit for "${characterOrientation === "video" ? "Match reference video" : "Match reference image"}" orientation. ${
+            characterOrientation === "image" ? `Switch orientation to "Match reference video" (≤30s) or pick a shorter clip.` : `Pick a shorter clip.`
+          }`
+        );
+        focusField("video");
+        return;
+      }
     } else if (needsMedia && assets.length === 0) {
       setError(
         isHeyGen ? "Pick a face image from your Media Gallery." :
