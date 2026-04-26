@@ -434,6 +434,10 @@ const ChecklistPage = () => {
         }
         break;
       }
+      case "combine-checked": {
+        await combineCheckedItems();
+        break;
+      }
       case "new":
         setDialog({ kind: "new" });
         break;
