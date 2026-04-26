@@ -176,7 +176,7 @@ export const runPlan = async (plan: Plan, ctx: ExecutorCtx): Promise<ExecutorRes
         case "wait": await wait(Math.max(0, Math.min(5000, step.ms || 0))); break;
       }
       // Tiny breath so React can flush state between steps.
-      await wait(60);
+      await wait(120);
     } catch (e) {
       return { ok: false, failedAtIndex: i, error: (e as Error).message };
     }
