@@ -1358,8 +1358,26 @@ const ChecklistPage = () => {
                 Actions
               </Button>
               <Button
-                aria-label="Open top checklist"
-                onClick={async () => {
+                aria-label="Open top checklist (long-press for Magic Steps voice)"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  homeLongPressFiredRef.current = false;
+                  if (homeLongPressTimerRef.current) window.clearTimeout(homeLongPressTimerRef.current);
+                  homeLongPressTimerRef.current = window.setTimeout(() => {
+                    homeLongPressFiredRef.current = true;
+                    startMagicRecording();
+                  }, 500);
+                }}
+                onPointerUp={async () => {
+                  if (homeLongPressTimerRef.current) {
+                    window.clearTimeout(homeLongPressTimerRef.current);
+                    homeLongPressTimerRef.current = null;
+                  }
+                  if (homeLongPressFiredRef.current) {
+                    if (magicRecording) await stopMagicRecording();
+                    return;
+                  }
+                  // Short tap: original home behavior.
                   const { data } = await supabase.from("checklists").select("id,title");
                   const sorted = sortChecklistsByTitle(data ?? []);
                   const top = sorted[0];
@@ -1372,7 +1390,23 @@ const ChecklistPage = () => {
                     await openChecklist(highestUnchecked.linked_checklist_id);
                   }
                 }}
-                className="w-16 h-14 rounded-2xl text-2xl leading-none shadow-floating select-none"
+                onPointerLeave={() => {
+                  if (homeLongPressTimerRef.current) {
+                    window.clearTimeout(homeLongPressTimerRef.current);
+                    homeLongPressTimerRef.current = null;
+                  }
+                }}
+                onPointerCancel={() => {
+                  if (homeLongPressTimerRef.current) {
+                    window.clearTimeout(homeLongPressTimerRef.current);
+                    homeLongPressTimerRef.current = null;
+                  }
+                }}
+                onContextMenu={(e) => e.preventDefault()}
+                className={cn(
+                  "w-16 h-14 rounded-2xl text-2xl leading-none shadow-floating select-none touch-none",
+                  magicRecording && "bg-red-500 hover:bg-red-500 animate-pulse",
+                )}
               >
                 🏠
               </Button>
