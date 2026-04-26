@@ -740,6 +740,15 @@ const ChecklistPage = () => {
       } else if (action === "image-video" || action === "video-video") {
         if (assets.length === 0) throw new Error("missing media");
         payload.sourceUrl = assets[0].url;
+        if (action === "image-video") {
+          payload.duration = opts.duration;
+          payload.generateAudio = opts.generateAudio;
+          payload.negativePrompt = opts.negativePrompt;
+          payload.cfgScale = opts.cfgScale;
+          if (opts.endImageAsset) payload.endImageUrl = opts.endImageAsset.url;
+          // Kling V3 pro doesn't take aspect ratio — drop it from the payload.
+          delete payload.aspectRatio;
+        }
       } else if (action === "analyze-image") {
         if (assets.length === 0) throw new Error("missing image");
         payload.imageUrl = assets[0].url;
