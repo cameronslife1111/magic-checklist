@@ -1617,6 +1617,26 @@ const ChecklistPage = () => {
         context={pendingContext}
         onContextChange={setPendingContext}
       />
+
+      <MagicCommandDialog
+        open={magicOpen}
+        recording={magicRecording}
+        transcribing={magicTranscribing}
+        sending={magicSending}
+        transcript={magicTranscript}
+        onTranscriptChange={setMagicTranscript}
+        attachedContext={magicContext}
+        onAttachedContextChange={setMagicContext}
+        userId={user?.id ?? ""}
+        excludeChecklistId={checklist?.id}
+        clarifyingQuestion={magicClarify}
+        onStopRecording={stopMagicRecording}
+        onCancel={cancelMagic}
+        onSend={sendMagicCommand}
+      />
+
+      <MagicGlowOverlay active={magicExecuting} variant="executing" />
+      <MagicGlowOverlay active={magicRecording && !magicOpen} variant="recording" />
     </div>
   );
 };
