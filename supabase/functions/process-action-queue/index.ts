@@ -217,14 +217,14 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<Job
       const out = await callFn("openai-text", { prompt }, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       await insertResultItem(supabase, job, { text: out.text });
-      return { result: { text: out.text } };
+      return { kind: "result", result: { text: out.text } };
     }
     case "web-search": {
       const prompt = buildPrompt(p.prompt, ctx, true);
       const out = await callFn("perplexity-search", { query: prompt }, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       await insertResultItem(supabase, job, { text: out.text });
-      return { result: { text: out.text } };
+      return { kind: "result", result: { text: out.text } };
     }
     case "text-image": {
       const prompt = buildPrompt(p.prompt, ctx, false);
@@ -236,7 +236,7 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<Job
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       const url = await uploadDataUrl(supabase, job.user_id, out.dataUrl, "png");
       await insertResultItem(supabase, job, { text: "Generated image", media_url: url, media_type: "image" });
-      return { result: { media_url: url } };
+      return { kind: "result", result: { media_url: url } };
     }
     case "image-image":
     case "remix": {
@@ -256,7 +256,7 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<Job
         text: job.action_type === "remix" ? "Remixed image" : "Edited image",
         media_url: url, media_type: "image",
       });
-      return { result: { media_url: url } };
+      return { kind: "result", result: { media_url: url } };
     }
     case "image-video":
     case "video-video": {
@@ -290,7 +290,7 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<Job
       const out = await callFn("fal-video", body, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       await insertResultItem(supabase, job, { text: "Generated video", media_url: out.url, media_type: "video" });
-      return { result: { media_url: out.url } };
+      return { kind: "result", result: { media_url: out.url } };
     }
     case "audio-image-video": {
       // HeyGen Avatar 4 — image (face) + audio (lip-sync) -> talking video.
@@ -310,7 +310,7 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<Job
       }, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       await insertResultItem(supabase, job, { text: "Generated talking video", media_url: out.url, media_type: "video" });
-      return { result: { media_url: out.url } };
+      return { kind: "result", result: { media_url: out.url } };
     }
     case "analyze-image": {
       const prompt = buildPrompt(p.prompt, ctx, ctx.imageUrls.length > 1);
@@ -320,7 +320,7 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<Job
       const out = await callFn("openai-vision", { prompt, imageDataUrl }, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       await insertResultItem(supabase, job, { text: out.text });
-      return { result: { text: out.text } };
+      return { kind: "result", result: { text: out.text } };
     }
     default:
       throw new Error(`unknown action_type: ${job.action_type}`);
