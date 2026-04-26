@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -6,9 +6,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Textarea } from "@/components/ui/textarea";
-import { Image as ImageIcon, Video, Library, X, Mic2 } from "lucide-react";
+import { Image as ImageIcon, Video, Library, X, Mic2, Check } from "lucide-react";
 import { MediaGalleryPicker } from "@/components/MediaGalleryPicker";
 import { MediaAsset } from "@/lib/mediaAssets";
+import { cn } from "@/lib/utils";
 
 export type GenOptions = {
   aspectRatio: "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
@@ -46,6 +47,23 @@ type Props = {
 const KLING_DURATIONS = ["3","4","5","6","7","8","9","10","11","12","13","14","15"] as const;
 const DEFAULT_NEGATIVE = "blur, distort, and low quality";
 
+type FilledRowProps = {
+  asset: MediaAsset;
+  icon: React.ComponentType<{ className?: string }>;
+  onClear: () => void;
+  onChange: () => void;
+};
+const FilledRow = ({ asset, icon: Icon, onClear, onChange }: FilledRowProps) => (
+  <div className="flex items-center gap-2 text-xs bg-background border rounded-lg p-2">
+    <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
+    <span className="truncate flex-1">{asset.title}</span>
+    <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={onClear}>
+      <X className="h-3 w-3" />
+    </Button>
+    <Button type="button" variant="outline" size="sm" onClick={onChange}>Change</Button>
+  </div>
+);
+
 export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, onGenerate, generateLabel = "Generate" }: Props) => {
   const [aspect, setAspect] = useState<GenOptions["aspectRatio"]>("1:1");
   const [quality, setQuality] = useState<GenOptions["quality"]>("standard");
@@ -53,6 +71,7 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [highlightField, setHighlightField] = useState<null | "video" | "image" | "audio">(null);
 
   // Kling V3 pro image-to-video state
   const [duration, setDuration] = useState<string>("5");
@@ -77,9 +96,14 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
   const [resolution, setResolution] = useState<"360p" | "480p" | "540p" | "720p" | "1080p">("720p");
   const [caption, setCaption] = useState<boolean>(false);
 
+  // Scroll-to-field refs
+  const videoRowRef = useRef<HTMLDivElement>(null);
+  const imageRowRef = useRef<HTMLDivElement>(null);
+  const audioRowRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     if (open) {
-      setAssets([]); setError(null);
+      setAssets([]); setError(null); setHighlightField(null);
       setDuration("5"); setGenerateAudio(true); setNegativePrompt(DEFAULT_NEGATIVE);
       setCfgScale(0.5); setEndImage(null);
       setReferenceImage(null); setCharacterOrientation("image");
@@ -99,25 +123,48 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
   const pickerKind: "image" | "video" = needsVideo ? "video" : "image";
   const pickerMode: "single" | "multi" = allowsMultiple ? "multi" : "single";
   const showAspectAndQuality = mode !== "analyze-image" && !isKlingV3Image && !isKlingMotion && !isHeyGen;
+  // The top "Start media" picker is rendered by the generic block for every mode EXCEPT
+  // motion-control — V2V draws its own custom Required Inputs block.
+  const showGenericTopPicker = needsMedia && !isKlingMotion;
+
+  const focusField = (field: "video" | "image" | "audio") => {
+    setHighlightField(field);
+    const ref = field === "video" ? videoRowRef : field === "image" ? imageRowRef : audioRowRef;
+    ref.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    // Clear the highlight after a moment so it acts like a flash, not a permanent state.
+    setTimeout(() => setHighlightField((f) => (f === field ? null : f)), 2400);
+  };
 
   const submit = async () => {
     setError(null);
-    if (needsMedia && assets.length === 0) {
+    setHighlightField(null);
+
+    if (isKlingMotion) {
+      // V2V: enforce both required uploads with field-pointing errors.
+      if (assets.length === 0) {
+        setError("Pick a reference video (the motion source).");
+        focusField("video");
+        return;
+      }
+      if (!referenceImage) {
+        setError("Pick a reference image (the appearance source).");
+        focusField("image");
+        return;
+      }
+    } else if (needsMedia && assets.length === 0) {
       setError(
-        needsVideo ? "Pick a reference video from your Media Gallery." :
         isHeyGen ? "Pick a face image from your Media Gallery." :
         "Pick an image from your Media Gallery."
       );
       return;
     }
-    if (isKlingMotion && !referenceImage) {
-      setError("Pick a reference image (the appearance source) from your Media Gallery.");
-      return;
-    }
+
     if (isHeyGen && !audioAsset) {
       setError("Pick an audio clip from your Media Gallery.");
+      focusField("audio");
       return;
     }
+
     setBusy(true);
     try {
       const opts: GenOptions = {
@@ -154,24 +201,117 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
 
   const KindIcon = pickerKind === "video" ? Video : ImageIcon;
 
+  const StatusChip = ({ filled }: { filled: boolean }) =>
+    filled ? (
+      <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-green-600 bg-green-500/10 px-1.5 py-0.5 rounded-full">
+        <Check className="h-3 w-3" /> Ready
+      </span>
+    ) : (
+      <span className="text-[10px] font-semibold text-destructive bg-destructive/10 px-1.5 py-0.5 rounded-full">
+        Required
+      </span>
+    );
+
+  const NumberBadge = ({ n }: { n: number }) => (
+    <span className="inline-flex items-center justify-center h-5 w-5 rounded-full bg-blue-500 text-white text-[10px] font-bold shrink-0">
+      {n}
+    </span>
+  );
+
   return (
     <>
       <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-        <DialogContent className="max-w-sm max-h-[90vh] overflow-y-auto">
-          <DialogHeader>
+        <DialogContent className="max-w-sm max-h-[90vh] p-0 flex flex-col gap-0">
+          <DialogHeader className="px-6 pt-6 pb-3 border-b">
             <DialogTitle>{title}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-3">
+          <div className="flex-1 overflow-y-auto px-6 py-4 space-y-3">
             <div>
               <Label>Prompt</Label>
               <p className="text-sm bg-muted rounded-lg p-3 mt-1 max-h-28 overflow-y-auto">{prompt}</p>
             </div>
 
-            {needsMedia && (
-              <div className="space-y-2">
+            {/* ─────────── Kling Motion Control: required-inputs block at top ─────────── */}
+            {isKlingMotion && (
+              <div className="rounded-xl border border-border bg-muted/40 p-3 space-y-3">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Required inputs
+                </p>
+
+                {/* ① Reference video */}
+                <div
+                  ref={videoRowRef}
+                  className={cn(
+                    "rounded-lg p-2 space-y-2 transition-all",
+                    highlightField === "video" && "ring-2 ring-destructive bg-destructive/5",
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <NumberBadge n={1} />
+                    <Label className="flex-1">Reference video <span className="text-muted-foreground font-normal">(motion source)</span></Label>
+                    <StatusChip filled={assets.length > 0} />
+                  </div>
+                  {assets.length === 0 ? (
+                    <Button type="button" variant="outline" onClick={() => setPickerOpen(true)} className="w-full justify-start">
+                      <Library className="h-4 w-4" />
+                      Choose video from gallery
+                    </Button>
+                  ) : (
+                    <FilledRow
+                      asset={assets[0]}
+                      icon={Video}
+                      onClear={() => setAssets([])}
+                      onChange={() => setPickerOpen(true)}
+                    />
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Character actions in the output match this video. Whole / upper body visible, no obstruction.
+                    Max 10s when orientation is "image", 30s when "video".
+                  </p>
+                </div>
+
+                {/* ② Reference image */}
+                <div
+                  ref={imageRowRef}
+                  className={cn(
+                    "rounded-lg p-2 space-y-2 transition-all",
+                    highlightField === "image" && "ring-2 ring-destructive bg-destructive/5",
+                  )}
+                >
+                  <div className="flex items-center gap-2">
+                    <NumberBadge n={2} />
+                    <Label className="flex-1">Reference image <span className="text-muted-foreground font-normal">(appearance)</span></Label>
+                    <StatusChip filled={!!referenceImage} />
+                  </div>
+                  {referenceImage ? (
+                    <FilledRow
+                      asset={referenceImage}
+                      icon={ImageIcon}
+                      onClear={() => setReferenceImage(null)}
+                      onChange={() => setRefPickerOpen(true)}
+                    />
+                  ) : (
+                    <Button type="button" variant="outline" onClick={() => setRefPickerOpen(true)} className="w-full justify-start">
+                      <Library className="h-4 w-4" />
+                      Choose image from gallery
+                    </Button>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    Character, background, and other visuals in the output come from this image.
+                    Clear body proportions, no occlusion, character occupies &gt;5% of the frame.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {/* ─────────── Generic top picker (everything except V2V) ─────────── */}
+            {showGenericTopPicker && (
+              <div
+                ref={isHeyGen ? null : null}
+                className="space-y-2"
+              >
                 <Label>
                   {allowsMultiple ? "Media (in order)" :
-                   isKlingMotion ? "Reference video (motion source)" :
                    isHeyGen ? "Face image" :
                    `Start ${pickerKind}`}
                 </Label>
@@ -202,11 +342,6 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
                 {allowsMultiple && (
                   <p className="text-xs text-muted-foreground">
                     The model receives images in this order. Refer to them in your prompt as "image 1", "image 2", etc.
-                  </p>
-                )}
-                {isKlingMotion && (
-                  <p className="text-xs text-muted-foreground">
-                    Max 10s when orientation is "image", 30s when "video".
                   </p>
                 )}
               </div>
@@ -265,14 +400,7 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
                 <div className="space-y-2">
                   <Label>End image (optional)</Label>
                   {endImage ? (
-                    <div className="flex items-center gap-2 text-xs bg-background border rounded-lg p-2">
-                      <ImageIcon className="h-4 w-4 text-muted-foreground shrink-0" />
-                      <span className="truncate flex-1">{endImage.title}</span>
-                      <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => setEndImage(null)}>
-                        <X className="h-3 w-3" />
-                      </Button>
-                      <Button type="button" variant="outline" size="sm" onClick={() => setEndPickerOpen(true)}>Change</Button>
-                    </div>
+                    <FilledRow asset={endImage} icon={ImageIcon} onClear={() => setEndImage(null)} onChange={() => setEndPickerOpen(true)} />
                   ) : (
                     <Button type="button" variant="outline" onClick={() => setEndPickerOpen(true)} className="w-full justify-start">
                       <Library className="h-4 w-4" />
@@ -306,29 +434,12 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
               </>
             )}
 
+            {/* ─────────── Kling Motion Control: secondary "Motion options" group ─────────── */}
             {isKlingMotion && (
-              <>
-                <div className="space-y-2">
-                  <Label>Reference image (appearance source)</Label>
-                  {referenceImage ? (
-                    <div className="flex items-center gap-2 text-xs bg-background border rounded-lg p-2">
-                      <ImageIcon className="h-4 w-4 text-muted-foreground shrink-0" />
-                      <span className="truncate flex-1">{referenceImage.title}</span>
-                      <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => setReferenceImage(null)}>
-                        <X className="h-3 w-3" />
-                      </Button>
-                      <Button type="button" variant="outline" size="sm" onClick={() => setRefPickerOpen(true)}>Change</Button>
-                    </div>
-                  ) : (
-                    <Button type="button" variant="outline" onClick={() => setRefPickerOpen(true)} className="w-full justify-start">
-                      <Library className="h-4 w-4" />
-                      Choose reference image from gallery
-                    </Button>
-                  )}
-                  <p className="text-xs text-muted-foreground">
-                    The character & background of the output come from this image.
-                  </p>
-                </div>
+              <div className="space-y-3 pt-1">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                  Motion options
+                </p>
 
                 <div className="space-y-2">
                   <Label>Character orientation</Label>
@@ -356,14 +467,7 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
                       Available only when orientation is "Match reference video".
                     </p>
                   ) : elementImage ? (
-                    <div className="flex items-center gap-2 text-xs bg-background border rounded-lg p-2">
-                      <ImageIcon className="h-4 w-4 text-muted-foreground shrink-0" />
-                      <span className="truncate flex-1">{elementImage.title}</span>
-                      <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => setElementImage(null)}>
-                        <X className="h-3 w-3" />
-                      </Button>
-                      <Button type="button" variant="outline" size="sm" onClick={() => setElementPickerOpen(true)}>Change</Button>
-                    </div>
+                    <FilledRow asset={elementImage} icon={ImageIcon} onClear={() => setElementImage(null)} onChange={() => setElementPickerOpen(true)} />
                   ) : (
                     <Button type="button" variant="outline" onClick={() => setElementPickerOpen(true)} className="w-full justify-start">
                       <Library className="h-4 w-4" />
@@ -376,22 +480,21 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
                     </p>
                   )}
                 </div>
-              </>
+              </div>
             )}
 
             {isHeyGen && (
               <>
-                <div className="space-y-2">
+                <div
+                  ref={audioRowRef}
+                  className={cn(
+                    "space-y-2 rounded-lg p-2 transition-all",
+                    highlightField === "audio" && "ring-2 ring-destructive bg-destructive/5",
+                  )}
+                >
                   <Label>Audio clip (lip-sync source)</Label>
                   {audioAsset ? (
-                    <div className="flex items-center gap-2 text-xs bg-background border rounded-lg p-2">
-                      <Mic2 className="h-4 w-4 text-muted-foreground shrink-0" />
-                      <span className="truncate flex-1">{audioAsset.title}</span>
-                      <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => setAudioAsset(null)}>
-                        <X className="h-3 w-3" />
-                      </Button>
-                      <Button type="button" variant="outline" size="sm" onClick={() => setAudioPickerOpen(true)}>Change</Button>
-                    </div>
+                    <FilledRow asset={audioAsset} icon={Mic2} onClear={() => setAudioAsset(null)} onChange={() => setAudioPickerOpen(true)} />
                   ) : (
                     <Button type="button" variant="outline" onClick={() => setAudioPickerOpen(true)} className="w-full justify-start">
                       <Library className="h-4 w-4" />
@@ -452,7 +555,7 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
 
             {error && <p className="text-sm text-destructive">{error}</p>}
           </div>
-          <DialogFooter className="gap-2">
+          <DialogFooter className="gap-2 px-6 py-3 border-t bg-background sm:rounded-b-lg">
             <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
             <Button onClick={submit} disabled={busy}>{busy ? "Working…" : generateLabel}</Button>
           </DialogFooter>
