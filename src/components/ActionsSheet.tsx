@@ -10,13 +10,14 @@ import { cn } from "@/lib/utils";
 export type ActionKey =
   | "mute" | "queue"
   | "add" | "duplicate-item" | "new" | "duplicate" | "delete-checklist" | "edit-title" | "split"
-  | "text-text" | "text-image" | "image-image" | "remix" | "image-video" | "video-video"
+  | "text-text" | "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "audio-image-video"
   | "insert-link" | "analyze-image" | "web-search" | "bg" | "rearrange"
   | "copy-sentence" | "copy-checklist" | "send-to" | "send-to-blank" | "uncheck-all" | "media-gallery" | "theme" | "sign-out";
 
 const AI_KEYS = new Set<ActionKey>([
   "text-text", "text-image", "image-image", "remix",
-  "image-video", "video-video", "analyze-image", "web-search",
+  "image-video", "video-video", "audio-image-video",
+  "analyze-image", "web-search",
 ]);
 
 const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
