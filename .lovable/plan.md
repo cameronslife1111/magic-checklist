@@ -1,67 +1,59 @@
-## Goal
-Add a new Action Sheet button — **"Audio + image to video"** — that takes a reference **image** (face) plus an **audio** clip (lip-sync source) and produces a talking-avatar `.mp4` via **`fal-ai/heygen/avatar4/image-to-video`**. The output appears in a new checkbox with the same play/download UX as the existing image-to-video flow.
+## What I found (first-principles diagnosis)
 
-## First-principles reasoning
-The existing video pipeline has a clean shape we can reuse without changes:
-1. **ActionsSheet** key → 2. **Checklist.runMediaAction** packages payload → 3. **enqueue-action** writes a job → 4. **process-action-queue** calls a generator edge function → 5. result `{ url }` is inserted as a `checklist_items` row with `media_type:"video"` → 6. **MediaViewer** plays + downloads.
+Per the Kling V3 Motion Control schema in your context doc, the model needs exactly:
+- `image_url` — **reference image** (appearance / character / background)
+- `video_url` — **reference video** (motion source)
+- `character_orientation` — `"image"` (≤10s, camera moves) or `"video"` (≤30s, complex motion)
+- `keep_original_sound` — boolean
+- `elements` — optional facial element image (only when orientation = `"video"`)
+- `prompt` — text (we already pass the checklist item text)
 
-The only model-specific difference for HeyGen Avatar 4 is the **inputs** (image + audio + a few options) and the **endpoint**. Cleanest approach: introduce a **new edge function `fal-avatar`** rather than overloading `fal-video`, because the input contract (audio_url, voice, talking_style, resolution, aspect_ratio, caption) is fundamentally different from Kling's image-to-video / motion-control schemas. Keeping them separate avoids branchy spaghetti and lets each model evolve independently.
+Looking at `src/components/MediaActionDialog.tsx`, **all of these fields actually exist** in the dialog when `mode === "video-video"`. The bug isn't missing functionality — it's that **only the "Reference video" field is visible at the top**, and the "Reference image" + orientation + sound + element fields are buried below in a single tall scroll. On a 1388×954 viewport with `max-h-[90vh] overflow-y-auto`, the reference-image field gets pushed below the fold the moment a video is selected (because the selected-asset chip expands the top block). Net effect: the popup *feels* like it's only asking for the starting video, exactly as you described.
 
-Everything else (queue, recurrence, cancel, MediaViewer download) is generic and needs zero changes.
+## Proposed UX fix (the "amazing smooth solution")
 
-## Proposed Technical Changes
+Restructure the V2V section of `MediaActionDialog.tsx` so the **two required uploads are co-equal and unmissable**, then add validation that points to the missing one.
 
-### 1. New edge function `supabase/functions/fal-avatar/index.ts`
-- Mirror the structure of `fal-video` (CORS, `uploadToFal` for data URLs, `pollFal` with ~8 min budget).
-- Endpoint: `https://queue.fal.run/fal-ai/heygen/avatar4/image-to-video`.
-- Accept body: `{ imageUrl|imageDataUrl, audioUrl|audioDataUrl, prompt?, voice?, talkingStyle?, resolution?, aspectRatio?, caption? }`.
-- Build request with: `image_url`, `audio_url` (audio overrides prompt+voice per docs), and pass through `talking_style`, `resolution`, `aspect_ratio`, `caption`. If `audio_url` missing, fall back to `prompt` + `voice`.
-- Validate `image_url` is required; either `audio_url` or `prompt` must be present.
-- Extract `result.video.url` (same shape Kling returns) → `{ url }`.
-- Function deploys with `verify_jwt = false` like the other generators (no config.toml change needed beyond what's already there for `fal-video`).
+### 1. Two-up "Required inputs" header block
+At the very top of the V2V section, render a single grouped card titled **"Required inputs"** with two rows (stacked on mobile, side-by-side on ≥sm):
+- **① Reference video** — motion source (the existing top picker)
+- **② Reference image** — appearance source (the existing `referenceImage` picker, promoted out of the lower section)
 
-### 2. `supabase/functions/process-action-queue/index.ts`
-- Add a new `case "audio-image-video":` branch.
-- Resolve `imageUrl` from payload (preferred) or `ctx.imageUrls[0]`; resolve `audioUrl` from payload or `ctx.audioUrls[0]`.
-- Call `fal-avatar` with `{ prompt: buildPrompt(...), imageUrl, audioUrl, voice, talkingStyle, resolution, aspectRatio, caption }`.
-- Insert result with `text: "Generated talking video"`, `media_type: "video"` — identical pattern to the existing video case so MediaViewer auto-handles play+download.
+Each row gets:
+- A numbered badge (1 / 2) so the order is obvious
+- A red `Required` chip until filled, switching to a green ✓ + filename when picked
+- Inline helper text from the docs (e.g. "Characters should occupy >5% of the image, no occlusion")
 
-### 3. `src/components/ActionsSheet.tsx`
-- Extend `ActionKey` with `"audio-image-video"`.
-- Add it to `AI_KEYS` (renders blue) and to `STATIC_ITEMS` next to `image-video` / `video-video`:
-  - label: `"Audio + image to video"`, icon: `Mic2` (lucide).
+### 2. Move secondary controls into a clearly-labeled "Motion options" group
+Below the required block, group `Character orientation`, `Keep original sound`, and `Facial element (optional)` under a `Motion options` subheading so they read as configuration, not as more required inputs.
 
-### 4. `src/components/MediaActionDialog.tsx`
-- Extend `mode` union with `"audio-image-video"`.
-- Add `GenOptions` fields: `audioAsset?: MediaAsset | null`, `talkingStyle?: "stable" | "expressive"`, `resolution?: "360p"|"480p"|"540p"|"720p"|"1080p"`, `caption?: boolean`. Reuse existing `aspectRatio` (HeyGen accepts `1:1 | 16:9 | 9:16` — restrict the Select when in this mode).
-- New UI block when `mode === "audio-image-video"`:
-  - **Reference image** picker (single, kind=image) — required (uses the existing `assets` flow, since `needsMedia=true` and `pickerKind="image"`).
-  - **Audio clip** picker (single, kind=audio) — required, separate state + `MediaGalleryPicker` instance (kind="audio" already supported).
-  - **Talking style** Select: stable / expressive (default stable).
-  - **Resolution** Select: 360p…1080p (default 720p).
-  - **Aspect ratio** Select limited to 1:1 / 16:9 / 9:16 (default 16:9).
-  - **Captions** Switch (default off).
-  - Hide the generic Quality select and Kling-specific blocks for this mode.
-- Validate on submit: image asset AND audio asset both selected.
+### 3. Smarter validation
+In `submit()`:
+- If the reference video is missing → set error AND set a `highlightField: "video"` state that adds a red ring around the video picker and scrolls it into view (`scrollIntoView({ block: "center" })`).
+- Same for reference image (`highlightField: "image"`).
+- Replace the current generic error text with a precise message that names the field.
 
-### 5. `src/pages/Checklist.tsx`
-- Add `"audio-image-video"` to the `MediaAction` union, `MEDIA_LABELS`, the `DialogState` `media.action` union, and the action-sheet switch (route to the media dialog like other media actions).
-- In `runMediaAction`, new branch:
-  - `payload.imageUrl = assets[0].url` (the picked image)
-  - `payload.audioUrl = opts.audioAsset.url`
-  - `payload.talkingStyle`, `payload.resolution`, `payload.aspectRatio`, `payload.caption`
-  - drop `quality`
-- Title rendered in the dialog: `"Audio + image to video"`.
+### 4. Sticky footer + scrollable body
+Make `DialogContent` a flex column with the header sticky on top, the body `flex-1 overflow-y-auto`, and the footer sticky on bottom — so the **Generate** button is always reachable without losing sight of the required-inputs block.
 
-## What stays the same (and why)
-- **Checkbox rendering, play, download**: `media_type:"video"` + `media_url` already triggers `MediaViewer` (which has the blob-download we built earlier). Zero UI work there.
-- **Enqueue / schedule / recur / cancel / re-run**: all generic, driven by `action_type`. The new key flows through unchanged.
-- **Auth / RLS / storage cleanup**: the output URL is a fal-hosted `.mp4` written to `media_url` exactly like existing video jobs. The deletion-cleanup helper we built earlier already handles it.
+### 5. No backend changes
+The edge function `supabase/functions/fal-video/index.ts` already sends exactly the right payload (`image_url`, `video_url`, `character_orientation`, `keep_original_sound`, optional `elements`). The worker `process-action-queue/index.ts` already forwards `imageUrl`, `characterOrientation`, `keepOriginalSound`, `elementImageUrl`. `runMediaAction` in `Checklist.tsx` already validates `referenceImageAsset` before enqueue. **Zero backend or queue changes needed** — this is purely a dialog redesign.
+
+## Files to change
+- `src/components/MediaActionDialog.tsx` — reorder + regroup the V2V section, add `highlightField` state, sticky footer layout, refs for scroll-to-field. Also tighten the V2V `submit()` validation messages.
+
+## Files explicitly NOT changing (and why)
+- `supabase/functions/fal-video/index.ts` — already matches the Motion Control schema verbatim.
+- `supabase/functions/process-action-queue/index.ts` — already forwards every V2V field.
+- `src/pages/Checklist.tsx` — `runMediaAction` already packages the multi-asset payload correctly for `video-video`.
+- `ActionsSheet.tsx` — routing is correct; tapping "Video to video" already opens the dialog with `mode="video-video"`.
 
 ## Validation plan after implementation
-1. Open Action Sheet → confirm "Audio + image to video" appears (blue) under the AI section.
-2. Tap it → dialog requires image + audio + shows talking style / resolution / aspect / captions.
-3. Submit "Now" → Action Queue shows `audio-image-video` running → completes → new checkbox appears with playable `.mp4`.
-4. Click the video → MediaViewer opens → Download saves the file.
-5. Re-run from Action Queue → produces a fresh video the same way.
-6. Try a "later" / "recurring" schedule to confirm the generic queue path works.
+1. Open a checklist item → Actions → **Video to video**.
+2. Confirm the popup shows a single **Required inputs** block with two numbered rows: ① Reference video, ② Reference image — both visible without scrolling on the standard viewport.
+3. Tap Generate with neither filled → red ring + auto-scroll to the video picker, error reads "Pick a reference video".
+4. Pick the video → the image row's red Required chip is still visible. Tap Generate → red ring + scroll to the image picker.
+5. Pick the image → red chips become green ✓. Confirm orientation / keep-sound / facial-element controls live below under "Motion options".
+6. Generate "Now" → Action Queue shows `video-video` running → completes → playable `.mp4` checkbox appears.
+7. Switch orientation to `video` → confirm the Facial element picker enables.
+8. Run a Later / Recurring schedule → confirm the generic queue path still works.
