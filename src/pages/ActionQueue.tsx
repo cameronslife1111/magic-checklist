@@ -8,6 +8,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { ArrowLeft, Pause, Play, Trash2, RotateCw, Repeat, AlertTriangle, ExternalLink, Copy, Check, Square, RefreshCw, Music, Play as PlayIcon, ListChecks } from "lucide-react";
 import { toast } from "sonner";
 import { stopSpeech } from "@/lib/speech";
+import { EditPromptRunDialog, EditPromptMode } from "@/components/EditPromptRunDialog";
 
 type Attachments = {
   sources: { url: string; type: "image" | "video" }[];
@@ -196,6 +197,10 @@ const ActionQueue = () => {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [loading, setLoading] = useState(true);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [editDialog, setEditDialog] = useState<
+    | { mode: EditPromptMode; job: Job; initialPrompt: string; actionLabel: string }
+    | null
+  >(null);
   const mountedRef = useRef(true);
 
   useEffect(() => { stopSpeech(); }, []);
@@ -326,44 +331,55 @@ const ActionQueue = () => {
     if (error) toast.error("Could not delete job.");
   };
 
-  const rerun = async (j: Job) => {
+  const openEditDialog = async (j: Job, mode: EditPromptMode) => {
+    // Always pull the latest payload so we re-queue with authoritative data.
+    const { data: full, error } = await supabase
+      .from("action_jobs").select("payload").eq("id", j.id).maybeSingle();
+    if (error || !full) { toast.error("Could not load original job."); return; }
+    const initialPrompt =
+      typeof (full.payload as any)?.prompt === "string"
+        ? String((full.payload as any).prompt)
+        : (j.prompt_preview ?? "");
+    setEditDialog({
+      mode, job: j, initialPrompt,
+      actionLabel: ACTION_LABELS[j.action_type] ?? j.action_type,
+    });
+  };
+
+  const submitEdit = async (args: {
+    prompt: string;
+    recurrence?: "hourly" | "daily" | "weekly" | "monthly" | "yearly";
+    scheduled_for?: string;
+  }) => {
+    if (!editDialog) return;
+    const j = editDialog.job;
+    // Re-fetch full payload at submit time to avoid stale capture.
     const { data: full, error: fetchErr } = await supabase
       .from("action_jobs").select("payload").eq("id", j.id).maybeSingle();
     if (fetchErr || !full) { toast.error("Could not re-run."); return; }
-    const { error } = await supabase.from("action_jobs").insert({
-      user_id: j.user_id,
-      checklist_id: j.checklist_id,
-      source_item_id: j.source_item_id,
-      action_type: j.action_type,
-      status: "pending",
-      payload: full.payload ?? {},
-      prompt_preview: j.prompt_preview,
-    });
-    if (error) toast.error("Could not re-run.");
-    else toast.success("Re-queued.");
-  };
 
-  const saveRecurring = async (j: Job) => {
-    const next = prompt("Repeat every (hourly, daily, weekly, monthly, yearly):", j.recurrence ?? "daily");
-    if (!next) return;
-    const valid = ["hourly", "daily", "weekly", "monthly", "yearly"];
-    if (!valid.includes(next)) { toast.error("Invalid interval."); return; }
-    const { data: full, error: fetchErr } = await supabase
-      .from("action_jobs").select("payload").eq("id", j.id).maybeSingle();
-    if (fetchErr || !full) { toast.error("Could not save recurring."); return; }
-    const { error } = await supabase.from("action_jobs").insert({
-      user_id: j.user_id,
+    // Preserve EVERYTHING from the original payload; only replace `prompt`.
+    // This keeps refImageUrls / sourceUrl / imageUrl / context / model params
+    // byte-identical to the original run.
+    const payload = { ...((full.payload as any) ?? {}), prompt: args.prompt };
+
+    const body: any = {
+      action_type: j.action_type,
       checklist_id: j.checklist_id,
       source_item_id: j.source_item_id,
-      action_type: j.action_type,
-      status: "scheduled",
-      payload: full.payload ?? {},
-      prompt_preview: j.prompt_preview,
-      scheduled_for: new Date(Date.now() + 60_000).toISOString(),
-      recurrence: next,
-    });
-    if (error) toast.error("Could not save recurring.");
-    else toast.success("Recurring schedule saved.");
+      payload,
+    };
+    if (editDialog.mode === "recurring") {
+      body.scheduled_for = args.scheduled_for;
+      body.recurrence = args.recurrence;
+    }
+
+    // Route through enqueue-action — same path as the very first run, so the
+    // worker is kicked immediately and prompt_preview is recomputed server-side.
+    const { error } = await supabase.functions.invoke("enqueue-action", { body });
+    if (error) { toast.error("Could not re-queue."); return; }
+    toast.success(editDialog.mode === "rerun" ? "Re-queued." : "Recurring schedule saved.");
+    setEditDialog(null);
   };
 
   const JobRow = ({ j }: { j: Job }) => {
@@ -472,12 +488,12 @@ const ActionQueue = () => {
             </Button>
           )}
           {(j.status === "completed" || j.status === "failed" || j.status === "cancelled") && (
-            <Button size="sm" variant="outline" onClick={() => rerun(j)}>
+            <Button size="sm" variant="outline" onClick={() => openEditDialog(j, "rerun")}>
               <RotateCw className="h-3.5 w-3.5" />Re-run
             </Button>
           )}
           {j.status === "completed" && !j.recurrence && (
-            <Button size="sm" variant="outline" onClick={() => saveRecurring(j)}>
+            <Button size="sm" variant="outline" onClick={() => openEditDialog(j, "recurring")}>
               <Repeat className="h-3.5 w-3.5" />Make recurring
             </Button>
           )}
@@ -548,6 +564,17 @@ const ActionQueue = () => {
           </TabsContent>
         </Tabs>
       </main>
+
+      {editDialog && (
+        <EditPromptRunDialog
+          open
+          mode={editDialog.mode}
+          actionLabel={editDialog.actionLabel}
+          initialPrompt={editDialog.initialPrompt}
+          onCancel={() => setEditDialog(null)}
+          onConfirm={submitEdit}
+        />
+      )}
     </div>
   );
 };
