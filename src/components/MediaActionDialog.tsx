@@ -172,6 +172,7 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
                 <Label>
                   {allowsMultiple ? "Media (in order)" :
                    isKlingMotion ? "Reference video (motion source)" :
+                   isHeyGen ? "Face image" :
                    `Start ${pickerKind}`}
                 </Label>
                 <Button type="button" variant="outline" onClick={() => setPickerOpen(true)} className="w-full justify-start">
