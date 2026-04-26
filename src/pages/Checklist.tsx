@@ -790,6 +790,16 @@ const ChecklistPage = () => {
           delete payload.aspectRatio;
           delete payload.quality;
         }
+      } else if (action === "audio-image-video") {
+        if (assets.length === 0) throw new Error("missing image");
+        if (!opts.audioAsset) throw new Error("missing audio");
+        payload.imageUrl = assets[0].url;
+        payload.audioUrl = opts.audioAsset.url;
+        payload.talkingStyle = opts.talkingStyle;
+        payload.resolution = opts.resolution;
+        payload.caption = opts.caption;
+        // HeyGen accepts 16:9 / 9:16 / 1:1 — keep aspectRatio, drop quality.
+        delete payload.quality;
       } else if (action === "analyze-image") {
         if (assets.length === 0) throw new Error("missing image");
         payload.imageUrl = assets[0].url;
