@@ -423,7 +423,7 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const { result } = await runWithCancellation(supabase, j.id, (signal) => runJob(supabase, j, signal));
+      const outcome = await runWithCancellation(supabase, j.id, (signal) => runJob(supabase, j, signal));
 
       // If user cancelled mid-flight but inner work still resolved, treat as cancelled.
       const { data: cur } = await supabase.from("action_jobs").select("status").eq("id", j.id).maybeSingle();
@@ -437,9 +437,25 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      if (outcome.kind === "handoff") {
+        // Async provider — record the queue handle. The polling block at the
+        // top of this handler will check it on subsequent cron ticks.
+        await supabase.from("action_jobs").update({
+          status: "awaiting_provider",
+          provider: outcome.provider,
+          provider_request_id: outcome.request_id,
+          provider_status_url: outcome.status_url,
+          provider_response_url: outcome.response_url,
+          provider_polled_at: new Date().toISOString(),
+          attempts: j.attempts + 1,
+        }).eq("id", j.id);
+        results.push({ id: j.id, ok: true, awaiting: true });
+        continue;
+      }
+
       await supabase.from("action_jobs").update({
         status: "completed",
-        result,
+        result: outcome.result,
         completed_at: new Date().toISOString(),
         attempts: j.attempts + 1,
       }).eq("id", j.id);
