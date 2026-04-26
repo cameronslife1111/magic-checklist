@@ -43,6 +43,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "remix",            label: "Remix multiple images",    icon: Images },
   { key: "image-video",      label: "Image to video",           icon: Film },
   { key: "video-video",      label: "Video to video",           icon: Video },
+  { key: "audio-image-video",label: "Audio + image to video",   icon: Mic2 },
   { key: "analyze-image",    label: "Analyze image",            icon: Eye },
   { key: "web-search",       label: "Text to web search",       icon: Search },
 
