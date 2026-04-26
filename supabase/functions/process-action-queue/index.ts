@@ -22,6 +22,11 @@ type Job = {
   attempts: number;
   max_attempts: number;
   recurrence: string | null;
+  // Async provider state (for long-running Fal video/avatar jobs)
+  provider: string | null;
+  provider_request_id: string | null;
+  provider_status_url: string | null;
+  provider_response_url: string | null;
 };
 
 function recurrenceToInterval(r: string | null): string | null {
