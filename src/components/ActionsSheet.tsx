@@ -34,6 +34,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "add",              label: "Add new checkbox",         icon: Plus },
   { key: "duplicate-item",   label: "Duplicate checkbox",       icon: CopyPlus },
   { key: "uncheck-all",      label: "Uncheck all checkboxes",   icon: Square },
+  { key: "combine-checked",  label: "Combine checked checkboxes", icon: Combine },
   { key: "media-gallery",    label: "Media Gallery",            icon: Library },
   { key: "bg",               label: "Change checklist background", icon: Palette },
 
