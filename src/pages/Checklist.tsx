@@ -23,6 +23,7 @@ import { ScheduleActionDialog, SchedulePick } from "@/components/ScheduleActionD
 import { AttachedContext } from "@/components/ContextAttacher";
 import { MagicCommandDialog } from "@/components/MagicCommandDialog";
 import { MagicGlowOverlay } from "@/components/MagicGlowOverlay";
+import { MagicRecordingPill } from "@/components/MagicRecordingPill";
 import { buildAppSnapshot, type Plan } from "@/lib/magicSteps";
 import { runPlan, type ExecutorCtx } from "@/lib/magicExecutor";
 import type { MediaAsset } from "@/lib/mediaAssets";
@@ -435,7 +436,7 @@ const ChecklistPage = () => {
       setMagicClarify(null);
       setMagicContext({ checklists: [], media: [] });
       setMagicRecording(true);
-      setMagicOpen(true);
+      // NOTE: dialog opens only after Stop, so the user can navigate the app while talking.
     } catch (e) {
       console.error(e);
       toast.error("Microphone permission needed for voice commands.");
@@ -461,7 +462,8 @@ const ChecklistPage = () => {
     magicChunksRef.current = [];
     if (blob.size === 0) {
       setMagicTranscribing(false);
-      return; // empty recording — leave dialog open so user can type
+      toast.error("No audio captured. Try again.");
+      return;
     }
 
     try {
@@ -477,9 +479,11 @@ const ChecklistPage = () => {
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Transcription failed");
       setMagicTranscript((data.text ?? "").trim());
+      // Now that we have a transcript, open the review dialog.
+      setMagicOpen(true);
     } catch (e) {
       console.error(e);
-      toast.error("Could not transcribe. You can type it instead.");
+      toast.error("Could not transcribe. Tap the home button and try again.");
     } finally {
       setMagicTranscribing(false);
     }
@@ -1619,8 +1623,8 @@ const ChecklistPage = () => {
       />
 
       <MagicCommandDialog
-        open={magicOpen}
-        recording={magicRecording}
+        open={magicOpen && !magicRecording}
+        recording={false}
         transcribing={magicTranscribing}
         sending={magicSending}
         transcript={magicTranscript}
@@ -1635,8 +1639,15 @@ const ChecklistPage = () => {
         onSend={sendMagicCommand}
       />
 
+      <MagicRecordingPill
+        active={magicRecording}
+        onStop={stopMagicRecording}
+        onCancel={cancelMagic}
+      />
+
       <MagicGlowOverlay active={magicExecuting} variant="executing" />
-      <MagicGlowOverlay active={magicRecording && !magicOpen} variant="recording" />
+      <MagicGlowOverlay active={magicRecording} variant="recording" />
+      <MagicGlowOverlay active={magicTranscribing && !magicOpen} variant="executing" />
     </div>
   );
 };

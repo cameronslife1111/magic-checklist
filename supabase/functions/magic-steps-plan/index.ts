@@ -87,7 +87,6 @@ Deno.serve(async (req) => {
           { role: "system", content: SYSTEM },
           { role: "user", content: userMsg },
         ],
-        reasoning: { effort: "medium" },
         tools: [{
           type: "function",
           function: {
