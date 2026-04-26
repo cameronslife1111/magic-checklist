@@ -435,7 +435,7 @@ const ChecklistPage = () => {
       setMagicClarify(null);
       setMagicContext({ checklists: [], media: [] });
       setMagicRecording(true);
-      setMagicOpen(true);
+      // NOTE: dialog opens only after Stop, so the user can navigate the app while talking.
     } catch (e) {
       console.error(e);
       toast.error("Microphone permission needed for voice commands.");
