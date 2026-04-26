@@ -14,12 +14,17 @@ export type GenOptions = {
   aspectRatio: "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
   quality: "standard" | "high";
   assets?: MediaAsset[]; // ordered selection from gallery
-  // Kling V3 pro (image-video only):
+  // Kling V3 pro image-to-video:
   duration?: string;             // "3"…"15"
   generateAudio?: boolean;
   negativePrompt?: string;
   cfgScale?: number;             // 0–1
   endImageAsset?: MediaAsset | null;
+  // Kling V3 pro motion-control (video-to-video):
+  referenceImageAsset?: MediaAsset | null;     // appearance source
+  characterOrientation?: "image" | "video";
+  keepOriginalSound?: boolean;
+  elementImageAsset?: MediaAsset | null;       // facial element (orientation="video" only)
 };
 
 type Props = {
@@ -44,7 +49,7 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Kling V3 pro state
+  // Kling V3 pro image-to-video state
   const [duration, setDuration] = useState<string>("5");
   const [generateAudio, setGenerateAudio] = useState<boolean>(true);
   const [negativePrompt, setNegativePrompt] = useState<string>(DEFAULT_NEGATIVE);
@@ -52,26 +57,41 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
   const [endImage, setEndImage] = useState<MediaAsset | null>(null);
   const [endPickerOpen, setEndPickerOpen] = useState(false);
 
+  // Kling V3 pro motion-control state
+  const [referenceImage, setReferenceImage] = useState<MediaAsset | null>(null);
+  const [refPickerOpen, setRefPickerOpen] = useState(false);
+  const [characterOrientation, setCharacterOrientation] = useState<"image" | "video">("image");
+  const [keepOriginalSound, setKeepOriginalSound] = useState<boolean>(true);
+  const [elementImage, setElementImage] = useState<MediaAsset | null>(null);
+  const [elementPickerOpen, setElementPickerOpen] = useState(false);
+
   useEffect(() => {
     if (open) {
       setAssets([]); setError(null);
       setDuration("5"); setGenerateAudio(true); setNegativePrompt(DEFAULT_NEGATIVE);
       setCfgScale(0.5); setEndImage(null);
+      setReferenceImage(null); setCharacterOrientation("image");
+      setKeepOriginalSound(true); setElementImage(null);
     }
   }, [open]);
 
-  const isKlingV3 = mode === "image-video";
+  const isKlingV3Image = mode === "image-video";
+  const isKlingMotion = mode === "video-video";
   const needsMedia = mode !== "text-image";
   const needsVideo = mode === "video-video";
   const allowsMultiple = mode === "remix";
   const pickerKind: "image" | "video" = needsVideo ? "video" : "image";
   const pickerMode: "single" | "multi" = allowsMultiple ? "multi" : "single";
-  const showAspectAndQuality = mode !== "analyze-image" && !isKlingV3;
+  const showAspectAndQuality = mode !== "analyze-image" && !isKlingV3Image && !isKlingMotion;
 
   const submit = async () => {
     setError(null);
     if (needsMedia && assets.length === 0) {
-      setError(needsVideo ? "Pick a video from your Media Gallery." : "Pick an image from your Media Gallery.");
+      setError(needsVideo ? "Pick a reference video from your Media Gallery." : "Pick an image from your Media Gallery.");
+      return;
+    }
+    if (isKlingMotion && !referenceImage) {
+      setError("Pick a reference image (the appearance source) from your Media Gallery.");
       return;
     }
     setBusy(true);
@@ -81,12 +101,18 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
         quality,
         assets: assets.length ? assets : undefined,
       };
-      if (isKlingV3) {
+      if (isKlingV3Image) {
         opts.duration = duration;
         opts.generateAudio = generateAudio;
         opts.negativePrompt = negativePrompt.trim() || DEFAULT_NEGATIVE;
         opts.cfgScale = cfgScale;
         opts.endImageAsset = endImage;
+      }
+      if (isKlingMotion) {
+        opts.referenceImageAsset = referenceImage;
+        opts.characterOrientation = characterOrientation;
+        opts.keepOriginalSound = keepOriginalSound;
+        opts.elementImageAsset = characterOrientation === "video" ? elementImage : null;
       }
       await onGenerate(opts);
     } catch (e: any) {
@@ -113,7 +139,11 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
 
             {needsMedia && (
               <div className="space-y-2">
-                <Label>{allowsMultiple ? "Media (in order)" : `Start ${pickerKind}`}</Label>
+                <Label>
+                  {allowsMultiple ? "Media (in order)" :
+                   isKlingMotion ? "Reference video (motion source)" :
+                   `Start ${pickerKind}`}
+                </Label>
                 <Button type="button" variant="outline" onClick={() => setPickerOpen(true)} className="w-full justify-start">
                   <Library className="h-4 w-4" />
                   {assets.length === 0
@@ -141,6 +171,11 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
                 {allowsMultiple && (
                   <p className="text-xs text-muted-foreground">
                     The model receives images in this order. Refer to them in your prompt as "image 1", "image 2", etc.
+                  </p>
+                )}
+                {isKlingMotion && (
+                  <p className="text-xs text-muted-foreground">
+                    Max 10s when orientation is "image", 30s when "video".
                   </p>
                 )}
               </div>
@@ -174,7 +209,7 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
               </>
             )}
 
-            {isKlingV3 && (
+            {isKlingV3Image && (
               <>
                 <div className="space-y-2">
                   <Label>Duration (seconds)</Label>
@@ -240,6 +275,79 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
               </>
             )}
 
+            {isKlingMotion && (
+              <>
+                <div className="space-y-2">
+                  <Label>Reference image (appearance source)</Label>
+                  {referenceImage ? (
+                    <div className="flex items-center gap-2 text-xs bg-background border rounded-lg p-2">
+                      <ImageIcon className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <span className="truncate flex-1">{referenceImage.title}</span>
+                      <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => setReferenceImage(null)}>
+                        <X className="h-3 w-3" />
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => setRefPickerOpen(true)}>Change</Button>
+                    </div>
+                  ) : (
+                    <Button type="button" variant="outline" onClick={() => setRefPickerOpen(true)} className="w-full justify-start">
+                      <Library className="h-4 w-4" />
+                      Choose reference image from gallery
+                    </Button>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    The character & background of the output come from this image.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Character orientation</Label>
+                  <Select value={characterOrientation} onValueChange={(v) => setCharacterOrientation(v as "image" | "video")}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="image">Match reference image — better for camera moves (≤10s)</SelectItem>
+                      <SelectItem value="video">Match reference video — better for complex motion (≤30s)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>Keep original sound</Label>
+                    <p className="text-xs text-muted-foreground">Carry audio from the reference video into the output.</p>
+                  </div>
+                  <Switch checked={keepOriginalSound} onCheckedChange={setKeepOriginalSound} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Facial element (optional)</Label>
+                  {characterOrientation !== "video" ? (
+                    <p className="text-xs text-muted-foreground">
+                      Available only when orientation is "Match reference video".
+                    </p>
+                  ) : elementImage ? (
+                    <div className="flex items-center gap-2 text-xs bg-background border rounded-lg p-2">
+                      <ImageIcon className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <span className="truncate flex-1">{elementImage.title}</span>
+                      <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => setElementImage(null)}>
+                        <X className="h-3 w-3" />
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => setElementPickerOpen(true)}>Change</Button>
+                    </div>
+                  ) : (
+                    <Button type="button" variant="outline" onClick={() => setElementPickerOpen(true)} className="w-full justify-start">
+                      <Library className="h-4 w-4" />
+                      Choose facial element image
+                    </Button>
+                  )}
+                  {characterOrientation === "video" && (
+                    <p className="text-xs text-muted-foreground">
+                      Improves facial identity preservation. Reference as <code>@Element1</code> in your prompt.
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
+
             {error && <p className="text-sm text-destructive">{error}</p>}
           </div>
           <DialogFooter className="gap-2">
@@ -262,7 +370,7 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
         />
       )}
 
-      {isKlingV3 && (
+      {isKlingV3Image && (
         <MediaGalleryPicker
           open={endPickerOpen}
           userId={userId}
@@ -272,6 +380,29 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
           onClose={() => setEndPickerOpen(false)}
           onConfirm={(picked) => { setEndImage(picked[0] ?? null); setEndPickerOpen(false); }}
         />
+      )}
+
+      {isKlingMotion && (
+        <>
+          <MediaGalleryPicker
+            open={refPickerOpen}
+            userId={userId}
+            kind="image"
+            mode="single"
+            initialSelectedIds={referenceImage ? [referenceImage.id] : []}
+            onClose={() => setRefPickerOpen(false)}
+            onConfirm={(picked) => { setReferenceImage(picked[0] ?? null); setRefPickerOpen(false); }}
+          />
+          <MediaGalleryPicker
+            open={elementPickerOpen}
+            userId={userId}
+            kind="image"
+            mode="single"
+            initialSelectedIds={elementImage ? [elementImage.id] : []}
+            onClose={() => setElementPickerOpen(false)}
+            onConfirm={(picked) => { setElementImage(picked[0] ?? null); setElementPickerOpen(false); }}
+          />
+        </>
       )}
     </>
   );
