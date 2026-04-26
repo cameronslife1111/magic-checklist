@@ -247,15 +247,35 @@ const ChecklistPage = () => {
     await supabase.from("checklist_items").update({ text, external_link: externalLink }).eq("id", item.id);
   };
 
-  const handleDelete = async (item: ChecklistItem) => {
-    if (item.media_url) {
-      const marker = "/generated-media/";
-      const idx = item.media_url.indexOf(marker);
-      if (idx !== -1) {
-        const path = item.media_url.slice(idx + marker.length).split("?")[0];
-        try { await supabase.storage.from("generated-media").remove([path]); } catch {}
-      }
+  // Removes generated-media storage objects for the given media URLs, but skips any
+  // that are tracked in media_assets (Media Gallery items the user wants to keep).
+  const deleteOwnedGeneratedMedia = async (mediaUrls: (string | null | undefined)[]) => {
+    const marker = "/generated-media/";
+    const paths: string[] = [];
+    for (const url of mediaUrls) {
+      if (!url) continue;
+      const idx = url.indexOf(marker);
+      if (idx === -1) continue; // external URL — not in our bucket
+      const path = url.slice(idx + marker.length).split("?")[0];
+      if (path) paths.push(path);
     }
+    if (paths.length === 0) return;
+    try {
+      const { data: gallery } = await supabase
+        .from("media_assets")
+        .select("storage_path")
+        .in("storage_path", paths);
+      const galleryPaths = new Set((gallery ?? []).map((r: any) => r.storage_path));
+      const toDelete = paths.filter((p) => !galleryPaths.has(p));
+      if (toDelete.length === 0) return;
+      await supabase.storage.from("generated-media").remove(toDelete);
+    } catch {
+      // Best-effort: never block row deletion on storage cleanup failures.
+    }
+  };
+
+  const handleDelete = async (item: ChecklistItem) => {
+    await deleteOwnedGeneratedMedia([item.media_url]);
     const { error } = await supabase.from("checklist_items").delete().eq("id", item.id);
     if (error) {
       toast.error("Could not delete. Try again.");
@@ -573,6 +593,13 @@ const ChecklistPage = () => {
   const deleteCurrentChecklist = async () => {
     if (!checklist || !user) return;
     const deletedId = checklist.id;
+    // Clean up generated media (skipping anything tracked in the Media Gallery).
+    const { data: mediaRows } = await supabase
+      .from("checklist_items")
+      .select("media_url")
+      .eq("checklist_id", deletedId)
+      .not("media_url", "is", null);
+    await deleteOwnedGeneratedMedia((mediaRows ?? []).map((r: any) => r.media_url));
     const { error: itemsErr } = await supabase
       .from("checklist_items").delete().eq("checklist_id", deletedId);
     if (itemsErr) { toast.error("Could not delete checklist. Try again."); return; }
