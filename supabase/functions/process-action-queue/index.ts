@@ -303,6 +303,7 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ r
       await insertResultItem(supabase, job, { text: "Generated talking video", media_url: out.url, media_type: "video" });
       return { result: { media_url: out.url } };
     }
+    case "analyze-image": {
       const prompt = buildPrompt(p.prompt, ctx, ctx.imageUrls.length > 1);
       let imageDataUrl = p.imageDataUrl;
       if (!imageDataUrl && p.imageUrl) imageDataUrl = await urlToDataUrl(p.imageUrl);
