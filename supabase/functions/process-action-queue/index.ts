@@ -263,14 +263,18 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ r
         sourceKind: job.action_type === "video-video" ? "video" : "image",
       };
       if (job.action_type === "image-video") {
-        // Kling V3 pro options
+        // Kling V3 pro image-to-video options
         if (p.duration) body.duration = p.duration;
         if (typeof p.generateAudio === "boolean") body.generateAudio = p.generateAudio;
         if (p.negativePrompt) body.negativePrompt = p.negativePrompt;
         if (typeof p.cfgScale === "number") body.cfgScale = p.cfgScale;
         if (p.endImageUrl) body.endImageUrl = p.endImageUrl;
       } else {
-        if (p.aspectRatio) body.aspectRatio = p.aspectRatio;
+        // Kling V3 pro motion-control (video-to-video) options
+        if (p.imageUrl) body.imageUrl = p.imageUrl;
+        if (p.characterOrientation) body.characterOrientation = p.characterOrientation;
+        if (typeof p.keepOriginalSound === "boolean") body.keepOriginalSound = p.keepOriginalSound;
+        if (p.elementImageUrl) body.elementImageUrl = p.elementImageUrl;
       }
       if (sourceUrl) body.sourceUrl = sourceUrl;
       else if (p.sourceDataUrl) body.sourceDataUrl = p.sourceDataUrl;

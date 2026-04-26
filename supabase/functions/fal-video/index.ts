@@ -1,4 +1,7 @@
-// Fal.ai video generation: image-to-video (Kling V3 pro) or video-to-video (Luma Ray-2 modify).
+// Fal.ai video generation:
+//   image-to-video  -> fal-ai/kling-video/v3/pro/image-to-video
+//   video-to-video  -> fal-ai/kling-video/v3/pro/motion-control
+//                      (reference image for appearance + reference video for motion)
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -46,8 +49,10 @@ Deno.serve(async (req) => {
   try {
     const {
       prompt, sourceDataUrl, sourceUrl, sourceKind, aspectRatio,
-      // Kling V3 pro options (image-video only)
+      // Kling V3 pro image-to-video options
       duration, generateAudio, negativePrompt, cfgScale, endImageUrl,
+      // Kling V3 pro motion-control (video-to-video) options
+      imageUrl, characterOrientation, keepOriginalSound, elementImageUrl,
     } = await req.json();
     if (!prompt || (!sourceDataUrl && !sourceUrl) || !sourceKind) {
       return new Response(JSON.stringify({ error: "Missing inputs" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
@@ -58,13 +63,25 @@ Deno.serve(async (req) => {
     const hostedUrl = sourceUrl ?? await uploadToFal(falKey, sourceDataUrl);
 
     const model = sourceKind === "video"
-      ? "fal-ai/luma-dream-machine/ray-2/modify"
+      ? "fal-ai/kling-video/v3/pro/motion-control"
       : "fal-ai/kling-video/v3/pro/image-to-video";
 
     const body: any = { prompt };
     if (sourceKind === "video") {
+      // Motion-control requires BOTH a reference video (motion source) and a reference image (appearance).
+      if (!imageUrl) {
+        return new Response(JSON.stringify({ error: "Missing reference image (image_url) for motion-control." }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+      }
       body.video_url = hostedUrl;
-      if (aspectRatio) body.aspect_ratio = aspectRatio;
+      body.image_url = imageUrl;
+      // Required-but-defaulted: pick safer "image" orientation if caller didn't choose.
+      body.character_orientation = characterOrientation === "video" ? "video" : "image";
+      if (typeof keepOriginalSound === "boolean") body.keep_original_sound = keepOriginalSound;
+      // Optional facial element binding — only valid when orientation is "video".
+      if (elementImageUrl && body.character_orientation === "video") {
+        body.elements = [{ image_url: elementImageUrl }];
+      }
+      // motion-control does NOT accept aspect_ratio.
     } else {
       // Kling V3 pro image-to-video schema.
       body.start_image_url = hostedUrl;

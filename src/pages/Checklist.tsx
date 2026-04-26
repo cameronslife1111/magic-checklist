@@ -775,6 +775,18 @@ const ChecklistPage = () => {
           if (opts.endImageAsset) payload.endImageUrl = opts.endImageAsset.url;
           // Kling V3 pro doesn't take aspect ratio — drop it from the payload.
           delete payload.aspectRatio;
+        } else {
+          // video-video uses Kling V3 pro motion-control: needs reference image + orientation.
+          if (!opts.referenceImageAsset) throw new Error("missing reference image");
+          payload.imageUrl = opts.referenceImageAsset.url;
+          payload.characterOrientation = opts.characterOrientation ?? "image";
+          payload.keepOriginalSound = opts.keepOriginalSound !== false;
+          if (opts.elementImageAsset && payload.characterOrientation === "video") {
+            payload.elementImageUrl = opts.elementImageAsset.url;
+          }
+          // motion-control doesn't take aspect ratio / quality — drop them.
+          delete payload.aspectRatio;
+          delete payload.quality;
         }
       } else if (action === "analyze-image") {
         if (assets.length === 0) throw new Error("missing image");
