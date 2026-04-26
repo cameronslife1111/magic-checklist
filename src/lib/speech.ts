@@ -82,6 +82,77 @@ function recoverIfStuck(): boolean {
   return false;
 }
 
+// Hard reset the speech engine. Required after the OS audio session was held
+// by another input (e.g. mobile keyboard dictation), which leaves the engine
+// in a state our flag-based recovery cannot detect.
+function resetEngine() {
+  const s = synth();
+  if (!s) return;
+  try { s.resume(); } catch {}
+  try { s.cancel(); } catch {}
+  try { s.resume(); } catch {}
+  try { s.cancel(); } catch {}
+  stopHeartbeat();
+  primed = false;
+}
+
+const isIOS = () => {
+  if (typeof navigator === "undefined") return false;
+  const ua = navigator.userAgent || "";
+  return /iPad|iPhone|iPod/.test(ua) || (/Macintosh/.test(ua) && "ontouchend" in document);
+};
+
+// Briefly open and close an AudioContext to nudge the OS audio route back to
+// playback after a dictation/recording session held the input route. iOS only.
+function nudgeAudioRoute() {
+  if (!isIOS()) return;
+  try {
+    const Ctx: any = (window as any).AudioContext || (window as any).webkitAudioContext;
+    if (!Ctx) return;
+    const ac = new Ctx();
+    const close = () => { try { ac.close(); } catch {} };
+    if (ac.state === "suspended" && typeof ac.resume === "function") {
+      ac.resume().then(close).catch(close);
+    } else {
+      setTimeout(close, 0);
+    }
+  } catch {}
+}
+
+// Called by ItemRow when a textarea gains focus. Cleanly stops any current
+// speech BEFORE the OS dictation session can be invoked, avoiding the
+// cancel-during-audio-session zombie state.
+export function notifyDictationStart() {
+  resetEngine();
+}
+
+// Called by ItemRow on textarea blur (still inside the user gesture that
+// dismissed the keyboard). Resets the engine, nudges the audio route, and
+// re-primes synchronously so the next speak() is fully armed.
+export function notifyDictationEnd() {
+  resetEngine();
+  nudgeAudioRoute();
+  // Re-prime now while we still have gesture context.
+  primeSpeech();
+}
+
+// Called from a global pointer/touch listener. Cheap no-op when already primed
+// or muted; silently re-arms the engine on the next tap if dictation broke it.
+export function notifyUserGesture() {
+  if (muted) return;
+  if (!primed) primeSpeech();
+}
+
+let gestureInstalled = false;
+export function installGestureRearm() {
+  if (gestureInstalled) return;
+  if (typeof window === "undefined") return;
+  gestureInstalled = true;
+  const handler = () => notifyUserGesture();
+  window.addEventListener("pointerup", handler, { capture: true, passive: true });
+  window.addEventListener("touchend", handler, { capture: true, passive: true });
+}
+
 function stripEmojis(text: string) {
   return text
     .replace(/\p{Extended_Pictographic}/gu, "")
