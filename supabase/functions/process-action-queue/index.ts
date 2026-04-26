@@ -22,6 +22,11 @@ type Job = {
   attempts: number;
   max_attempts: number;
   recurrence: string | null;
+  // Async provider state (for long-running Fal video/avatar jobs)
+  provider: string | null;
+  provider_request_id: string | null;
+  provider_status_url: string | null;
+  provider_response_url: string | null;
 };
 
 function recurrenceToInterval(r: string | null): string | null {
@@ -199,7 +204,11 @@ async function urlToDataUrl(url: string): Promise<string> {
   return `data:${blob.type || "application/octet-stream"};base64,${btoa(binary)}`;
 }
 
-async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ result: any }> {
+type JobOutcome =
+  | { kind: "result"; result: any }
+  | { kind: "handoff"; provider: string; status_url: string; response_url: string; request_id: string | null };
+
+async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<JobOutcome> {
   const p = job.payload ?? {};
   const ctx = await resolveContext(supabase, p);
   switch (job.action_type) {
@@ -208,14 +217,14 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ r
       const out = await callFn("openai-text", { prompt }, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       await insertResultItem(supabase, job, { text: out.text });
-      return { result: { text: out.text } };
+      return { kind: "result", result: { text: out.text } };
     }
     case "web-search": {
       const prompt = buildPrompt(p.prompt, ctx, true);
       const out = await callFn("perplexity-search", { query: prompt }, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       await insertResultItem(supabase, job, { text: out.text });
-      return { result: { text: out.text } };
+      return { kind: "result", result: { text: out.text } };
     }
     case "text-image": {
       const prompt = buildPrompt(p.prompt, ctx, false);
@@ -227,7 +236,7 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ r
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       const url = await uploadDataUrl(supabase, job.user_id, out.dataUrl, "png");
       await insertResultItem(supabase, job, { text: "Generated image", media_url: url, media_type: "image" });
-      return { result: { media_url: url } };
+      return { kind: "result", result: { media_url: url } };
     }
     case "image-image":
     case "remix": {
@@ -247,30 +256,30 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ r
         text: job.action_type === "remix" ? "Remixed image" : "Edited image",
         media_url: url, media_type: "image",
       });
-      return { result: { media_url: url } };
+      return { kind: "result", result: { media_url: url } };
     }
     case "image-video":
     case "video-video": {
+      // ASYNC: submit to Fal, return a handoff. The worker stores the queue handle
+      // on the job row and polls it on subsequent ticks (no synchronous wait → no 150s timeout).
       const prompt = buildPrompt(p.prompt, ctx, true);
-      // Prefer a public URL (fast path). Only fall back to data URL conversion for legacy jobs.
       let sourceUrl: string | undefined = p.sourceUrl;
       if (!sourceUrl) {
         const fallback = job.action_type === "video-video" ? ctx.videoUrls[0] : ctx.imageUrls[0];
         if (fallback) sourceUrl = fallback;
       }
       const body: any = {
+        mode: "submit",
         prompt,
         sourceKind: job.action_type === "video-video" ? "video" : "image",
       };
       if (job.action_type === "image-video") {
-        // Kling V3 pro image-to-video options
         if (p.duration) body.duration = p.duration;
         if (typeof p.generateAudio === "boolean") body.generateAudio = p.generateAudio;
         if (p.negativePrompt) body.negativePrompt = p.negativePrompt;
         if (typeof p.cfgScale === "number") body.cfgScale = p.cfgScale;
         if (p.endImageUrl) body.endImageUrl = p.endImageUrl;
       } else {
-        // Kling V3 pro motion-control (video-to-video) options
         if (p.imageUrl) body.imageUrl = p.imageUrl;
         if (p.characterOrientation) body.characterOrientation = p.characterOrientation;
         if (typeof p.keepOriginalSound === "boolean") body.keepOriginalSound = p.keepOriginalSound;
@@ -280,18 +289,25 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ r
       else if (p.sourceDataUrl) body.sourceDataUrl = p.sourceDataUrl;
       const out = await callFn("fal-video", body, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-      await insertResultItem(supabase, job, { text: "Generated video", media_url: out.url, media_type: "video" });
-      return { result: { media_url: out.url } };
+      if (!out.status_url || !out.response_url) throw new Error("fal-video did not return a queue handle");
+      return {
+        kind: "handoff",
+        provider: "fal-video",
+        status_url: out.status_url,
+        response_url: out.response_url,
+        request_id: out.request_id ?? null,
+      };
     }
     case "audio-image-video": {
-      // HeyGen Avatar 4 — image (face) + audio (lip-sync) -> talking video.
+      // ASYNC: same submit/poll handoff pattern as the Kling video models.
       const prompt = buildPrompt(p.prompt, ctx, false);
       const imageUrl = p.imageUrl ?? ctx.imageUrls[0];
       const audioUrl = p.audioUrl ?? ctx.audioUrls[0];
       if (!imageUrl) throw new Error("missing reference image");
       const out = await callFn("fal-avatar", {
+        mode: "submit",
         imageUrl,
-        audioUrl,                                 // optional — falls back to prompt+voice if absent
+        audioUrl,
         prompt,
         voice: p.voice,
         talkingStyle: p.talkingStyle,
@@ -300,8 +316,14 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ r
         caption: p.caption,
       }, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-      await insertResultItem(supabase, job, { text: "Generated talking video", media_url: out.url, media_type: "video" });
-      return { result: { media_url: out.url } };
+      if (!out.status_url || !out.response_url) throw new Error("fal-avatar did not return a queue handle");
+      return {
+        kind: "handoff",
+        provider: "fal-avatar",
+        status_url: out.status_url,
+        response_url: out.response_url,
+        request_id: out.request_id ?? null,
+      };
     }
     case "analyze-image": {
       const prompt = buildPrompt(p.prompt, ctx, ctx.imageUrls.length > 1);
@@ -311,7 +333,7 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ r
       const out = await callFn("openai-vision", { prompt, imageDataUrl }, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       await insertResultItem(supabase, job, { text: out.text });
-      return { result: { text: out.text } };
+      return { kind: "result", result: { text: out.text } };
     }
     default:
       throw new Error(`unknown action_type: ${job.action_type}`);
@@ -322,8 +344,8 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<{ r
 async function runWithCancellation(
   supabase: any,
   jobId: string,
-  work: (signal: AbortSignal) => Promise<{ result: any }>,
-): Promise<{ result: any }> {
+  work: (signal: AbortSignal) => Promise<JobOutcome>,
+): Promise<JobOutcome> {
   const controller = new AbortController();
   const interval = setInterval(async () => {
     try {
@@ -350,6 +372,95 @@ Deno.serve(async (req) => {
 
   const supabase = createClient(SUPABASE_URL, SERVICE_KEY, { auth: { persistSession: false } });
 
+  // ─────────────────────────────────────────────────────────────────────────
+  // PHASE 1 — Poll any jobs already handed off to an async provider (Fal).
+  // We never wait long here: each poll is one HTTP round-trip per job.
+  // Throttle: only re-poll a job if it hasn't been polled in the last 8s.
+  // ─────────────────────────────────────────────────────────────────────────
+  const pollResults: any[] = [];
+  const pollCutoff = new Date(Date.now() - 8_000).toISOString();
+  const { data: pollJobs } = await supabase
+    .from("action_jobs")
+    .select("*")
+    .eq("status", "awaiting_provider")
+    .or(`provider_polled_at.is.null,provider_polled_at.lte.${pollCutoff}`)
+    .order("provider_polled_at", { ascending: true, nullsFirst: true })
+    .limit(MAX_BATCH);
+
+  for (const j of ((pollJobs ?? []) as Job[])) {
+    if (!j.provider_status_url || !j.provider_response_url) continue;
+    const fnName = j.provider === "fal-avatar" ? "fal-avatar" : "fal-video";
+    try {
+      // Mark polled-at first so a slow poll doesn't get re-claimed by an overlapping tick.
+      await supabase.from("action_jobs")
+        .update({ provider_polled_at: new Date().toISOString() })
+        .eq("id", j.id);
+
+      const r = await fetch(`${SUPABASE_URL}/functions/v1/${fnName}`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${SERVICE_KEY}`, "Content-Type": "application/json", apikey: SERVICE_KEY },
+        body: JSON.stringify({
+          mode: "poll",
+          statusUrl: j.provider_status_url,
+          responseUrl: j.provider_response_url,
+        }),
+      });
+      const out = await r.json().catch(() => ({}));
+
+      if (out?.status === "COMPLETED" && out?.url) {
+        const isAvatar = j.action_type === "audio-image-video";
+        await insertResultItem(supabase, j, {
+          text: isAvatar ? "Generated talking video" : "Generated video",
+          media_url: out.url,
+          media_type: "video",
+        });
+        await supabase.from("action_jobs").update({
+          status: "completed",
+          result: { media_url: out.url },
+          completed_at: new Date().toISOString(),
+        }).eq("id", j.id);
+
+        // Recurring: enqueue next occurrence (mirrors the sync path below).
+        const interval = recurrenceToInterval(j.recurrence);
+        if (interval) {
+          const nextRun = new Date(Date.now() + intervalMs(j.recurrence!)).toISOString();
+          await supabase.from("action_jobs").insert({
+            user_id: j.user_id,
+            checklist_id: j.checklist_id,
+            source_item_id: j.source_item_id,
+            action_type: j.action_type,
+            status: "scheduled",
+            payload: j.payload,
+            scheduled_for: nextRun,
+            recurrence: j.recurrence,
+            parent_job_id: j.id,
+          });
+        }
+        pollResults.push({ id: j.id, ok: true });
+      } else if (out?.status === "FAILED") {
+        const errMsg = String(out?.error ?? "fal job failed");
+        const friendly = await explainErrorInline(j.action_type, errMsg);
+        await supabase.from("action_jobs").update({
+          status: "failed",
+          error_raw: errMsg,
+          error_friendly: friendly.cause,
+          error_fix: friendly.fix,
+          completed_at: new Date().toISOString(),
+        }).eq("id", j.id);
+        pollResults.push({ id: j.id, ok: false, error: errMsg });
+      } else {
+        // IN_PROGRESS — leave as-is; we'll check again next tick.
+        pollResults.push({ id: j.id, ok: true, awaiting: true });
+      }
+    } catch (e) {
+      console.error("poll err", j.id, e);
+      pollResults.push({ id: j.id, ok: false, error: (e as Error).message });
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // PHASE 2 — Claim & run new pending/scheduled jobs (existing flow).
+  // ─────────────────────────────────────────────────────────────────────────
   const nowIso = new Date().toISOString();
   const { data: dueJobs, error: dueErr } = await supabase
     .from("action_jobs")
@@ -366,7 +477,7 @@ Deno.serve(async (req) => {
 
   const ids = (dueJobs ?? []).map((j) => j.id);
   if (ids.length === 0) {
-    return new Response(JSON.stringify({ processed: 0 }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    return new Response(JSON.stringify({ processed: pollResults.length, polled: pollResults }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   }
 
   // Claim by setting status=running only where still pending/scheduled (prevents double-run)
@@ -401,7 +512,7 @@ Deno.serve(async (req) => {
         continue;
       }
 
-      const { result } = await runWithCancellation(supabase, j.id, (signal) => runJob(supabase, j, signal));
+      const outcome = await runWithCancellation(supabase, j.id, (signal) => runJob(supabase, j, signal));
 
       // If user cancelled mid-flight but inner work still resolved, treat as cancelled.
       const { data: cur } = await supabase.from("action_jobs").select("status").eq("id", j.id).maybeSingle();
@@ -415,9 +526,25 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      if (outcome.kind === "handoff") {
+        // Async provider — record the queue handle. The polling block at the
+        // top of this handler will check it on subsequent cron ticks.
+        await supabase.from("action_jobs").update({
+          status: "awaiting_provider",
+          provider: outcome.provider,
+          provider_request_id: outcome.request_id,
+          provider_status_url: outcome.status_url,
+          provider_response_url: outcome.response_url,
+          provider_polled_at: new Date().toISOString(),
+          attempts: j.attempts + 1,
+        }).eq("id", j.id);
+        results.push({ id: j.id, ok: true, awaiting: true });
+        continue;
+      }
+
       await supabase.from("action_jobs").update({
         status: "completed",
-        result,
+        result: outcome.result,
         completed_at: new Date().toISOString(),
         attempts: j.attempts + 1,
       }).eq("id", j.id);
@@ -487,7 +614,7 @@ Deno.serve(async (req) => {
     }
   }
 
-  return new Response(JSON.stringify({ processed: results.length, results }), {
+  return new Response(JSON.stringify({ processed: results.length + pollResults.length, results, polled: pollResults }), {
     headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 });

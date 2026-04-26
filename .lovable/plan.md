@@ -1,59 +1,61 @@
-## What I found (first-principles diagnosis)
+## Root cause (first principles)
 
-Per the Kling V3 Motion Control schema in your context doc, the model needs exactly:
-- `image_url` — **reference image** (appearance / character / background)
-- `video_url` — **reference video** (motion source)
-- `character_orientation` — `"image"` (≤10s, camera moves) or `"video"` (≤30s, complex motion)
-- `keep_original_sound` — boolean
-- `elements` — optional facial element image (only when orientation = `"video"`)
-- `prompt` — text (we already pass the checklist item text)
+I pulled the failed job from the database. There are actually **two stacked bugs**, not one:
 
-Looking at `src/components/MediaActionDialog.tsx`, **all of these fields actually exist** in the dialog when `mode === "video-video"`. The bug isn't missing functionality — it's that **only the "Reference video" field is visible at the top**, and the "Reference image" + orientation + sound + element fields are buried below in a single tall scroll. On a 1388×954 viewport with `max-h-[90vh] overflow-y-auto`, the reference-image field gets pushed below the fold the moment a video is selected (because the selected-asset chip expands the top block). Net effect: the popup *feels* like it's only asking for the starting video, exactly as you described.
+### Bug A — "no video url returned" (your latest run)
+`fal-video` parses the result with:
+```ts
+const url = result?.video?.url ?? result?.output?.video?.url ?? result?.url;
+```
+For Kling V3 Pro **motion-control**, Fal's queue response wraps the payload differently — the URL commonly lives at `result.data.video.url`. When none of the three paths match, we throw "no video url returned" without ever logging the raw shape, so we've been flying blind.
 
-## Proposed UX fix (the "amazing smooth solution")
+### Bug B — 150 s hard ceiling (the deeper, structural bug)
+The previous V2V job (22 min earlier) failed with:
+> `fal-video 504: {"code":"IDLE_TIMEOUT","message":"Request idle timeout limit (150s) reached"}`
 
-Restructure the V2V section of `MediaActionDialog.tsx` so the **two required uploads are co-equal and unmissable**, then add validation that points to the missing one.
+`process-action-queue` calls `fal-video` synchronously and waits. `fal-video` then blocks for up to 8 minutes polling Fal. **Supabase edge functions hard-cap function-to-function calls at ~150 s**, so any Kling V3 Pro Motion-Control job (typical runtime 3–6 min) is mathematically guaranteed to fail this way. I2V occasionally squeaks under the cap, which is why it "works." This is the real, repeatable failure — Bug A is just what happens on the rare occasion the synchronous pattern doesn't time out first.
 
-### 1. Two-up "Required inputs" header block
-At the very top of the V2V section, render a single grouped card titled **"Required inputs"** with two rows (stacked on mobile, side-by-side on ≥sm):
-- **① Reference video** — motion source (the existing top picker)
-- **② Reference image** — appearance source (the existing `referenceImage` picker, promoted out of the lower section)
+## The fix — async, queue-handle-based polling
 
-Each row gets:
-- A numbered badge (1 / 2) so the order is obvious
-- A red `Required` chip until filled, switching to a green ✓ + filename when picked
-- Inline helper text from the docs (e.g. "Characters should occupy >5% of the image, no occlusion")
+Refactor so no single function call ever waits more than a few seconds for Fal. The job row itself becomes the state machine.
 
-### 2. Move secondary controls into a clearly-labeled "Motion options" group
-Below the required block, group `Character orientation`, `Keep original sound`, and `Facial element (optional)` under a `Motion options` subheading so they read as configuration, not as more required inputs.
+### 1. DB migration — store the Fal queue handle on the job
+Add three nullable columns to `action_jobs`:
+- `provider` text — e.g. `"fal"`
+- `provider_request_id` text — Fal request id
+- `provider_status_url` / `provider_response_url` text — the queue URLs Fal returns at submit time
 
-### 3. Smarter validation
-In `submit()`:
-- If the reference video is missing → set error AND set a `highlightField: "video"` state that adds a red ring around the video picker and scrolls it into view (`scrollIntoView({ block: "center" })`).
-- Same for reference image (`highlightField: "image"`).
-- Replace the current generic error text with a precise message that names the field.
+(One migration, no data backfill needed.)
 
-### 4. Sticky footer + scrollable body
-Make `DialogContent` a flex column with the header sticky on top, the body `flex-1 overflow-y-auto`, and the footer sticky on bottom — so the **Generate** button is always reachable without losing sight of the required-inputs block.
+### 2. Rework `supabase/functions/fal-video/index.ts` into two modes
+- `mode: "submit"` — uploads the source if needed, POSTs to `queue.fal.run/<model>`, returns `{ request_id, status_url, response_url }` immediately. No polling. Always returns in <10 s.
+- `mode: "poll"` — given a `status_url`/`response_url`, checks once. Returns `{ status: "IN_PROGRESS" | "COMPLETED" | "FAILED", url? }`. **Critically**, on `COMPLETED` it now reads the URL from **all known shapes**: `result?.video?.url ?? result?.output?.video?.url ?? result?.data?.video?.url ?? result?.url`, and on miss logs `JSON.stringify(result).slice(0, 1000)` so we can never be blind again.
 
-### 5. No backend changes
-The edge function `supabase/functions/fal-video/index.ts` already sends exactly the right payload (`image_url`, `video_url`, `character_orientation`, `keep_original_sound`, optional `elements`). The worker `process-action-queue/index.ts` already forwards `imageUrl`, `characterOrientation`, `keepOriginalSound`, `elementImageUrl`. `runMediaAction` in `Checklist.tsx` already validates `referenceImageAsset` before enqueue. **Zero backend or queue changes needed** — this is purely a dialog redesign.
+### 3. Rework `process-action-queue` for video jobs
+Split the `image-video` / `video-video` / `audio-image-video` branches into a two-phase flow:
+- **First time the worker sees the job** (status `pending` → `running`): call `fal-video` (or `fal-avatar`) in `submit` mode, store the returned handle on the row, set status to `awaiting_provider`, return.
+- **Subsequent cron ticks**: select jobs where `status = 'awaiting_provider'` AND `provider = 'fal'`, call the function in `poll` mode. If `IN_PROGRESS`, leave it. If `COMPLETED`, run the existing `insertResultItem` + mark `completed`. If `FAILED`, mark failed with the real error.
 
-## Files to change
-- `src/components/MediaActionDialog.tsx` — reorder + regroup the V2V section, add `highlightField` state, sticky footer layout, refs for scroll-to-field. Also tighten the V2V `submit()` validation messages.
+This means the worker never holds an open connection longer than a few seconds, and Kling V3 Pro Motion-Control (which can legitimately take 6 minutes) finishes correctly across however many cron ticks it needs.
 
-## Files explicitly NOT changing (and why)
-- `supabase/functions/fal-video/index.ts` — already matches the Motion Control schema verbatim.
-- `supabase/functions/process-action-queue/index.ts` — already forwards every V2V field.
-- `src/pages/Checklist.tsx` — `runMediaAction` already packages the multi-asset payload correctly for `video-video`.
-- `ActionsSheet.tsx` — routing is correct; tapping "Video to video" already opens the dialog with `mode="video-video"`.
+### 4. Apply the same pattern to `fal-avatar` (HeyGen)
+HeyGen Avatar 4 has the same 5-min runtime profile and the same 150 s problem waiting in the wings. Refactor it identically (`submit` / `poll` modes) so we don't have to re-fix this next time the user tests audio-image-video.
 
-## Validation plan after implementation
-1. Open a checklist item → Actions → **Video to video**.
-2. Confirm the popup shows a single **Required inputs** block with two numbered rows: ① Reference video, ② Reference image — both visible without scrolling on the standard viewport.
-3. Tap Generate with neither filled → red ring + auto-scroll to the video picker, error reads "Pick a reference video".
-4. Pick the video → the image row's red Required chip is still visible. Tap Generate → red ring + scroll to the image picker.
-5. Pick the image → red chips become green ✓. Confirm orientation / keep-sound / facial-element controls live below under "Motion options".
-6. Generate "Now" → Action Queue shows `video-video` running → completes → playable `.mp4` checkbox appears.
-7. Switch orientation to `video` → confirm the Facial element picker enables.
-8. Run a Later / Recurring schedule → confirm the generic queue path still works.
+### 5. Keep the worker's batch query honest
+Update the `select` in `process-action-queue` to include `awaiting_provider` so polled jobs get picked back up each tick, and add a `provider_polled_at` guard so we don't hammer Fal more than once per ~10 s per job.
+
+### 6. UX: surface the real Fal error if `submit` fails inline
+When Fal returns a 4xx at submit (bad reference image, content policy, etc.), bubble that string into `error_friendly` instead of "no video url returned".
+
+## Files touched
+- `supabase/migrations/<new>.sql` — add provider columns to `action_jobs`
+- `supabase/functions/fal-video/index.ts` — split into submit/poll modes, fix URL extraction, log raw result on miss
+- `supabase/functions/fal-avatar/index.ts` — same submit/poll split
+- `supabase/functions/process-action-queue/index.ts` — two-phase flow for the three video action types; include `awaiting_provider` in the batch query
+- (No client-side changes needed — `runMediaAction` and the dialog are already correct.)
+
+## Why this fixes both your symptoms
+- The 150 s timeout disappears because nothing waits that long anymore.
+- "no video url returned" disappears because we read the correct response path AND log the raw shape if it ever drifts again.
+- I2V keeps working (same code path, just async now).
+- Audio-image-video gets the same robustness for free.

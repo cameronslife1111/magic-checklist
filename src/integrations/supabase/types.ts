@@ -29,6 +29,11 @@ export type Database = {
           parent_job_id: string | null
           payload: Json
           prompt_preview: string | null
+          provider: string | null
+          provider_polled_at: string | null
+          provider_request_id: string | null
+          provider_response_url: string | null
+          provider_status_url: string | null
           recurrence: string | null
           result: Json | null
           scheduled_for: string | null
@@ -52,6 +57,11 @@ export type Database = {
           parent_job_id?: string | null
           payload?: Json
           prompt_preview?: string | null
+          provider?: string | null
+          provider_polled_at?: string | null
+          provider_request_id?: string | null
+          provider_response_url?: string | null
+          provider_status_url?: string | null
           recurrence?: string | null
           result?: Json | null
           scheduled_for?: string | null
@@ -75,6 +85,11 @@ export type Database = {
           parent_job_id?: string | null
           payload?: Json
           prompt_preview?: string | null
+          provider?: string | null
+          provider_polled_at?: string | null
+          provider_request_id?: string | null
+          provider_response_url?: string | null
+          provider_status_url?: string | null
           recurrence?: string | null
           result?: Json | null
           scheduled_for?: string | null
