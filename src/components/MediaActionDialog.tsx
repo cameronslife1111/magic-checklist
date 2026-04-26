@@ -3,7 +3,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Image as ImageIcon, Video, Library } from "lucide-react";
+import { Switch } from "@/components/ui/switch";
+import { Slider } from "@/components/ui/slider";
+import { Textarea } from "@/components/ui/textarea";
+import { Image as ImageIcon, Video, Library, X } from "lucide-react";
 import { MediaGalleryPicker } from "@/components/MediaGalleryPicker";
 import { MediaAsset } from "@/lib/mediaAssets";
 
@@ -11,6 +14,12 @@ export type GenOptions = {
   aspectRatio: "1:1" | "16:9" | "9:16" | "4:3" | "3:4";
   quality: "standard" | "high";
   assets?: MediaAsset[]; // ordered selection from gallery
+  // Kling V3 pro (image-video only):
+  duration?: string;             // "3"…"15"
+  generateAudio?: boolean;
+  negativePrompt?: string;
+  cfgScale?: number;             // 0–1
+  endImageAsset?: MediaAsset | null;
 };
 
 type Props = {
@@ -24,6 +33,9 @@ type Props = {
   generateLabel?: string;
 };
 
+const KLING_DURATIONS = ["3","4","5","6","7","8","9","10","11","12","13","14","15"] as const;
+const DEFAULT_NEGATIVE = "blur, distort, and low quality";
+
 export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, onGenerate, generateLabel = "Generate" }: Props) => {
   const [aspect, setAspect] = useState<GenOptions["aspectRatio"]>("1:1");
   const [quality, setQuality] = useState<GenOptions["quality"]>("standard");
@@ -32,13 +44,29 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => { if (open) { setAssets([]); setError(null); } }, [open]);
+  // Kling V3 pro state
+  const [duration, setDuration] = useState<string>("5");
+  const [generateAudio, setGenerateAudio] = useState<boolean>(true);
+  const [negativePrompt, setNegativePrompt] = useState<string>(DEFAULT_NEGATIVE);
+  const [cfgScale, setCfgScale] = useState<number>(0.5);
+  const [endImage, setEndImage] = useState<MediaAsset | null>(null);
+  const [endPickerOpen, setEndPickerOpen] = useState(false);
 
+  useEffect(() => {
+    if (open) {
+      setAssets([]); setError(null);
+      setDuration("5"); setGenerateAudio(true); setNegativePrompt(DEFAULT_NEGATIVE);
+      setCfgScale(0.5); setEndImage(null);
+    }
+  }, [open]);
+
+  const isKlingV3 = mode === "image-video";
   const needsMedia = mode !== "text-image";
   const needsVideo = mode === "video-video";
   const allowsMultiple = mode === "remix";
   const pickerKind: "image" | "video" = needsVideo ? "video" : "image";
   const pickerMode: "single" | "multi" = allowsMultiple ? "multi" : "single";
+  const showAspectAndQuality = mode !== "analyze-image" && !isKlingV3;
 
   const submit = async () => {
     setError(null);
@@ -48,7 +76,19 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
     }
     setBusy(true);
     try {
-      await onGenerate({ aspectRatio: aspect, quality, assets: assets.length ? assets : undefined });
+      const opts: GenOptions = {
+        aspectRatio: aspect,
+        quality,
+        assets: assets.length ? assets : undefined,
+      };
+      if (isKlingV3) {
+        opts.duration = duration;
+        opts.generateAudio = generateAudio;
+        opts.negativePrompt = negativePrompt.trim() || DEFAULT_NEGATIVE;
+        opts.cfgScale = cfgScale;
+        opts.endImageAsset = endImage;
+      }
+      await onGenerate(opts);
     } catch (e: any) {
       setError(e?.message ?? "Failed. Try again.");
     } finally {
@@ -61,7 +101,7 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
   return (
     <>
       <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-        <DialogContent className="max-w-sm">
+        <DialogContent className="max-w-sm max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{title}</DialogTitle>
           </DialogHeader>
@@ -73,7 +113,7 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
 
             {needsMedia && (
               <div className="space-y-2">
-                <Label>{allowsMultiple ? "Media (in order)" : `Media (${pickerKind})`}</Label>
+                <Label>{allowsMultiple ? "Media (in order)" : `Start ${pickerKind}`}</Label>
                 <Button type="button" variant="outline" onClick={() => setPickerOpen(true)} className="w-full justify-start">
                   <Library className="h-4 w-4" />
                   {assets.length === 0
@@ -106,7 +146,7 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
               </div>
             )}
 
-            {mode !== "analyze-image" && (
+            {showAspectAndQuality && (
               <>
                 <div className="space-y-2">
                   <Label>Aspect ratio</Label>
@@ -133,6 +173,73 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
                 </div>
               </>
             )}
+
+            {isKlingV3 && (
+              <>
+                <div className="space-y-2">
+                  <Label>Duration (seconds)</Label>
+                  <Select value={duration} onValueChange={setDuration}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      {KLING_DURATIONS.map((d) => (
+                        <SelectItem key={d} value={d}>{d} sec</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>Generate audio</Label>
+                    <p className="text-xs text-muted-foreground">Native speech / sound for the video.</p>
+                  </div>
+                  <Switch checked={generateAudio} onCheckedChange={setGenerateAudio} />
+                </div>
+
+                <div className="space-y-2">
+                  <Label>End image (optional)</Label>
+                  {endImage ? (
+                    <div className="flex items-center gap-2 text-xs bg-background border rounded-lg p-2">
+                      <ImageIcon className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <span className="truncate flex-1">{endImage.title}</span>
+                      <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => setEndImage(null)}>
+                        <X className="h-3 w-3" />
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => setEndPickerOpen(true)}>Change</Button>
+                    </div>
+                  ) : (
+                    <Button type="button" variant="outline" onClick={() => setEndPickerOpen(true)} className="w-full justify-start">
+                      <Library className="h-4 w-4" />
+                      Choose end image from gallery
+                    </Button>
+                  )}
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Negative prompt</Label>
+                  <Textarea
+                    value={negativePrompt}
+                    onChange={(e) => setNegativePrompt(e.target.value)}
+                    rows={2}
+                    placeholder={DEFAULT_NEGATIVE}
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>CFG scale</Label>
+                    <span className="text-xs text-muted-foreground tabular-nums">{cfgScale.toFixed(2)}</span>
+                  </div>
+                  <Slider
+                    min={0} max={1} step={0.05}
+                    value={[cfgScale]}
+                    onValueChange={(v) => setCfgScale(v[0] ?? 0.5)}
+                  />
+                  <p className="text-xs text-muted-foreground">How strictly the model follows your prompt (default 0.5).</p>
+                </div>
+              </>
+            )}
+
             {error && <p className="text-sm text-destructive">{error}</p>}
           </div>
           <DialogFooter className="gap-2">
@@ -152,6 +259,18 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
           initialSelectedIds={assets.map((a) => a.id)}
           onClose={() => setPickerOpen(false)}
           onConfirm={(picked) => { setAssets(picked); setPickerOpen(false); }}
+        />
+      )}
+
+      {isKlingV3 && (
+        <MediaGalleryPicker
+          open={endPickerOpen}
+          userId={userId}
+          kind="image"
+          mode="single"
+          initialSelectedIds={endImage ? [endImage.id] : []}
+          onClose={() => setEndPickerOpen(false)}
+          onConfirm={(picked) => { setEndImage(picked[0] ?? null); setEndPickerOpen(false); }}
         />
       )}
     </>
