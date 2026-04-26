@@ -289,7 +289,9 @@ export function speak(text: string) {
     return;
   }
 
-  // Idle path — speak immediately to preserve user-gesture context.
+  // Idle path — ensure engine is primed (re-arms after dictation cleared
+  // the gesture activation), then speak.
+  if (!primed) primeSpeech();
   speakChunks(chunkText(cleaned));
 }
 
