@@ -11,16 +11,13 @@ Deno.serve(async (req) => {
     if (!key) throw new Error("OPENAI_API_KEY not configured");
 
     const inForm = await req.formData();
-    const audio = inForm.get("audio");
-    if (!(audio instanceof File) && !(audio instanceof Blob)) {
+    const audio = inForm.get("audio") as File | null;
+    if (!audio || typeof (audio as any).arrayBuffer !== "function") {
       return new Response(JSON.stringify({ error: "Missing 'audio' file" }), {
         status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
-
-    const file = audio instanceof File
-      ? audio
-      : new File([audio], "recording.webm", { type: (audio as Blob).type || "audio/webm" });
+    const file = audio;
 
     const out = new FormData();
     out.append("file", file, file.name || "recording.webm");
