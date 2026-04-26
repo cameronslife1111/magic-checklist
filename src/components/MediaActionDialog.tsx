@@ -379,6 +379,77 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
               </>
             )}
 
+            {isHeyGen && (
+              <>
+                <div className="space-y-2">
+                  <Label>Audio clip (lip-sync source)</Label>
+                  {audioAsset ? (
+                    <div className="flex items-center gap-2 text-xs bg-background border rounded-lg p-2">
+                      <Mic2 className="h-4 w-4 text-muted-foreground shrink-0" />
+                      <span className="truncate flex-1">{audioAsset.title}</span>
+                      <Button type="button" variant="ghost" size="icon" className="h-6 w-6" onClick={() => setAudioAsset(null)}>
+                        <X className="h-3 w-3" />
+                      </Button>
+                      <Button type="button" variant="outline" size="sm" onClick={() => setAudioPickerOpen(true)}>Change</Button>
+                    </div>
+                  ) : (
+                    <Button type="button" variant="outline" onClick={() => setAudioPickerOpen(true)} className="w-full justify-start">
+                      <Library className="h-4 w-4" />
+                      Choose audio from gallery
+                    </Button>
+                  )}
+                  <p className="text-xs text-muted-foreground">
+                    The avatar will lip-sync to this audio. Billed per second of output video.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Talking style</Label>
+                  <Select value={talkingStyle} onValueChange={(v) => setTalkingStyle(v as "stable" | "expressive")}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="stable">Stable — minimal movement</SelectItem>
+                      <SelectItem value="expressive">Expressive — more animation</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Resolution</Label>
+                  <Select value={resolution} onValueChange={(v) => setResolution(v as typeof resolution)}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="360p">360p</SelectItem>
+                      <SelectItem value="480p">480p</SelectItem>
+                      <SelectItem value="540p">540p</SelectItem>
+                      <SelectItem value="720p">720p</SelectItem>
+                      <SelectItem value="1080p">1080p</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Aspect ratio</Label>
+                  <Select value={aspect} onValueChange={(v) => setAspect(v as GenOptions["aspectRatio"])}>
+                    <SelectTrigger><SelectValue /></SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="16:9">Landscape (16:9)</SelectItem>
+                      <SelectItem value="9:16">Portrait (9:16)</SelectItem>
+                      <SelectItem value="1:1">Square (1:1)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label>Captions</Label>
+                    <p className="text-xs text-muted-foreground">Burn captions into the video.</p>
+                  </div>
+                  <Switch checked={caption} onCheckedChange={setCaption} />
+                </div>
+              </>
+            )}
+
             {error && <p className="text-sm text-destructive">{error}</p>}
           </div>
           <DialogFooter className="gap-2">
