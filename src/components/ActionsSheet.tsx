@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import {
   Plus, FilePlus, FilePlus2, Copy, CopyPlus, Pencil, Scissors, Type, Image as ImageIcon, Images, Wand2,
   Film, Video, Link2, Eye, Search, Palette, LogOut, Moon, Sun, ArrowUpDown,
-  ClipboardCopy, ClipboardList, Send, Volume2, VolumeX, ListChecks, Trash2, Library,
+  ClipboardCopy, ClipboardList, Send, Volume2, VolumeX, ListChecks, Trash2, Library, Square,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -12,7 +12,7 @@ export type ActionKey =
   | "add" | "duplicate-item" | "new" | "duplicate" | "delete-checklist" | "edit-title" | "split"
   | "text-text" | "text-image" | "image-image" | "remix" | "image-video" | "video-video"
   | "insert-link" | "analyze-image" | "web-search" | "bg" | "rearrange"
-  | "copy-sentence" | "copy-checklist" | "send-to" | "send-to-blank" | "media-gallery" | "theme" | "sign-out";
+  | "copy-sentence" | "copy-checklist" | "send-to" | "send-to-blank" | "uncheck-all" | "media-gallery" | "theme" | "sign-out";
 
 const AI_KEYS = new Set<ActionKey>([
   "text-text", "text-image", "image-image", "remix",
@@ -31,6 +31,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "insert-link",      label: "Insert checklist link",    icon: Link2 },
   { key: "add",              label: "Add new checkbox",         icon: Plus },
   { key: "duplicate-item",   label: "Duplicate checkbox",       icon: CopyPlus },
+  { key: "uncheck-all",      label: "Uncheck all checkboxes",   icon: Square },
   { key: "media-gallery",    label: "Media Gallery",            icon: Library },
   { key: "bg",               label: "Change checklist background", icon: Palette },
 

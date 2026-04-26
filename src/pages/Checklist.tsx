@@ -390,6 +390,30 @@ const ChecklistPage = () => {
         await duplicateCurrentItem();
         break;
       }
+      case "uncheck-all": {
+        setActionsOpen(false);
+        const checkedIds = items.filter((i) => i.checked).map((i) => i.id);
+        if (checkedIds.length === 0) {
+          // Nothing to uncheck — still focus + speak the first item for consistency.
+          primeSpeech();
+          focusAndSpeakHighestUnchecked(items);
+          break;
+        }
+        const prev = items;
+        const next = items.map((i) => (i.checked ? { ...i, checked: false } : i));
+        setItems(next);
+        primeSpeech();
+        focusAndSpeakHighestUnchecked(next);
+        const { error } = await supabase
+          .from("checklist_items")
+          .update({ checked: false })
+          .in("id", checkedIds);
+        if (error) {
+          toast.error("Could not uncheck items. Try again.");
+          setItems(prev);
+        }
+        break;
+      }
       case "new":
         setDialog({ kind: "new" });
         break;
