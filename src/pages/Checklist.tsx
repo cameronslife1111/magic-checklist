@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { cn } from "@/lib/utils";
 import { useAuth } from "@/hooks/useAuth";
 import { Checklist, ChecklistItem } from "@/lib/types";
 import { ChecklistSearch } from "@/components/ChecklistSearch";
@@ -20,6 +21,11 @@ import { MediaActionDialog, GenOptions } from "@/components/MediaActionDialog";
 import { MediaViewer } from "@/components/MediaViewer";
 import { ScheduleActionDialog, SchedulePick } from "@/components/ScheduleActionDialog";
 import { AttachedContext } from "@/components/ContextAttacher";
+import { MagicCommandDialog } from "@/components/MagicCommandDialog";
+import { MagicGlowOverlay } from "@/components/MagicGlowOverlay";
+import { buildAppSnapshot, type Plan } from "@/lib/magicSteps";
+import { runPlan, type ExecutorCtx } from "@/lib/magicExecutor";
+import type { MediaAsset } from "@/lib/mediaAssets";
 import { toast } from "sonner";
 import { primeSpeech, speak, stopSpeech, isMuted, setMuted } from "@/lib/speech";
 import { wasPickJustNow } from "@/lib/clickGuard";
@@ -71,6 +77,21 @@ const ChecklistPage = () => {
     if (typeof window === "undefined") return "light";
     return (localStorage.getItem("mc-theme") as "light" | "dark") ?? "light";
   });
+
+  // Magic Steps voice assistant state
+  const [magicOpen, setMagicOpen] = useState(false);
+  const [magicRecording, setMagicRecording] = useState(false);
+  const [magicTranscribing, setMagicTranscribing] = useState(false);
+  const [magicSending, setMagicSending] = useState(false);
+  const [magicExecuting, setMagicExecuting] = useState(false);
+  const [magicTranscript, setMagicTranscript] = useState("");
+  const [magicContext, setMagicContext] = useState<AttachedContext>({ checklists: [], media: [] });
+  const [magicClarify, setMagicClarify] = useState<string | null>(null);
+  const magicRecorderRef = useRef<MediaRecorder | null>(null);
+  const magicChunksRef = useRef<Blob[]>([]);
+  const magicStreamRef = useRef<MediaStream | null>(null);
+  const homeLongPressTimerRef = useRef<number | null>(null);
+  const homeLongPressFiredRef = useRef(false);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
@@ -385,6 +406,230 @@ const ChecklistPage = () => {
     const created = await insertItemBefore(sourceId, { text: "" });
     if (created) setFocusItemId(created.id);
     return created;
+  };
+
+  // ---------- Magic Steps voice assistant ----------
+
+  const startMagicRecording = async () => {
+    try {
+      // Stop any TTS currently speaking so it doesn't bleed into the mic.
+      stopSpeech();
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      magicStreamRef.current = stream;
+      const mimeCandidates = [
+        "audio/webm;codecs=opus",
+        "audio/webm",
+        "audio/mp4",
+        "",
+      ];
+      let recorder: MediaRecorder | null = null;
+      for (const m of mimeCandidates) {
+        try { recorder = new MediaRecorder(stream, m ? { mimeType: m } : undefined); break; } catch {}
+      }
+      if (!recorder) throw new Error("MediaRecorder not supported");
+      magicChunksRef.current = [];
+      recorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) magicChunksRef.current.push(e.data); };
+      recorder.start(250);
+      magicRecorderRef.current = recorder;
+      setMagicTranscript("");
+      setMagicClarify(null);
+      setMagicContext({ checklists: [], media: [] });
+      setMagicRecording(true);
+      setMagicOpen(true);
+    } catch (e) {
+      console.error(e);
+      toast.error("Microphone permission needed for voice commands.");
+    }
+  };
+
+  const stopMagicRecording = async () => {
+    const recorder = magicRecorderRef.current;
+    if (!recorder) { setMagicRecording(false); return; }
+    setMagicRecording(false);
+    setMagicTranscribing(true);
+    const stopped: Promise<void> = new Promise((resolve) => {
+      recorder.addEventListener("stop", () => resolve(), { once: true });
+    });
+    try { recorder.stop(); } catch {}
+    await stopped;
+    // Release the mic so the browser indicator goes away.
+    magicStreamRef.current?.getTracks().forEach((t) => t.stop());
+    magicStreamRef.current = null;
+    magicRecorderRef.current = null;
+
+    const blob = new Blob(magicChunksRef.current, { type: magicChunksRef.current[0]?.type || "audio/webm" });
+    magicChunksRef.current = [];
+    if (blob.size === 0) {
+      setMagicTranscribing(false);
+      return; // empty recording — leave dialog open so user can type
+    }
+
+    try {
+      const form = new FormData();
+      const ext = blob.type.includes("mp4") ? "mp4" : "webm";
+      form.append("audio", blob, `recording.${ext}`);
+      const url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/transcribe-voice`;
+      const res = await fetch(url, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}` },
+        body: form,
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data?.error || "Transcription failed");
+      setMagicTranscript((data.text ?? "").trim());
+    } catch (e) {
+      console.error(e);
+      toast.error("Could not transcribe. You can type it instead.");
+    } finally {
+      setMagicTranscribing(false);
+    }
+  };
+
+  const cancelMagic = () => {
+    // Make sure the recorder is fully stopped & mic released.
+    try { magicRecorderRef.current?.stop(); } catch {}
+    magicStreamRef.current?.getTracks().forEach((t) => t.stop());
+    magicStreamRef.current = null;
+    magicRecorderRef.current = null;
+    magicChunksRef.current = [];
+    setMagicRecording(false);
+    setMagicTranscribing(false);
+    setMagicSending(false);
+    setMagicOpen(false);
+    setMagicTranscript("");
+    setMagicClarify(null);
+    setMagicContext({ checklists: [], media: [] });
+  };
+
+  const setItemsCheckedById = async (ids: string[], checked: boolean) => {
+    if (!ids.length) return;
+    const prev = items;
+    const next = items.map((i) => (ids.includes(i.id) ? { ...i, checked } : i));
+    setItems(next);
+    primeSpeech();
+    focusAndSpeakHighestUnchecked(next);
+    const { error } = await supabase
+      .from("checklist_items").update({ checked }).in("id", ids);
+    if (error) {
+      setItems(prev);
+      toast.error("Could not update items. Try again.");
+    }
+  };
+
+  const setBackgroundColor = async (color: string) => {
+    if (!checklist) return;
+    const { error } = await supabase.from("checklists").update({ background_color: color }).eq("id", checklist.id);
+    if (error) { toast.error("Could not save background. Try again."); return; }
+    setChecklist({ ...checklist, background_color: color });
+  };
+
+  const newChecklistFromMagic = async (title: string) => {
+    if (!user) return;
+    const { data, error } = await supabase
+      .from("checklists").insert({ user_id: user.id, title: title || "Untitled" }).select().single();
+    if (error || !data) { toast.error("Could not create checklist. Try again."); return; }
+    await openChecklist(data.id);
+  };
+
+  const sendMagicCommand = async () => {
+    if (!checklist || !user) return;
+    const text = magicTranscript.trim();
+    if (!text) return;
+    setMagicSending(true);
+    try {
+      const { data: allLists } = await supabase.from("checklists").select("id,title");
+      const snapshot = buildAppSnapshot({
+        checklist,
+        items,
+        allChecklists: (allLists ?? []) as { id: string; title: string }[],
+        theme,
+        muted,
+        route: "/",
+      });
+      const { data, error } = await supabase.functions.invoke("magic-steps-plan", {
+        body: {
+          transcript: text,
+          attachedContext: {
+            checklists: magicContext.checklists.map((c) => ({ id: c.id, title: c.title })),
+            media: magicContext.media.map((m) => ({ url: m.url, path: m.path, type: m.type, name: m.name })),
+          },
+          snapshot,
+        },
+      });
+      if (error) throw error;
+      const plan = data as Plan;
+      if (plan.clarifying_question && (!plan.steps || plan.steps.length === 0)) {
+        setMagicClarify(plan.clarifying_question);
+        setMagicSending(false);
+        return;
+      }
+
+      // Hand attached media to the executor so attachContextMedia steps can resolve paths.
+      const attachedMediaAssets: MediaAsset[] = magicContext.media.map((m) => ({
+        id: m.path,
+        user_id: user.id,
+        title: m.name,
+        kind: m.type,
+        url: m.url,
+        storage_path: m.path,
+        mime_type: null,
+        size_bytes: null,
+        duration_seconds: null,
+        width: null,
+        height: null,
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      } as unknown as MediaAsset));
+
+      const ctx: ExecutorCtx = {
+        pick: (k) => onPick(k),
+        setActionsOpen,
+        runMediaActionDirect: (action, sourceItem, opts) => runMediaAction(sourceItem, action, opts),
+        setItemsCheckedById,
+        addItem: async (text, afterId) => {
+          await insertItemAfter(afterId ?? highestUnchecked?.id ?? null, { text });
+        },
+        editItemText: async (id, text) => {
+          setItems((prev) => prev.map((i) => (i.id === id ? { ...i, text } : i)));
+          await supabase.from("checklist_items").update({ text }).eq("id", id);
+        },
+        splitCurrent,
+        splitByEmoji: splitCurrentByEmoji,
+        combineChecked: combineCheckedItems,
+        openChecklist,
+        newChecklist: newChecklistFromMagic,
+        duplicateChecklist: async (title) => duplicateCurrent(title ?? `${checklist.title} Copy`),
+        deleteCurrentChecklist,
+        navigate: (to) => navigate(to),
+        setTheme: (t) => setTheme(t),
+        setMutedState: (m) => { setMuted(m); setMutedState(m); },
+        setBackgroundColor,
+        setReorderMode,
+        copySentence: async () => { await onPick("copy-sentence"); },
+        copyChecklist: async () => { await onPick("copy-checklist"); },
+        speak: (t) => speak(t),
+        getHighestUnchecked: () => highestUnchecked,
+        getAttachedMediaByPaths: (paths) => attachedMediaAssets.filter((a) => paths.includes(a.storage_path)),
+      };
+
+      // Close the dialog and start the visible execution.
+      setMagicOpen(false);
+      setMagicSending(false);
+      setMagicExecuting(true);
+      const result = await runPlan(plan, ctx);
+      setMagicExecuting(false);
+      if (result.ok === true) {
+        toast.success(plan.summary || "Magic Steps completed.");
+      } else if (result.ok === false) {
+        toast.error(`Magic Steps stopped at step ${result.failedAtIndex + 1}: ${result.error}`);
+      }
+    } catch (e: any) {
+      console.error(e);
+      const msg = e?.context?.error || e?.message || "Could not run command.";
+      toast.error(msg);
+      setMagicSending(false);
+      setMagicExecuting(false);
+    }
   };
 
   // ---------- Action Handlers ----------
@@ -1114,8 +1359,26 @@ const ChecklistPage = () => {
                 Actions
               </Button>
               <Button
-                aria-label="Open top checklist"
-                onClick={async () => {
+                aria-label="Open top checklist (long-press for Magic Steps voice)"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  homeLongPressFiredRef.current = false;
+                  if (homeLongPressTimerRef.current) window.clearTimeout(homeLongPressTimerRef.current);
+                  homeLongPressTimerRef.current = window.setTimeout(() => {
+                    homeLongPressFiredRef.current = true;
+                    startMagicRecording();
+                  }, 500);
+                }}
+                onPointerUp={async () => {
+                  if (homeLongPressTimerRef.current) {
+                    window.clearTimeout(homeLongPressTimerRef.current);
+                    homeLongPressTimerRef.current = null;
+                  }
+                  if (homeLongPressFiredRef.current) {
+                    if (magicRecording) await stopMagicRecording();
+                    return;
+                  }
+                  // Short tap: original home behavior.
                   const { data } = await supabase.from("checklists").select("id,title");
                   const sorted = sortChecklistsByTitle(data ?? []);
                   const top = sorted[0];
@@ -1128,7 +1391,23 @@ const ChecklistPage = () => {
                     await openChecklist(highestUnchecked.linked_checklist_id);
                   }
                 }}
-                className="w-16 h-14 rounded-2xl text-2xl leading-none shadow-floating select-none"
+                onPointerLeave={() => {
+                  if (homeLongPressTimerRef.current) {
+                    window.clearTimeout(homeLongPressTimerRef.current);
+                    homeLongPressTimerRef.current = null;
+                  }
+                }}
+                onPointerCancel={() => {
+                  if (homeLongPressTimerRef.current) {
+                    window.clearTimeout(homeLongPressTimerRef.current);
+                    homeLongPressTimerRef.current = null;
+                  }
+                }}
+                onContextMenu={(e) => e.preventDefault()}
+                className={cn(
+                  "w-16 h-14 rounded-2xl text-2xl leading-none shadow-floating select-none touch-none",
+                  magicRecording && "bg-red-500 hover:bg-red-500 animate-pulse",
+                )}
               >
                 🏠
               </Button>
@@ -1338,6 +1617,26 @@ const ChecklistPage = () => {
         context={pendingContext}
         onContextChange={setPendingContext}
       />
+
+      <MagicCommandDialog
+        open={magicOpen}
+        recording={magicRecording}
+        transcribing={magicTranscribing}
+        sending={magicSending}
+        transcript={magicTranscript}
+        onTranscriptChange={setMagicTranscript}
+        attachedContext={magicContext}
+        onAttachedContextChange={setMagicContext}
+        userId={user?.id ?? ""}
+        excludeChecklistId={checklist?.id}
+        clarifyingQuestion={magicClarify}
+        onStopRecording={stopMagicRecording}
+        onCancel={cancelMagic}
+        onSend={sendMagicCommand}
+      />
+
+      <MagicGlowOverlay active={magicExecuting} variant="executing" />
+      <MagicGlowOverlay active={magicRecording && !magicOpen} variant="recording" />
     </div>
   );
 };
