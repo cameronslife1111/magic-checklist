@@ -10,6 +10,7 @@ const VALID_ACTIONS = new Set([
   "text-text", "text-image", "image-image", "remix",
   "image-video", "video-video", "audio-image-video",
   "analyze-image", "web-search",
+  "action-sequence",
 ]);
 const VALID_RECURRENCE = new Set(["hourly", "daily", "weekly", "monthly", "yearly"]);
 const VALID_MEDIA_TYPES = new Set(["image", "video", "audio"]);
