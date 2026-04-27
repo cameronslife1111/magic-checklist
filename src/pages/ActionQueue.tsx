@@ -195,6 +195,51 @@ const AttachmentsBlock = ({
   );
 };
 
+// Renders a list of jobs with sequence children visually grouped under their parent.
+// `jobs` are the rows visible in the current tab; `allJobs` is the full job list
+// so we can find children of a parent that lives in this tab even if the children
+// happen to belong to another status (e.g. a still-running parent with completed children).
+const GroupedJobList = ({
+  jobs, allJobs, renderRow,
+}: {
+  jobs: Job[];
+  allJobs: Job[];
+  renderRow: (j: Job) => React.ReactNode;
+}) => {
+  const visibleIds = new Set(jobs.map((j) => j.id));
+  // Hide child jobs whose parent is also visible in this tab — they'll render under the parent.
+  const topLevel = jobs.filter((j) => !(j.parent_job_id && visibleIds.has(j.parent_job_id)));
+
+  return (
+    <ul className="flex flex-col gap-2 mt-3">
+      {topLevel.map((j) => {
+        const children = j.action_type === "action-sequence"
+          ? allJobs
+              .filter((c) => c.parent_job_id === j.id)
+              .sort((a, b) => (a.sequence_step ?? 0) - (b.sequence_step ?? 0) || a.created_at.localeCompare(b.created_at))
+          : [];
+        return (
+          <li key={j.id} className="flex flex-col gap-2">
+            {renderRow(j)}
+            {children.length > 0 && (
+              <ul className="flex flex-col gap-2 ml-4 pl-3 border-l-2 border-blue-500/30">
+                {children.map((c) => (
+                  <div key={c.id} className="relative">
+                    <span className="absolute -left-3 top-3 text-[10px] font-semibold text-blue-500/70">
+                      {typeof c.sequence_step === "number" ? `#${c.sequence_step + 1}` : ""}
+                    </span>
+                    {renderRow(c)}
+                  </div>
+                ))}
+              </ul>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+};
+
 const ActionQueue = () => {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
