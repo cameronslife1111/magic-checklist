@@ -248,6 +248,7 @@ export function setMuted(v: boolean) {
   } else {
     // Allow re-priming after unmute.
     primed = false;
+    needsRearm = false;
   }
 }
 
