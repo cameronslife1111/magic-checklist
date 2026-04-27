@@ -595,6 +595,9 @@ const ChecklistPage = () => {
       case "queue":
         navigate("/queue");
         break;
+      case "run-sequence":
+        setSequenceOpen(true);
+        break;
       case "media-gallery":
         navigate("/media");
         break;
