@@ -501,9 +501,10 @@ function buildLinkedContextText(state: any): string {
 // One state-machine tick for an action-sequence parent. Idempotent and bounded.
 async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean; aborted?: string }> {
   const state = (parent.sequence_state && Object.keys(parent.sequence_state).length ? parent.sequence_state : null) ?? {
-    phase: "planning",
-    cursor: 0,
-    outputs: [] as any[],
+    phase: "planning_init",
+    cursor: 0,            // index into input_lines
+    pending_steps: [] as any[],   // queued sub-steps for the current line (for compound)
+    outputs: [] as any[],         // outputs[stepGlobalIdx] (one per dispatched step)
     steps_used: 0,
     images_used: 0,
     videos_used: 0,
@@ -516,6 +517,10 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
   const maxRuntimeMin = Number(payload.max_runtime_minutes ?? 30);
   const maxFailures = Number(payload.max_failures ?? 2);
   const outputChecklistId: string = payload.output_checklist_id ?? parent.checklist_id;
+
+  const persist = async () => {
+    await supabase.from("action_jobs").update({ sequence_state: state }).eq("id", parent.id);
+  };
 
   const abortSequence = async (reason: string) => {
     state.phase = "aborted";
@@ -536,7 +541,24 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     return { done: true, aborted: reason };
   };
 
-  // Runtime budget
+  const finishOk = async () => {
+    state.phase = "completed";
+    await supabase.from("action_jobs").update({
+      status: "completed",
+      sequence_state: state,
+      result: { steps: state.outputs.length, lines: (state.input_lines ?? []).length },
+      completed_at: new Date().toISOString(),
+    }).eq("id", parent.id);
+    const ok = state.outputs.filter((o: any) => o && !o.failed && !o.skipped && !o.no_action).length;
+    await appendItemToChecklist(supabase, {
+      user_id: parent.user_id,
+      checklist_id: outputChecklistId,
+      text: `✅ Sequence finished — ${ok} step(s) completed`,
+    });
+    return { done: true };
+  };
+
+  // Runtime/failure budgets (always enforced).
   const startedAt = state.started_at ? new Date(state.started_at).getTime() : Date.now();
   if (!state.started_at) state.started_at = new Date(startedAt).toISOString();
   if (Date.now() - startedAt > maxRuntimeMin * 60_000) {
@@ -546,77 +568,121 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     return abortSequence(`${state.failures} step(s) failed (limit ${maxFailures})`);
   }
 
-  // PLANNING
-  if (state.phase === "planning") {
-    // Build instructions = input checklist items text in order.
+  // ── PHASE: planning_init ────────────────────────────────────────────────
+  if (state.phase === "planning_init") {
     const { data: items } = await supabase
       .from("checklist_items")
-      .select("text, position")
+      .select("text, position, media_url, media_type")
       .eq("checklist_id", parent.checklist_id)
       .order("position", { ascending: true });
-    const instructions = ((items ?? []) as any[]).map((i) => i.text).filter((t) => typeof t === "string" && t.trim());
-    if (instructions.length === 0) return abortSequence("input checklist is empty");
+    const inputLines = ((items ?? []) as any[])
+      .map((i) => ({ text: (i.text ?? "").trim(), media_url: i.media_url ?? null, media_type: i.media_type ?? null }));
+    if (inputLines.length === 0) return abortSequence("input checklist is empty");
+    state.input_lines = inputLines.slice(0, 60);
 
-    // Build resolved text context from attached context checklists
-    const ctx = await resolveContext(supabase, payload);
+    state.linked_lists = await loadLinkedLists(supabase, parent.checklist_id);
 
-    // Build gallery_index from user's media_assets
     const { data: gallery } = await supabase
       .from("media_assets")
       .select("title, url, kind")
       .eq("user_id", parent.user_id)
       .order("created_at", { ascending: false })
       .limit(200);
-    const gallery_index = ((gallery ?? []) as any[]).map((g) => ({ name: g.title, url: g.url, type: g.kind }));
+    state.gallery = (gallery ?? []) as any[];
+
+    const ctx = payload?.context ?? {};
+    state.attached_media = Array.isArray(ctx.media)
+      ? ctx.media.filter((m: any) => m && typeof m.url === "string").slice(0, 30)
+      : [];
+
+    state.phase = "planning_step";
+    state.cursor = 0;
+    await persist();
+    // fall through
+  }
+
+  // ── PHASE: planning_step ────────────────────────────────────────────────
+  if (state.phase === "planning_step") {
+    if (state.cursor >= (state.input_lines ?? []).length || state.steps_used >= maxSteps) {
+      return finishOk();
+    }
+    const lineIdx: number = state.cursor;
+    const line = state.input_lines[lineIdx];
+    if (!line || !line.text) {
+      state.outputs.push({ no_action: true, line_idx: lineIdx, reason: "blank line" });
+      state.cursor += 1;
+      await persist();
+      return { done: false };
+    }
+    const { catalog, currentAttached } = buildCatalog(state, lineIdx);
+    const linkedText = buildLinkedContextText(state);
+    const upcoming = (state.input_lines ?? []).slice(lineIdx + 1, lineIdx + 4).map((l: any) => l.text).filter(Boolean);
+    const priorOutputsSummary = (state.outputs ?? []).map((o: any, i: number) => {
+      if (!o) return null;
+      if (o.no_action) return null;
+      if (o.skipped) return { step: i, kind: "skipped" };
+      if (o.failed) return { step: i, kind: "failed" };
+      const k = detectKind(o.media_type, o.media_url);
+      return { step: i, kind: k ?? (o.text ? "text" : "unknown"), name: o.name ?? `Step ${i + 1} output` };
+    }).filter(Boolean).slice(-12);
 
     const allowed = Array.isArray(payload.allowed_actions) && payload.allowed_actions.length
       ? payload.allowed_actions
       : ["text-text","text-image","image-image","remix","image-video","video-video","audio-image-video","analyze-image","web-search"];
 
-    let plan: any;
+    let decision: any;
     try {
-      plan = await callFn("plan-action-sequence", {
-        instructions,
-        context_text: ctx.textBlock,
-        gallery_index,
+      decision = await callFn("plan-action-sequence", {
+        current_line: line.text,
+        current_line_attached: currentAttached,
+        prior_outputs_summary: priorOutputsSummary,
+        upcoming_lines_preview: upcoming,
+        catalog,
+        linked_context_text: linkedText,
         allowed_actions: allowed,
-        max_steps: maxSteps,
         max_images_per_step: Number(payload.max_images_per_step ?? 2),
       });
     } catch (e) {
-      return abortSequence(`planner failed: ${(e as Error).message.slice(0, 200)}`);
-    }
-    if (!plan?.steps?.length) return abortSequence("planner produced no steps");
-
-    state.plan = plan;
-    state.gallery_index = gallery_index;
-    state.phase = "dispatching";
-    state.cursor = 0;
-    await supabase.from("action_jobs").update({ sequence_state: state }).eq("id", parent.id);
-    // Fall through to dispatch this tick.
-  }
-
-  // DISPATCHING
-  if (state.phase === "dispatching") {
-    if (state.cursor >= state.plan.steps.length || state.steps_used >= maxSteps) {
-      // Done.
-      state.phase = "completed";
-      await supabase.from("action_jobs").update({
-        status: "completed",
-        sequence_state: state,
-        result: { steps: state.outputs.length },
-        completed_at: new Date().toISOString(),
-      }).eq("id", parent.id);
+      state.outputs.push({ failed: true, line_idx: lineIdx, reason: `planner error: ${(e as Error).message.slice(0, 200)}` });
+      state.failures += 1;
+      state.cursor += 1;
       await appendItemToChecklist(supabase, {
         user_id: parent.user_id,
         checklist_id: outputChecklistId,
-        text: `✅ Sequence finished — ${state.outputs.filter((o: any) => o && !o.failed).length} step(s) completed`,
+        text: `⚠️ Step ${lineIdx + 1}: planner failed — ${(e as Error).message.slice(0, 200)}`,
       });
-      return { done: true };
+      await persist();
+      return { done: false };
     }
 
-    const step = state.plan.steps[state.cursor];
-    // Pre-budget check by predicted output kind
+    if (!decision || decision.kind === "no_action") {
+      state.outputs.push({ no_action: true, line_idx: lineIdx, reason: decision?.reason ?? "" });
+      state.cursor += 1;
+      await persist();
+      return { done: false };
+    }
+    const steps: any[] = decision.kind === "compound" ? (decision.steps ?? []) : [decision.step];
+    state.pending_steps = steps.filter(Boolean).map((s: any) => ({ ...s, line_idx: lineIdx }));
+    state.current_step_in_line = 0;
+    state.phase = "dispatching";
+    await persist();
+    // fall through
+  }
+
+  // ── PHASE: dispatching ──────────────────────────────────────────────────
+  if (state.phase === "dispatching") {
+    if (!state.pending_steps || state.pending_steps.length === 0) {
+      state.cursor += 1;
+      state.phase = "planning_step";
+      await persist();
+      return { done: false };
+    }
+    if (state.steps_used >= maxSteps) {
+      return abortSequence(`step budget reached (${maxSteps})`);
+    }
+    const step = state.pending_steps[0];
+    const lineIdx: number = step.line_idx ?? state.cursor;
+
     const willMakeImage = step.action_type === "text-image" || step.action_type === "image-image" || step.action_type === "remix";
     const willMakeVideo = step.action_type === "image-video" || step.action_type === "video-video" || step.action_type === "audio-image-video";
     if (willMakeImage && state.images_used >= maxImages) {
@@ -626,25 +692,36 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
       return abortSequence(`video budget reached (${maxVideos})`);
     }
 
-    // Resolve refs into URLs
+    const { catalog } = buildCatalog(state, lineIdx);
     const refs = step.input_refs ?? {};
-    const imageUrls: string[] = (refs.images ?? [])
-      .map((r: string) => resolveRef(r, "image", state))
-      .filter((u: any) => typeof u === "string");
-    const videoUrls: string[] = (refs.videos ?? [])
-      .map((r: string) => resolveRef(r, "video", state))
-      .filter((u: any) => typeof u === "string");
-    const audioUrls: string[] = (refs.audios ?? [])
-      .map((r: string) => resolveRef(r, "audio", state))
-      .filter((u: any) => typeof u === "string");
 
-    // Build child payload per action_type. Mirror what the dialogs send.
+    const resolveList = (arr: any[], kind: "image" | "video" | "audio") => {
+      const matched: { url: string; name: string }[] = [];
+      const missed: string[] = [];
+      for (const r of arr) {
+        if (typeof r !== "string") continue;
+        const m = resolveRef(r, kind, catalog);
+        if (m) matched.push({ url: m.url, name: m.name });
+        else missed.push(r);
+      }
+      return { matched, missed };
+    };
+    const imgRes = resolveList(refs.images ?? [], "image");
+    const vidRes = resolveList(refs.videos ?? [], "video");
+    const audRes = resolveList(refs.audios ?? [], "audio");
+
+    const actionType: string = step.action_type;
     const childPayload: any = { prompt: step.prompt };
     if (step.aspect_ratio) childPayload.aspectRatio = step.aspect_ratio;
     if (step.quality) childPayload.quality = step.quality;
     let valid = true;
     let invalidReason = "";
-    switch (step.action_type) {
+    let missedRefs: string[] = [];
+    const imageUrls = imgRes.matched.map((m) => m.url);
+    const videoUrls = vidRes.matched.map((m) => m.url);
+    const audioUrls = audRes.matched.map((m) => m.url);
+
+    switch (actionType) {
       case "text-text":
       case "web-search":
         break;
@@ -652,93 +729,99 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
         if (imageUrls.length) childPayload.refImageUrls = imageUrls.slice(0, 16);
         break;
       case "image-image":
-        if (imageUrls.length === 0) { valid = false; invalidReason = "image-image needs at least 1 image ref"; }
+        if (imageUrls.length === 0) { valid = false; invalidReason = "needs an image reference"; missedRefs = imgRes.missed; }
         else childPayload.refImageUrls = imageUrls.slice(0, 16);
         break;
       case "remix":
-        if (imageUrls.length < 1) { valid = false; invalidReason = "remix needs at least 1 image ref"; }
+        if (imageUrls.length < 1) { valid = false; invalidReason = "needs at least one image to remix"; missedRefs = imgRes.missed; }
         else childPayload.refImageUrls = imageUrls.slice(0, 16);
         break;
       case "image-video":
-        if (imageUrls.length === 0) { valid = false; invalidReason = "image-video needs 1 image ref"; }
+        if (imageUrls.length === 0) { valid = false; invalidReason = "needs an image to animate"; missedRefs = imgRes.missed; }
         else childPayload.sourceUrl = imageUrls[0];
         break;
       case "video-video":
-        if (videoUrls.length === 0) { valid = false; invalidReason = "video-video needs 1 video ref"; }
+        if (videoUrls.length === 0) { valid = false; invalidReason = "needs a video to edit"; missedRefs = vidRes.missed; }
         else childPayload.sourceUrl = videoUrls[0];
         break;
       case "audio-image-video":
-        if (imageUrls.length === 0 || audioUrls.length === 0) { valid = false; invalidReason = "audio-image-video needs 1 image and 1 audio ref"; }
-        else { childPayload.imageUrl = imageUrls[0]; childPayload.audioUrl = audioUrls[0]; }
+        if (imageUrls.length === 0 || audioUrls.length === 0) {
+          valid = false;
+          invalidReason = "needs both an image and an audio file";
+          missedRefs = [...imgRes.missed, ...audRes.missed];
+        } else { childPayload.imageUrl = imageUrls[0]; childPayload.audioUrl = audioUrls[0]; }
         break;
       case "analyze-image":
-        if (imageUrls.length === 0) { valid = false; invalidReason = "analyze-image needs 1 image ref"; }
+        if (imageUrls.length === 0) { valid = false; invalidReason = "needs an image to analyze"; missedRefs = imgRes.missed; }
         else childPayload.imageUrl = imageUrls[0];
         break;
       default:
-        valid = false; invalidReason = `unknown action ${step.action_type}`;
+        valid = false; invalidReason = `unknown action ${actionType}`;
     }
 
     if (!valid) {
-      // Skip this step, record gap on the output checklist, advance cursor.
+      const wanted = missedRefs[0] ?? "(no name given)";
+      const closest = topNCatalog(wanted, catalog, 3).map((c) => `"${c.name}"`).join(", ");
+      const hint = closest ? ` Closest in your library: ${closest}.` : "";
       await appendItemToChecklist(supabase, {
         user_id: parent.user_id,
         checklist_id: outputChecklistId,
-        text: `⚠️ Skipped step ${state.cursor + 1} (${step.action_type}): ${invalidReason}`,
+        text: `⚠️ Line ${lineIdx + 1}: ${invalidReason}. Asked for "${wanted}".${hint} Try renaming the file or attaching it to this line.`,
       });
-      state.outputs[state.cursor] = { skipped: true, reason: invalidReason };
-      state.cursor += 1;
+      state.outputs.push({ skipped: true, line_idx: lineIdx, reason: invalidReason, wanted });
+      state.pending_steps.shift();
       state.steps_used += 1;
-      state.failures += 1;
-      await supabase.from("action_jobs").update({ sequence_state: state }).eq("id", parent.id);
-      // Loop next step on the next tick (not this one — keep ticks short).
+      await persist();
       return { done: false };
     }
 
-    // Insert the child job. Output goes to the OUTPUT checklist (not source) — appended at bottom.
     const count = Math.max(1, Number(step.count ?? 1));
     const insertRows: any[] = [];
+    const stepGlobalIdx = state.outputs.length;
     for (let i = 0; i < count; i++) {
       insertRows.push({
         user_id: parent.user_id,
         checklist_id: outputChecklistId,
         source_item_id: null,
-        action_type: step.action_type,
+        action_type: actionType,
         status: "pending",
         payload: childPayload,
         prompt_preview: String(step.prompt).slice(0, 500),
         parent_job_id: parent.id,
-        sequence_step: state.cursor,
+        sequence_step: stepGlobalIdx,
       });
     }
     const { data: inserted, error: insErr } = await supabase
       .from("action_jobs").insert(insertRows).select("id");
     if (insErr) {
-      state.failures += 1;
-      await supabase.from("action_jobs").update({ sequence_state: state }).eq("id", parent.id);
       await appendItemToChecklist(supabase, {
         user_id: parent.user_id,
         checklist_id: outputChecklistId,
-        text: `⚠️ Could not queue step ${state.cursor + 1}: ${insErr.message}`,
+        text: `⚠️ Could not queue line ${lineIdx + 1}: ${insErr.message}`,
       });
-      state.outputs[state.cursor] = { failed: true, reason: insErr.message };
-      state.cursor += 1;
+      state.outputs.push({ failed: true, line_idx: lineIdx, reason: insErr.message });
+      state.failures += 1;
+      state.pending_steps.shift();
       state.steps_used += 1;
-      await supabase.from("action_jobs").update({ sequence_state: state }).eq("id", parent.id);
+      await persist();
       return { done: false };
     }
     state.phase = "awaiting_children";
     state.current_child_ids = (inserted ?? []).map((r: any) => r.id);
-    await supabase.from("action_jobs").update({ sequence_state: state }).eq("id", parent.id);
+    state.current_step_global_idx = stepGlobalIdx;
+    state.current_step_action = actionType;
+    state.current_step_note = step.note ?? null;
+    state.current_step_line_idx = lineIdx;
+    await persist();
     return { done: false };
   }
 
-  // AWAITING_CHILDREN
+  // ── PHASE: awaiting_children ────────────────────────────────────────────
   if (state.phase === "awaiting_children") {
     const childIds: string[] = state.current_child_ids ?? [];
     if (childIds.length === 0) {
       state.phase = "dispatching";
-      await supabase.from("action_jobs").update({ sequence_state: state }).eq("id", parent.id);
+      await persist();
       return { done: false };
     }
     const { data: children } = await supabase
@@ -750,37 +833,52 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
       c.status === "completed" || c.status === "failed" || c.status === "cancelled");
     if (!allTerminal) return { done: false };
 
-    // Gather outputs for ref resolution by later steps. Use the FIRST completed child as the canonical output.
+    const stepGlobalIdx: number = state.current_step_global_idx ?? state.outputs.length;
+    const lineIdx: number = state.current_step_line_idx ?? state.cursor;
     const completed = rows.find((c) => c.status === "completed");
-    const stepIdx = state.cursor;
+    const noteName = state.current_step_note ?? null;
+
     if (completed) {
       const result = completed.result ?? {};
-      state.outputs[stepIdx] = {
-        media_url: result.media_url ?? null,
-        media_type: result.media_url ? (result.media_url.match(/\.(mp4|webm|mov)/i) ? "video" : "image") : null,
+      const url = result.media_url ?? null;
+      const k = detectKind(null, url);
+      state.outputs[stepGlobalIdx] = {
+        line_idx: lineIdx,
+        media_url: url,
+        media_type: k,
         text: result.text ?? null,
+        name: noteName ?? (k ? `Step ${stepGlobalIdx + 1} ${k}` : `Step ${stepGlobalIdx + 1} output`),
       };
     } else {
       const failed = rows.find((c) => c.status === "failed");
-      state.outputs[stepIdx] = { failed: true, reason: failed?.error_friendly ?? failed?.error_raw ?? "step failed" };
+      state.outputs[stepGlobalIdx] = {
+        line_idx: lineIdx,
+        failed: true,
+        reason: failed?.error_friendly ?? failed?.error_raw ?? "step failed",
+      };
       state.failures += 1;
     }
 
-    // Update budget tallies based on what was generated
     for (const c of rows) {
       if (c.status !== "completed") continue;
       const url = (c.result ?? {}).media_url;
       if (typeof url === "string") {
-        if (/\.(mp4|webm|mov)/i.test(url)) state.videos_used += 1;
+        if (/\.(mp4|webm|mov|m4v)/i.test(url)) state.videos_used += 1;
         else state.images_used += 1;
       }
     }
 
     state.steps_used += 1;
-    state.cursor += 1;
     state.current_child_ids = [];
+    state.current_step_global_idx = null;
+    state.current_step_line_idx = null;
+    state.current_step_action = null;
+    state.current_step_note = null;
+    if (state.pending_steps && state.pending_steps.length > 0) {
+      state.pending_steps.shift();
+    }
     state.phase = "dispatching";
-    await supabase.from("action_jobs").update({ sequence_state: state }).eq("id", parent.id);
+    await persist();
     return { done: false };
   }
 
