@@ -56,6 +56,7 @@ export const ScheduleActionDialog = ({ open, actionLabel, onClose, onPick, userI
           <ContextAttacher
             userId={userId}
             excludeChecklistId={excludeChecklistId}
+            currentChecklist={currentChecklist}
             value={context}
             onChange={onContextChange}
             onUploadingChange={setUploading}
