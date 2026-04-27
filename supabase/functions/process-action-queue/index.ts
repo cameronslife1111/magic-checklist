@@ -913,42 +913,45 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<Job
       return { kind: "result", result: { text: out.text } };
     }
     case "text-image": {
+      // ASYNC: submit to Fal and hand off. The poll loop completes the job on
+      // a later tick, so the worker never waits past the 150s edge-fn limit.
       const prompt = buildPrompt(p.prompt, ctx, false);
-      // Pass any context image URLs straight through (no fetch/base64/re-upload).
       const out = await callFn("lovable-image", {
+        mode: "submit",
         prompt, aspectRatio: p.aspectRatio, quality: p.quality,
         refImageUrls: ctx.imageUrls,
       }, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-      const url = await uploadDataUrl(supabase, job.user_id, out.dataUrl, "png");
-      const title = await registerGeneratedAsset(supabase, job, {
-        url, kind: "image", mimeType: "image/png", baseLabel: "Generated image",
-      });
-      await insertResultItem(supabase, job, { text: title, media_url: url, media_type: "image" });
-      return { kind: "result", result: { media_url: url } };
+      if (!out.status_url || !out.response_url) throw new Error("lovable-image did not return a queue handle");
+      return {
+        kind: "handoff",
+        provider: "lovable-image",
+        status_url: out.status_url,
+        response_url: out.response_url,
+        request_id: out.request_id ?? null,
+      };
     }
     case "image-image":
     case "remix": {
+      // ASYNC: same submit/poll handoff as text-image.
       const prompt = buildPrompt(p.prompt, ctx, false);
-      // Fast path: forward all URLs directly to lovable-image (no download/base64).
       const galleryUrls: string[] = Array.isArray(p.refImageUrls) ? p.refImageUrls : [];
       const refImageUrls = [...galleryUrls, ...ctx.imageUrls].slice(0, 16);
-      // Legacy: data URL refs (old queued jobs only). Don't compute these for new jobs.
       const refImages: string[] = Array.isArray(p.refImages) ? p.refImages : [];
       const out = await callFn("lovable-image", {
+        mode: "submit",
         prompt, aspectRatio: p.aspectRatio, quality: p.quality,
         refImageUrls, refImages,
       }, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-      const url = await uploadDataUrl(supabase, job.user_id, out.dataUrl, "png");
-      const baseLabel = job.action_type === "remix" ? "Remixed image" : "Edited image";
-      const title = await registerGeneratedAsset(supabase, job, {
-        url, kind: "image", mimeType: "image/png", baseLabel,
-      });
-      await insertResultItem(supabase, job, {
-        text: title, media_url: url, media_type: "image",
-      });
-      return { kind: "result", result: { media_url: url } };
+      if (!out.status_url || !out.response_url) throw new Error("lovable-image did not return a queue handle");
+      return {
+        kind: "handoff",
+        provider: "lovable-image",
+        status_url: out.status_url,
+        response_url: out.response_url,
+        request_id: out.request_id ?? null,
+      };
     }
     case "image-video":
     case "video-video": {
@@ -1081,7 +1084,10 @@ Deno.serve(async (req) => {
 
   for (const j of ((pollJobs ?? []) as Job[])) {
     if (!j.provider_status_url || !j.provider_response_url) continue;
-    const fnName = j.provider === "fal-avatar" ? "fal-avatar" : "fal-video";
+    const isImage = j.provider === "lovable-image";
+    const fnName = isImage
+      ? "lovable-image"
+      : (j.provider === "fal-avatar" ? "fal-avatar" : "fal-video");
     try {
       // Mark polled-at first so a slow poll doesn't get re-claimed by an overlapping tick.
       await supabase.from("action_jobs")
@@ -1099,6 +1105,60 @@ Deno.serve(async (req) => {
       });
       const out = await r.json().catch(() => ({}));
 
+      if (isImage) {
+        // ── Image poll branch ──────────────────────────────────────────────
+        if (out?.status === "COMPLETED" && out?.dataUrl) {
+          const url = await uploadDataUrl(supabase, j.user_id, out.dataUrl, "png");
+          const baseLabel =
+            j.action_type === "remix" ? "Remixed image" :
+            j.action_type === "image-image" ? "Edited image" :
+            "Generated image";
+          const title = await registerGeneratedAsset(supabase, j, {
+            url, kind: "image", mimeType: "image/png", baseLabel,
+          });
+          await insertResultItem(supabase, j, {
+            text: title, media_url: url, media_type: "image",
+          });
+          await supabase.from("action_jobs").update({
+            status: "completed",
+            result: { media_url: url },
+            completed_at: new Date().toISOString(),
+          }).eq("id", j.id);
+
+          const interval = recurrenceToInterval(j.recurrence);
+          if (interval) {
+            const nextRun = new Date(Date.now() + intervalMs(j.recurrence!)).toISOString();
+            await supabase.from("action_jobs").insert({
+              user_id: j.user_id,
+              checklist_id: j.checklist_id,
+              source_item_id: j.source_item_id,
+              action_type: j.action_type,
+              status: "scheduled",
+              payload: j.payload,
+              scheduled_for: nextRun,
+              recurrence: j.recurrence,
+              parent_job_id: j.id,
+            });
+          }
+          pollResults.push({ id: j.id, ok: true });
+        } else if (out?.status === "FAILED") {
+          const errMsg = String(out?.error ?? "image generation failed");
+          const friendly = await explainErrorInline(j.action_type, errMsg);
+          await supabase.from("action_jobs").update({
+            status: "failed",
+            error_raw: errMsg,
+            error_friendly: friendly.cause,
+            error_fix: friendly.fix,
+            completed_at: new Date().toISOString(),
+          }).eq("id", j.id);
+          pollResults.push({ id: j.id, ok: false, error: errMsg });
+        } else {
+          pollResults.push({ id: j.id, ok: true, awaiting: true });
+        }
+        continue;
+      }
+
+      // ── Video / avatar poll branch (existing behavior) ──────────────────
       if (out?.status === "COMPLETED" && out?.url) {
         const isAvatar = j.action_type === "audio-image-video";
         const baseLabel = isAvatar ? "Generated talking video" : "Generated video";
