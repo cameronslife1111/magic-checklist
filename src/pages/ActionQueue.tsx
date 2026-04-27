@@ -82,8 +82,10 @@ const ACTION_LABELS: Record<string, string> = {
   "remix": "Remix images",
   "image-video": "Image to video",
   "video-video": "Video to video",
+  "audio-image-video": "Audio + image to video",
   "analyze-image": "Analyze image",
   "web-search": "Web search",
+  "action-sequence": "Action Sequence",
 };
 
 const fmt = (iso: string | null) => {
