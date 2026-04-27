@@ -21,12 +21,27 @@ const MAX_PER_KIND = 15;
 type Props = {
   userId: string;
   excludeChecklistId?: string;
+  currentChecklist?: { id: string; title: string };
   value: AttachedContext;
   onChange: (next: AttachedContext) => void;
   onUploadingChange?: (uploading: boolean) => void;
 };
 
-export const ContextAttacher = ({ userId, excludeChecklistId, value, onChange, onUploadingChange }: Props) => {
+export const ContextAttacher = ({ userId, excludeChecklistId, currentChecklist, value, onChange, onUploadingChange }: Props) => {
+  const isCurrentIncluded = !!currentChecklist && value.checklists.some((c) => c.id === currentChecklist.id);
+  const toggleCurrent = (checked: boolean) => {
+    if (!currentChecklist) return;
+    if (checked) {
+      if (value.checklists.some((c) => c.id === currentChecklist.id)) return;
+      if (value.checklists.length >= MAX_PER_KIND) {
+        toast.error(`Max ${MAX_PER_KIND} checklists.`);
+        return;
+      }
+      onChange({ ...value, checklists: [...value.checklists, { id: currentChecklist.id, title: currentChecklist.title }] });
+    } else {
+      onChange({ ...value, checklists: value.checklists.filter((c) => c.id !== currentChecklist.id) });
+    }
+  };
   const [pickerOpen, setPickerOpen] = useState(false);
   const [galleryKind, setGalleryKind] = useState<MediaKind | null>(null);
 
@@ -71,6 +86,15 @@ export const ContextAttacher = ({ userId, excludeChecklistId, value, onChange, o
 
   return (
     <div className="space-y-2 border rounded-md p-3 bg-muted/30">
+      {currentChecklist && (
+        <label className="flex items-center gap-2 text-xs cursor-pointer select-none pb-1 border-b border-border/50">
+          <Checkbox
+            checked={isCurrentIncluded}
+            onCheckedChange={(v) => toggleCurrent(v === true)}
+          />
+          <span className="font-medium">Include this checklist as context</span>
+        </label>
+      )}
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium text-muted-foreground">Attach context (optional)</p>
         {totalCount > 0 && (

@@ -1394,6 +1394,7 @@ const ChecklistPage = () => {
         onPick={submitEnqueue}
         userId={user?.id}
         excludeChecklistId={checklist?.id}
+        currentChecklist={checklist ? { id: checklist.id, title: checklist.title } : undefined}
         context={pendingContext}
         onContextChange={setPendingContext}
       />
