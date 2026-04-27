@@ -72,6 +72,30 @@ Deno.serve(async (req) => {
       }
     }
 
+    // Sequence-specific validation: output checklist ownership + budget caps.
+    if (action_type === "action-sequence") {
+      const outId = payload?.output_checklist_id;
+      if (typeof outId !== "string" || !UUID_RE.test(outId)) return bad("output_checklist_id required");
+      const { data: owned, error: ownErr } = await supabase.from("checklists").select("id").eq("id", outId).maybeSingle();
+      if (ownErr || !owned) return bad("output checklist not accessible");
+      const cap = (v: any, def: number, max: number) => {
+        const n = Number(v);
+        if (!Number.isFinite(n) || n <= 0) return def;
+        return Math.min(Math.floor(n), max);
+      };
+      payload.max_steps = cap(payload?.max_steps, 12, 30);
+      payload.max_images = cap(payload?.max_images, 12, 30);
+      payload.max_videos = cap(payload?.max_videos, 4, 8);
+      payload.max_runtime_minutes = cap(payload?.max_runtime_minutes, 30, 60);
+      payload.max_images_per_step = cap(payload?.max_images_per_step, 2, 5);
+      payload.max_failures = cap(payload?.max_failures, 2, 5);
+      if (Array.isArray(payload?.allowed_actions)) {
+        payload.allowed_actions = payload.allowed_actions.filter((a: any) =>
+          typeof a === "string" && a !== "action-sequence" && VALID_ACTIONS.has(a),
+        );
+      }
+    }
+
     // Hard guardrail: reject jobs with giant inline media. The Media Gallery
     // workflow stores files in Storage and only sends URLs, so legitimate jobs
     // are tiny. Anything huge is a regression that would crash the worker and
@@ -81,7 +105,9 @@ Deno.serve(async (req) => {
       return bad("payload too large — pick media from the Media Gallery instead of attaching files inline");
     }
 
-    const promptPreview = typeof payload?.prompt === "string" ? String(payload.prompt).slice(0, 500) : null;
+    const promptPreview = typeof payload?.prompt === "string"
+      ? String(payload.prompt).slice(0, 500)
+      : (action_type === "action-sequence" ? "Action sequence" : null);
 
     const status = scheduled_for ? "scheduled" : "pending";
     const { data, error } = await supabase
