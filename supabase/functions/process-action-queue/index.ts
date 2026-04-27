@@ -548,7 +548,10 @@ function buildLinkedContextText(state: any): string {
   for (const ll of linked) {
     const lines = (ll.items ?? []).map((it: any) => it.text).filter((t: any) => typeof t === "string" && t.trim());
     if (lines.length === 0) continue;
-    blocks.push(`### Steps from linked checklist "${ll.title}"\n${lines.map((l: string) => `- ${l}`).join("\n")}`);
+    const suffix = ll.depth && ll.depth > 1 && ll.via_title
+      ? ` (nested inside "${ll.via_title}")`
+      : "";
+    blocks.push(`### Steps from linked checklist "${ll.title}"${suffix}\n${lines.map((l: string) => `- ${l}`).join("\n")}`);
   }
   return blocks.join("\n\n");
 }
