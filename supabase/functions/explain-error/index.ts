@@ -4,9 +4,11 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+const OPENAI_MODEL = "gpt-5.4-2026-03-05";
+
 export async function explainError(action_type: string, error_raw: string): Promise<{ cause: string; fix: string }> {
-  const key = Deno.env.get("LOVABLE_API_KEY");
-  if (!key) return { cause: error_raw, fix: "Try again later." };
+  const key = Deno.env.get("OPENAI_API_KEY");
+  if (!key) return { cause: error_raw.slice(0, 200), fix: "Try again later." };
 
   const sys = `You translate technical API errors into plain English for a non-technical user.
 You will be given an action type and a raw error message.
@@ -14,11 +16,11 @@ Respond with a strict JSON object: {"cause": "<one short sentence in plain Engli
 No markdown, no extra text.`;
 
   try {
-    const r = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const r = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: OPENAI_MODEL,
         messages: [
           { role: "system", content: sys },
           { role: "user", content: `Action: ${action_type}\nError:\n${error_raw}` },
@@ -26,7 +28,11 @@ No markdown, no extra text.`;
         response_format: { type: "json_object" },
       }),
     });
-    if (!r.ok) return { cause: error_raw.slice(0, 200), fix: "Try the action again." };
+    if (!r.ok) {
+      const t = await r.text();
+      console.error(`explain-error openai status=${r.status} body=${t.slice(0, 300)}`);
+      return { cause: error_raw.slice(0, 200), fix: "Try the action again." };
+    }
     const data = await r.json();
     const content = data.choices?.[0]?.message?.content ?? "{}";
     const parsed = JSON.parse(content);
@@ -35,7 +41,7 @@ No markdown, no extra text.`;
       fix: String(parsed.fix ?? "Try again later.").slice(0, 500),
     };
   } catch (e) {
-    console.error("explain-error", e);
+    console.error("explain-error exception", e);
     return { cause: error_raw.slice(0, 200), fix: "Try the action again." };
   }
 }

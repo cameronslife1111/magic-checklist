@@ -188,8 +188,8 @@ Deno.serve(async (req) => {
       });
     }
 
-    const key = Deno.env.get("LOVABLE_API_KEY");
-    if (!key) return bad("LOVABLE_API_KEY not configured", 500);
+    const key = Deno.env.get("OPENAI_API_KEY");
+    if (!key) return bad("OPENAI_API_KEY not configured", 500);
 
     const userMsg = JSON.stringify({
       current_line: currentLine,
@@ -204,11 +204,11 @@ Deno.serve(async (req) => {
       max_images_per_step: maxImagesPerStep,
     });
 
-    const r = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const r = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: "gpt-5.4-2026-03-05",
         messages: [
           { role: "system", content: SYSTEM },
           { role: "user", content: userMsg },
@@ -219,8 +219,10 @@ Deno.serve(async (req) => {
     });
     if (!r.ok) {
       const t = await r.text();
-      if (r.status === 429) return bad("rate limited by AI gateway", 429);
-      if (r.status === 402) return bad("AI credits exhausted", 402);
+      console.error(`plan-action-sequence openai status=${r.status} body=${t.slice(0, 500)}`);
+      if (r.status === 429) return bad("rate limited by OpenAI", 429);
+      if (r.status === 401) return bad("OpenAI auth failed (check OPENAI_API_KEY)", 401);
+      if (r.status === 402) return bad("OpenAI quota exhausted, check billing", 402);
       return bad(`planner LLM error ${r.status}: ${t.slice(0, 300)}`, 502);
     }
     const data = await r.json();
