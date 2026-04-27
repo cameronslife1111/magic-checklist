@@ -962,6 +962,22 @@ Deno.serve(async (req) => {
         continue;
       }
 
+      if (outcome.kind === "sequence-tick") {
+        // Sequence parent — drive the state machine. Put the parent back to
+        // pending so subsequent worker ticks (cron + child-completion kicks)
+        // continue to process it without it appearing "running" forever.
+        const tickResult = await tickSequence(supabase, j);
+        if (!tickResult.done) {
+          await supabase.from("action_jobs").update({
+            status: "pending",
+            attempts: j.attempts, // sequence ticks don't count against per-job retries
+            started_at: null,
+          }).eq("id", j.id);
+        }
+        results.push({ id: j.id, ok: true, sequence: true, done: tickResult.done });
+        continue;
+      }
+
       await supabase.from("action_jobs").update({
         status: "completed",
         result: outcome.result,
