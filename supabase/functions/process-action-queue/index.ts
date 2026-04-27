@@ -93,6 +93,56 @@ async function uploadDataUrl(supabase: any, userId: string, dataUrl: string, ext
   return supabase.storage.from("generated-media").getPublicUrl(name).data.publicUrl;
 }
 
+// Picks the next "<baseLabel> N" title for a user, based on existing media_assets rows.
+async function nextTitleForKind(supabase: any, userId: string, baseLabel: string): Promise<string> {
+  try {
+    const { data } = await supabase
+      .from("media_assets")
+      .select("title")
+      .eq("user_id", userId)
+      .ilike("title", `${baseLabel}%`);
+    let max = 0;
+    const re = new RegExp(`^${baseLabel.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s+(\\d+)$`, "i");
+    for (const r of (data ?? []) as { title: string }[]) {
+      const m = r.title?.match(re);
+      if (m) {
+        const n = parseInt(m[1], 10);
+        if (Number.isFinite(n) && n > max) max = n;
+      }
+    }
+    return `${baseLabel} ${max + 1}`;
+  } catch {
+    return `${baseLabel} 1`;
+  }
+}
+
+// Adds a generated file to the user's Media Gallery and returns the unique title.
+// Best-effort: never throws — if the gallery insert fails we still fall back to a
+// numbered title so the checklist row keeps a sensible name.
+async function registerGeneratedAsset(
+  supabase: any,
+  job: Job,
+  args: { url: string; kind: "image" | "video"; mimeType: string; baseLabel: string },
+): Promise<string> {
+  const title = await nextTitleForKind(supabase, job.user_id, args.baseLabel);
+  try {
+    const marker = "/generated-media/";
+    const idx = args.url.indexOf(marker);
+    const storage_path = idx === -1 ? args.url : args.url.slice(idx + marker.length).split("?")[0];
+    await supabase.from("media_assets").insert({
+      user_id: job.user_id,
+      title,
+      kind: args.kind,
+      url: args.url,
+      storage_path,
+      mime_type: args.mimeType,
+    });
+  } catch (e) {
+    console.error("registerGeneratedAsset failed", e);
+  }
+  return title;
+}
+
 async function insertResultItem(
   supabase: any,
   job: Job,
