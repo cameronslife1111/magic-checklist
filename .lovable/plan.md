@@ -1,171 +1,175 @@
 
-# Plan: Multi-step "Action Sequence" Agent
+# Action Sequence v2 — step-by-step, image-aware, link-following
 
-## First-principles framing
+## What's broken today (root causes)
 
-Today every blue button in `ActionsSheet` enqueues exactly **one** `action_jobs` row that the worker (`process-action-queue`) executes against one of nine concrete tools (`text-text`, `text-image`, `image-image`, `remix`, `image-video`, `video-video`, `audio-image-video`, `analyze-image`, `web-search`). Outputs are written back to a checklist as new items, and (for image/video) registered in `media_assets`.
+1. **Reference images vanish.** The planner runs once, up front, with only `{name, type}` in the gallery index — no URLs, no item IDs. The model then guesses ref strings like `"my dog photo"`. At dispatch we substring-match against `media_assets.title`, but the user's image was attached to the *checklist line itself* (a `media_url` on a `checklist_item`, not a gallery `title`), so the loose match silently returns nothing, the step is marked invalid, and we append a `⚠️ Skipped` line.
+2. **Step-output reuse is fragile.** The planner emits `step:N` blindly without seeing previous outputs. If step N produced text or was skipped, later steps still try to use it as an image and fail validation.
+3. **Linked checklists are ignored.** `checklist_items.linked_checklist_id` is never read by the worker. Instructions like "follow the steps from <linked checklist>" hit a wall.
+4. **The plan is monolithic.** One LLM call has to decompose the entire checklist with no feedback loop. Any single bad step taints the rest.
+5. **In-checklist media isn't a first-class reference source.** The planner only sees gallery titles, but users naturally attach an image directly to a checklist line and expect "use that image" to work.
 
-A "multi-step agent" therefore decomposes into three layered problems:
+## Fix — switch to a step-by-step (per-line) executor
 
-1. **Planning** — turn the input checklist's lines into an ordered list of tool calls, where each call has a real `action_type`, prompt, and resolved inputs (text + media URLs).
-2. **Execution** — run those calls *using the existing job pipeline* (don't reinvent it) so we automatically inherit cancellation, error reporting, the dashboard, media-gallery registration, and the explain-error layer.
-3. **Safety** — hard budgets (max steps, max images/videos, max wall-time, max retries) so a malformed checklist can never burn API credits forever.
+Plan **one line at a time** instead of the whole checklist up front. The agent walks the input checklist top-to-bottom; for each line it (a) builds a rich, current catalog of every media URL it could possibly use, (b) asks the LLM "what single tool call (or no-op) does this line require?", (c) dispatches the child job, (d) waits, (e) records the output into the catalog so the next line can reference it. This single change fixes (1)–(4) because the model now sees real URLs for every reference type at decision time and gets feedback after each step.
 
-The cleanest way to express this is **a new `action_sequence` job type** that the worker recognizes and that **spawns child jobs of the existing nine types**, then watches them. No changes to any of the nine tool implementations. No second worker. One queue, one dashboard.
+### The unified media catalog (built fresh per step)
 
----
+Every reference source becomes a single list of entries the model can pick from by name *or* by a stable handle:
 
-## User-facing flow
+```
+type CatalogEntry = {
+  handle: string;        // e.g. "step:3", "line:7", "gallery:42", "linked:2:5"
+  name: string;          // human label (item text snippet, gallery title, "Step 3 output")
+  url: string;           // resolved URL — never null
+  type: "image"|"video"|"audio";
+  source: "step-output"|"current-line"|"input-line"|"linked-line"|"gallery"|"attached";
+}
+```
 
-1. On a checklist, tap **Actions → "Run as Action Sequence"** (new blue button at the top of the AI block, with `Workflow` icon).
-2. A new `RunSequenceDialog` opens with:
-   - **Output checklist** picker (reuses `ChecklistPickerDialog`). Default = current checklist; explicit "Append to current checklist" shortcut. Outputs always go to the bottom.
-   - **Step budget** slider (default 12, max 30) — hard ceiling on tool calls.
-   - **Per-step image budget** (default 2, max 5).
-   - **Allowed tools** — checkboxes for the 9 actions (all on by default). A user can, e.g., disable `image-video` to keep cost down.
-   - The same `ContextAttacher` UI (so they can attach extra checklists / gallery media the plan can reference loosely by name).
-   - "Include this checklist as instructions" is implicit (it's the source of truth, no toggle needed).
-3. Tap **Run**. We enqueue **one** `action_sequence` job. Toast: "Sequence queued — see Action Queue".
-4. The Action Queue dashboard shows a parent "Action sequence" row with live status. As children complete, they appear under it (visually grouped). All errors surface there with the same `error_friendly` / `error_fix` translation we already have.
-5. Outputs land in the chosen output checklist, in execution order. If the sequence aborts (budget, validation, repeated failure), a final checklist line is appended: `⚠️ Sequence stopped: <plain-English reason>`.
+Built each tick from:
+- `state.outputs[*]` with media → `step:N`
+- The **current input checklist line's own** `media_url` (if any) → `line:current`
+- Every other input checklist line's `media_url` → `line:N`
+- Every line in any **linked checklist** reachable from the input checklist (1 hop, deduped, max 5 lists) → `linked:listIdx:lineIdx`
+- The first 200 `media_assets` for the user → `gallery:N`
+- Anything attached via `ContextAttacher` (existing `payload.context.media`) → `attached:N`
 
----
+The model sees the full catalog with `{handle, name, type}` (NOT URLs — keeps tokens down and prevents hallucinated URLs). It returns `input_refs: { images: ["handle-or-loose-name", ...] }`. The worker resolves: exact handle match first, then loose name match against the same catalog (existing `looseMatchGalleryName` extended to all sources), then fail with a precise message naming what it looked for and offering the closest 3 candidates.
 
-## Data model changes (schema migration)
+### Linked-checklist traversal
 
-Single migration on `action_jobs`:
+In the planning preamble for each line we resolve `linked_checklist_id` on every input-checklist item once per sequence and cache in `sequence_state.linked_lists`. Each linked list contributes:
+- Its **text lines** are added to the line's prompt context block (so "follow the steps from X" actually inlines those steps).
+- Its **media_url items** are added to the catalog under `linked:` handles.
 
-- Already has `parent_job_id uuid`. Good — we use that for child→parent linkage.
-- Add `sequence_step int` (nullable) — child position within parent for ordered display.
-- Add `sequence_state jsonb default '{}'` (nullable) on the parent — stores the planned step list, current cursor, the budget caps, and the running tally (`steps_used`, `images_used`, `videos_used`, `failures`). This is the agent's working memory and is checkpointed every tick so a function restart resumes cleanly.
-- Index: `create index if not exists action_jobs_parent_idx on action_jobs(parent_job_id);` (used for "list children of sequence" queries).
-- Allow new `action_type` value: `"action-sequence"`. (No DB constraint exists today, but we'll update `VALID_ACTIONS` in `enqueue-action`.)
+Hard cap: 1-hop (no recursion), max 5 linked lists, max 50 lines per linked list, total catalog capped at 300 entries.
 
-All RLS policies already work because they key on `user_id`, which we copy from the parent.
+## New flow (state machine)
 
----
+```text
+planning_init → for each input line:
+   build_catalog → plan_one_line → dispatch_child → await_child → record_output
+                                       ↑                              │
+                                       └────────── next line ─────────┘
+                                  (or no_action / skipped → next line)
+→ completed
+```
 
-## New edge function: `plan-action-sequence`
+`planning_init` replaces the old single big plan. It only:
+- loads input lines (in order) into `state.input_lines`
+- resolves linked checklists into `state.linked_lists`
+- snapshots the gallery into `state.gallery`
+- sets `state.cursor = 0`
 
-Pure planner. Takes the input checklist text + attached context + allowed tools + budgets, and returns a structured JSON plan via the Lovable AI gateway (`google/gemini-2.5-pro` for quality; we already use this gateway in `explain-error`).
+`plan_one_line` is a new fast LLM call (`google/gemini-2.5-flash`, JSON tool-call) that takes:
+```
+{
+  current_line: string,
+  current_line_attached: CatalogEntry|null,
+  prior_outputs_summary: [{step, kind, name}],
+  upcoming_lines_preview: string[],   // next 3 lines, for context only
+  catalog: CatalogEntry[],            // {handle,name,type} only
+  linked_context_text: string,        // concatenated text of linked lists
+  allowed_actions: string[],
+  max_images_per_step: number,
+}
+```
+and returns exactly one of:
+```
+{ kind: "tool_call", step: PlanStep }
+{ kind: "no_action", reason: string }   // e.g. plain narration line, header, blank
+{ kind: "compound", steps: PlanStep[] }  // for "do A then B" inline; max 3 sub-steps
+```
 
-- **Input**: `{ instructions: string[]; context: ResolvedContext; allowed_actions: string[]; max_steps: number; max_images_per_step: number; gallery_index: { name: string; url: string; type: "image"|"video"|"audio" }[] }`
-- **Output (strict JSON, validated)**:
-  ```ts
-  type Plan = {
-    steps: PlanStep[];
-    rationale: string;          // 1–2 sentence summary surfaced in UI
-  }
-  type PlanStep = {
-    action_type: "text-text"|"text-image"|"image-image"|"remix"|"image-video"
-                |"video-video"|"audio-image-video"|"analyze-image"|"web-search";
-    prompt: string;
-    // refs the planner wants — strings, not URLs. Resolved at exec time.
-    input_refs?: {
-      // either a previous step's output, e.g. "step:3"
-      // or a loose match against the gallery_index by name (case/space-insensitive substring)
-      images?: string[]; videos?: string[]; audios?: string[];
-    };
-    aspect_ratio?: "1:1"|"16:9"|"9:16"|"4:3"|"3:4";
-    quality?: "auto"|"standard"|"hd";
-    count?: number;             // capped to max_images_per_step
-    note?: string;              // human-readable label shown in dashboard
-  }
-  ```
-- The model gets a system prompt that **lists the nine tools, their inputs/outputs, and the budgets**, plus an explicit instruction: "If a referenced media name doesn't appear in `gallery_index`, do NOT invent a URL — use the closest substring match or skip that reference. Never produce more than `max_steps` steps." We also reject the plan server-side if it violates any cap.
-- This function does **no side effects** — it only returns the validated plan. Cheap, idempotent, easy to retry.
+The compound case lets a single line legitimately spawn 2-3 chained children (rare but matches "generate an image of X, then turn it into a video"). The cap of 3 prevents runaway expansion. Each compound sub-step still flows through the same dispatch/await loop sequentially.
 
----
+### Dispatch fix-ups
 
-## Worker changes: `process-action-queue/index.ts`
+`dispatch_child` builds `childPayload` exactly like today, but with two additions:
+- **Pass `media_assets` URL through unchanged** when a `gallery:` or `linked:` handle resolves to a public storage URL — these already work with `lovable-image`'s `refImageUrls`. No re-upload needed.
+- **For `text-image` with refs**, currently we pass `refImageUrls` but `lovable-image` accepts that and Nano Banana will use it as style/subject reference — confirm by reading `lovable-image/index.ts` (already accepts the field). If it doesn't, switch the action to `image-image` automatically when refs are present.
 
-Add a new branch for `job.action_type === "action-sequence"`. The branch is a small **state machine**, not a long-running function (we never block — we just do one tick of work per worker invocation, exactly like the existing Fal handoff/poll pattern):
+### Output recording
 
-States stored in `sequence_state`:
+When a child completes, in addition to writing `state.outputs[stepIdx]`, also append the resulting media URL into the catalog as `step:N` for future ticks. If the line was `compound`, store the *last* sub-step's output as `step:N` (and intermediates as `step:N.0`, `step:N.1` for advanced ref'ing — optional, keep simple first cut).
 
-| state | meaning | next |
-|---|---|---|
-| `planning` | initial, no plan yet | call `plan-action-sequence`, store `plan` + `cursor=0`, `steps_used=0`, set `dispatching` |
-| `dispatching` | enqueue child for `plan.steps[cursor]` | insert child `action_jobs` row with `parent_job_id=job.id`, `sequence_step=cursor`; set `awaiting_child` with `current_child_id` |
-| `awaiting_child` | a child is running | check child status; if `completed` → record output (text + media_url) into `sequence_state.outputs[cursor]`, `cursor++`, increment counters, decide next state; if `failed` → `failures++`, optionally abort or skip; if `cancelled`/`paused` → mirror to parent |
-| `completed` | done | terminal — append a "Sequence finished — N steps" item to output checklist |
-| `aborted` | budget/error tripped | terminal — append the `⚠️ Sequence stopped: …` line |
+### Skip vs fail UX
 
-Key implementation details:
+- Plain narration / header lines → `no_action`, no checklist noise (don't append a "Skipped" line; just advance).
+- Tool call with unresolvable refs → append `⚠️ Step N skipped — couldn't find image "X". Closest matches: "A", "B", "C". Try renaming or attaching.` Then advance (don't increment `failures` — this is a user-fixable gap, not a runtime error).
+- Tool call execution failure → existing `error_friendly` flow + counts as a failure against `max_failures`.
 
-- **No blocking sleeps.** Each tick advances by at most one transition. The existing pg_cron + the `enqueue-action` "kick" already drive ticks every minute / immediately on insert. We additionally call the worker once per child completion: when a child job finishes (success or failure), if it has a `parent_job_id` we POST to `process-action-queue` with `{ trigger: "sequence-tick", id: parent_id }`. This makes sequences feel real-time without polling.
-- **Budgets enforced server-side at every tick** (defense in depth — even if the planner cheats):
-  - `steps_used >= max_steps` → abort.
-  - `images_used >= max_images` (default 12) / `videos_used >= max_videos` (default 4) → abort.
-  - Wall clock from `created_at` exceeds `max_runtime_minutes` (default 30) → abort.
-  - `failures >= max_failures` (default 2) → abort. (No silent infinite retry — the existing per-job `max_attempts` already handles transient failures inside one step.)
-- **Reference resolution** at dispatch time:
-  - `step:N` → look up `sequence_state.outputs[N].media_url` or `.text`.
-  - Loose name → substring match against `gallery_index` (built once at `planning` time from the user's `media_assets` for stability).
-  - If a required ref can't be resolved, mark **that step** as failed with an explicit error (`"Could not find image named 'X' in your media gallery"`) and proceed to the next step. Don't abort the whole sequence — let the user see the gap on the output checklist.
-- **Output writing** uses the existing `insertResultItem` helper but pinned to the chosen output checklist (`payload.output_checklist_id`) and always appended at the bottom (no `source_item_id`).
-- **Cancellation**: the existing dashboard "Cancel" button already updates `status='cancelled'`. We extend the sequence tick to: when parent transitions to `cancelled`, also cancel the in-flight child.
+## Concrete file changes
 
----
+### `supabase/functions/plan-action-sequence/index.ts` (rewrite)
 
-## Frontend changes
+Replace the whole-plan endpoint with a **per-line planner**. New request shape matches `plan_one_line` above. Returns `{kind, step?|steps?|reason}`. System prompt is rewritten to:
+- Describe each tool's required inputs in terms of catalog handles.
+- Explicitly say: "If the current line has an attached image (`current_line_attached`), assume it is the primary subject unless the line says otherwise."
+- "Prefer `step:N` for the most recent matching prior output, then `line:N` / `linked:*` for explicit references in the instructions, then `gallery:N` for named gallery items."
+- "If the line is a heading, separator, blank, or pure narration with no actionable verb, return `{kind:'no_action'}`."
+- Hard cap: max 3 sub-steps if `kind:'compound'`.
 
-### `src/components/ActionsSheet.tsx`
-- New `ActionKey` `"run-sequence"` and a new entry at the top of the AI block (still in blue, `Workflow` icon from `lucide-react`).
-- Label: "Run as Action Sequence".
+Model: `google/gemini-2.5-flash` (cheap, fast — we call it once per line, not once per sequence). Use tool-calling for structured output (per the AI Gateway docs) instead of `response_format: json_object` to eliminate parse failures.
 
-### `src/components/RunSequenceDialog.tsx` (new)
-- Reuses `ChecklistPickerDialog` (output picker), `ContextAttacher` (extra context + current-checklist toggle stays useful for *additional* references), and standard `Slider`/`Switch`/`Checkbox` primitives for budgets and tool toggles.
-- On submit, calls `supabase.functions.invoke("enqueue-action", { body })` with:
-  ```ts
-  {
-    action_type: "action-sequence",
-    checklist_id: <input checklist id>,
-    payload: {
-      output_checklist_id, max_steps, max_images, max_videos,
-      max_runtime_minutes, allowed_actions,
-      context: pendingContext, // existing AttachedContext shape
-    }
-  }
-  ```
+### `supabase/functions/process-action-queue/index.ts`
 
-### `src/pages/Checklist.tsx`
-- Wire `"run-sequence"` in the `onPick` handler to open `RunSequenceDialog`, defaulting output checklist to the current one.
+In `tickSequence`:
+- Replace `phase: "planning"` block with `planning_init` that loads input lines + linked lists + gallery snapshot.
+- New `phase: "planning_step"` between `dispatching` and the LLM call: builds the per-step catalog, calls `plan-action-sequence` with the per-line payload, stores the returned step(s) into `state.pending_steps`, transitions to `dispatching`.
+- `dispatching` consumes `state.pending_steps[0]` (instead of `state.plan.steps[cursor]`), drops it on dispatch.
+- When `pending_steps` empties AND a line is fully resolved, advance `cursor` and loop back to `planning_step` (or `completed` if `cursor >= input_lines.length`).
+- Extend `resolveRef` to recognize all five handle prefixes (`step:`, `line:`, `linked:`, `gallery:`, `attached:`) before falling through to loose matching.
+- Loose matching uses the *unified catalog* (not just `gallery_index`), preserving the existing scoring. Returns the matched `CatalogEntry` so the error message can be specific.
+- On unresolved ref, build the "closest matches" list from the top-3 candidates (any type) and append the precise skip message.
 
-### `src/pages/ActionQueue.tsx`
-- Add `"action-sequence": "Action sequence"` to `ACTION_LABELS`.
-- Group child jobs under their parent visually: when fetching, build a `Map<parent_id, Job[]>`; render parent `JobRow` with an indented list of children (collapsed by default, "Show 4 steps" toggle). Children already work with the existing `JobRow` — no per-child UI to invent.
-- Status badge for the parent reflects sequence_state lifecycle (`planning` / `running` / `completed` / `aborted`).
-
-### `src/components/ContextAttacher.tsx`
-- No changes.
+Linked-checklist loader (new helper, ~30 lines):
+```ts
+async function loadLinkedLists(supabase, inputChecklistId, userId): Promise<LinkedList[]>
+```
+Selects items where `checklist_id = inputChecklistId AND linked_checklist_id IS NOT NULL`, fetches each linked list's items in one batched `IN` query, returns `[{ list_id, title, lines: [{text, media_url, media_type}] }]`.
 
 ### `supabase/functions/enqueue-action/index.ts`
-- Add `"action-sequence"` to `VALID_ACTIONS`.
-- Validate `payload.output_checklist_id` is a UUID owned by the user (same ownership check we already do for context checklists).
-- Validate budget caps stay within hard maxima (`max_steps ≤ 30`, `max_images ≤ 30`, `max_videos ≤ 8`, `max_runtime_minutes ≤ 60`).
-- Keep the existing 200KB payload guard.
 
----
+No structural change. Bump `max_steps` cap from 30 → 50 (per-line execution makes long checklists feasible) and add a soft `max_lines` (default = number of input lines, hard cap 60) so the new per-line loop has a clear ceiling.
 
-## Why this design satisfies every requirement you stated
+### `src/components/RunSequenceDialog.tsx`
 
-- **"Use the text on this checklist as instructions"** → The input checklist's lines become the planner's instructions verbatim.
-- **"Loose pattern matching on names"** → `gallery_index` substring matcher at dispatch time, plus the planner is told to use closest-match.
-- **"It should be able to do all the blue button things"** → Children are real jobs of the nine existing types; zero changes to the tools.
-- **"Use outputs as inputs"** → `step:N` refs in the plan; resolved from `sequence_state.outputs[]` at dispatch.
-- **"User picks an output checklist (can be the same one)"** → `output_checklist_id` in payload; outputs always appended at bottom.
-- **"Outputs go to the queue the same way"** → Children are normal `action_jobs` rows; the dashboard already handles them.
-- **"Never burn tokens in a loop"** → Hard step/image/video/runtime/failure caps enforced server-side every tick; `max_attempts` per child unchanged; no recursion.
-- **"If something prevents completion, say exactly what and where"** → Per-step failures use the existing `explain-error` pipeline. Sequence abort writes a single `⚠️ Sequence stopped: <reason>` line to the output checklist and is also visible on the parent row in the dashboard.
+Minimal UX additions:
+- Tooltip on the "Step budget" slider clarifying it now means "max tool calls" (not "max checklist lines").
+- New helper text under the dialog explaining: "The agent reads your checklist line by line. For best results, write one instruction per line and attach reference images directly to the line that uses them."
+- No new fields required.
 
----
+### `.lovable/plan.md`
 
-## Out of scope (intentionally)
+Replace with this v2 design document so future iterations have an accurate spec.
 
-- No streaming chat UI for the agent — the dashboard + output checklist are the surface.
-- No tool calling beyond the nine existing actions.
-- No conditional branching inside a sequence (the planner produces a linear list). If you want branching/loops later, it slots in cleanly because the worker is already a state machine.
-- No changes to the nine tool functions or to `media_assets` registration.
+### Database
 
-After approval I'll implement (1) the migration, (2) `plan-action-sequence` edge function, (3) worker branch + child-completion kick, (4) `enqueue-action` validation, (5) `RunSequenceDialog` + `ActionsSheet` button + `Checklist.tsx` wiring, and (6) parent/child grouping in `ActionQueue.tsx`.
+No schema migration required — `sequence_state jsonb` already stores everything new (`input_lines`, `linked_lists`, `gallery`, `pending_steps`, `cursor`).
+
+## Why this hits the user's requirements
+
+- **"Insert images" + "use reference images"** — every line's own attached `media_url` is in the catalog as `line:current`; the model is explicitly told to treat it as the primary subject. Gallery and other-line images are resolvable by name or handle.
+- **"Use outputs as inputs"** — `step:N` is in the catalog and grows after every completed child; the model sees a `prior_outputs_summary` so it knows what's available.
+- **"Reference any media in the gallery"** — full gallery (200 most recent) is in the catalog with both stable handles and human names; loose matching covers typos.
+- **"Follow linked checklists as instructions/context"** — linked-list text is inlined into `linked_context_text`; linked-list media is in the catalog under `linked:` handles. One hop, capped, deduped.
+- **"Step by step, small steps"** — that's exactly the new execution model: one LLM decision per line, immediate feedback, cumulative state.
+- **"Highest probability of success"** — eliminates the single-shot whole-plan failure mode, gives the model URLs/handles for every resolvable reference, and produces precise diagnostics (named candidates) when something can't be matched.
+
+## Out of scope (intentional)
+
+- Recursive linked-checklist traversal (>1 hop). Easy to add later by deepening the loader.
+- Cross-step text outputs as references (e.g. "use the caption from step 3"). Today step text outputs are recorded but only image/video URLs flow into the catalog. Add later if requested.
+- Streaming partial progress to the client beyond the existing dashboard.
+
+## Implementation order
+
+1. Rewrite `plan-action-sequence` to per-line + tool-calling output.
+2. Add `loadLinkedLists` helper + catalog builder in the worker.
+3. Replace planning/dispatching phases in `tickSequence` with the per-line state machine.
+4. Extend `resolveRef` and loose matcher to the unified catalog; rewrite the skip message.
+5. Bump `enqueue-action` caps; tweak `RunSequenceDialog` copy.
+6. Update `.lovable/plan.md`.
+7. Smoke-test with a 5-line checklist that mixes: a line with an attached image, a line that references a gallery image by name, a line that says "make a video from the previous image", and a line that links to another checklist.
