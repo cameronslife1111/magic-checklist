@@ -8,6 +8,7 @@
 const STORAGE_KEY = "speech-muted";
 
 let primed = false;
+let needsRearm = false;
 let heartbeat: number | null = null;
 let visibilityBound = false;
 
