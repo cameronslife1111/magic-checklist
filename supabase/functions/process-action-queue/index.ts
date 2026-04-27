@@ -27,6 +27,10 @@ type Job = {
   provider_request_id: string | null;
   provider_status_url: string | null;
   provider_response_url: string | null;
+  // Sequence parent state (only set on action-sequence parent rows)
+  sequence_state?: any;
+  parent_job_id?: string | null;
+  sequence_step?: number | null;
 };
 
 function recurrenceToInterval(r: string | null): string | null {
