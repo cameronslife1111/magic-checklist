@@ -372,65 +372,23 @@ function detectKind(mediaType: string | null | undefined, url: string | null | u
   return null;
 }
 
-// Load checklists referenced (transitively) by the input checklist via the
-// "insert checklist link" button, plus any checklists the user explicitly
-// attached via the Run Sequence Context Attacher.
-//
-// - BFS up to MAX_DEPTH hops from the input checklist (inline links only).
-// - Inline-linked lists take priority; attached lists are appended/deduped.
-// - Bounded for planner speed: MAX_LISTS total, MAX_ITEMS_PER_LIST per list.
-async function loadLinkedLists(
+// Load ONLY the checklists the user explicitly attached via the Run Sequence
+// Context Attacher. We deliberately do NOT follow inline `linked_checklist_id`
+// references on the input checklist's items — that auto-discovery was confusing
+// the planner with unrelated lists. The Run Sequence dialog is the single
+// source of truth for context now.
+async function loadAttachedLists(
   supabase: any,
-  inputChecklistId: string,
   attachedChecklistIds: string[] = [],
 ) {
-  const MAX_DEPTH = 2;
   const MAX_LISTS = 15;
   const MAX_ITEMS_PER_LIST = 100;
 
-  // BFS over inline `linked_checklist_id` references, recording depth.
-  const visited = new Set<string>([inputChecklistId]);
-  const collected: { id: string; depth: number; via: string | null }[] = [];
-  let frontier: { id: string; depth: number }[] = [{ id: inputChecklistId, depth: 0 }];
+  const ids = (attachedChecklistIds ?? [])
+    .filter((x): x is string => typeof x === "string")
+    .slice(0, MAX_LISTS);
+  if (ids.length === 0) return [];
 
-  while (frontier.length > 0 && collected.length < MAX_LISTS) {
-    const ids = frontier.map((f) => f.id);
-    const depthOf = new Map(frontier.map((f) => [f.id, f.depth]));
-    const { data: refs } = await supabase
-      .from("checklist_items")
-      .select("checklist_id, linked_checklist_id")
-      .in("checklist_id", ids)
-      .not("linked_checklist_id", "is", null);
-
-    const next: { id: string; depth: number }[] = [];
-    for (const r of (refs ?? []) as any[]) {
-      const cid = r.linked_checklist_id;
-      if (typeof cid !== "string" || visited.has(cid)) continue;
-      visited.add(cid);
-      const parentDepth = depthOf.get(r.checklist_id) ?? 0;
-      const depth = parentDepth + 1;
-      collected.push({
-        id: cid,
-        depth,
-        via: depth > 1 ? r.checklist_id : null,
-      });
-      if (collected.length >= MAX_LISTS) break;
-      if (depth < MAX_DEPTH) next.push({ id: cid, depth });
-    }
-    frontier = next;
-  }
-
-  // Append user-attached checklists (dedupe; treat as depth 1).
-  for (const cid of attachedChecklistIds) {
-    if (typeof cid !== "string" || visited.has(cid)) continue;
-    if (collected.length >= MAX_LISTS) break;
-    visited.add(cid);
-    collected.push({ id: cid, depth: 1, via: null });
-  }
-
-  if (collected.length === 0) return [];
-
-  const ids = collected.map((c) => c.id);
   const { data: lists } = await supabase.from("checklists").select("id,title").in("id", ids);
   const { data: items } = await supabase
     .from("checklist_items")
@@ -444,20 +402,24 @@ async function loadLinkedLists(
     if (arr.length < MAX_ITEMS_PER_LIST) arr.push(it);
     grouped.set(it.checklist_id, arr);
   }
-  return collected.map((c, idx) => ({
+  return ids.map((id, idx) => ({
     list_idx: idx,
-    list_id: c.id,
-    title: titleMap.get(c.id) ?? "Untitled",
-    depth: c.depth,
-    via_title: c.via ? (titleMap.get(c.via) ?? null) : null,
-    items: grouped.get(c.id) ?? [],
+    list_id: id,
+    title: titleMap.get(id) ?? "Untitled",
+    depth: 1,
+    via_title: null,
+    items: grouped.get(id) ?? [],
   }));
 }
 
-// Build the per-step catalog from sequence_state + the line being planned.
-function buildCatalog(state: any, currentLineIdx: number): { catalog: CatalogEntry[]; currentAttached: CatalogEntry | null } {
+// Build the per-step catalog from sequence_state.
+// Only user-attached context is exposed to the planner: prior step outputs
+// (this run), media on items inside user-attached checklists, and media
+// gallery items the user attached in the Run Sequence dialog. We deliberately
+// do NOT expose per-line media on the input checklist or a snapshot of the
+// user's whole gallery — that auto-discovery was confusing the planner.
+function buildCatalog(state: any): { catalog: CatalogEntry[] } {
   const out: CatalogEntry[] = [];
-  let currentAttached: CatalogEntry | null = null;
 
   // 1) Prior step outputs (image/video only — refs need URLs the tools can use).
   const outputs: any[] = state.outputs ?? [];
@@ -474,24 +436,7 @@ function buildCatalog(state: any, currentLineIdx: number): { catalog: CatalogEnt
     });
   });
 
-  // 2) Input checklist line media.
-  const inputLines: any[] = state.input_lines ?? [];
-  inputLines.forEach((line, i) => {
-    if (!line?.media_url) return;
-    const k = detectKind(line.media_type, line.media_url);
-    if (!k) return;
-    const entry: CatalogEntry = {
-      handle: i === currentLineIdx ? "line:current" : `line:${i}`,
-      name: snip(line.text || `Line ${i + 1}`),
-      url: line.media_url,
-      type: k,
-      source: i === currentLineIdx ? "current-line" : "input-line",
-    };
-    out.push(entry);
-    if (i === currentLineIdx) currentAttached = entry;
-  });
-
-  // 3) Linked checklist line media.
+  // 2) Media inside user-attached checklists (from ContextAttacher).
   const linked: any[] = state.linked_lists ?? [];
   linked.forEach((ll, lIdx) => {
     (ll.items ?? []).forEach((it: any, iIdx: number) => {
@@ -508,22 +453,7 @@ function buildCatalog(state: any, currentLineIdx: number): { catalog: CatalogEnt
     });
   });
 
-  // 4) Gallery snapshot.
-  const gallery: any[] = state.gallery ?? [];
-  gallery.forEach((g, i) => {
-    if (!g?.url) return;
-    const k = detectKind(g.kind, g.url);
-    if (!k) return;
-    out.push({
-      handle: `gallery:${i}`,
-      name: g.title ?? "Untitled",
-      url: g.url,
-      type: k,
-      source: "gallery",
-    });
-  });
-
-  // 5) Attached context media (from ContextAttacher).
+  // 3) Attached context media (from ContextAttacher gallery picker).
   const attached: any[] = state.attached_media ?? [];
   attached.forEach((m, i) => {
     if (!m?.url) return;
@@ -538,7 +468,7 @@ function buildCatalog(state: any, currentLineIdx: number): { catalog: CatalogEnt
     });
   });
 
-  return { catalog: out.slice(0, 300), currentAttached };
+  return { catalog: out.slice(0, 300) };
 }
 
 function buildLinkedContextText(state: any): string {
@@ -642,15 +572,10 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     const attachedChecklistIds: string[] = Array.isArray(ctx.checklists)
       ? ctx.checklists.filter((x: any) => typeof x === "string")
       : [];
-    state.linked_lists = await loadLinkedLists(supabase, parent.checklist_id, attachedChecklistIds);
-
-    const { data: gallery } = await supabase
-      .from("media_assets")
-      .select("title, url, kind")
-      .eq("user_id", parent.user_id)
-      .order("created_at", { ascending: false })
-      .limit(200);
-    state.gallery = (gallery ?? []) as any[];
+    // Only load checklists the user explicitly attached. No BFS over inline
+    // checklist links, no full-gallery snapshot.
+    state.linked_lists = await loadAttachedLists(supabase, attachedChecklistIds);
+    state.gallery = [];
 
     state.attached_media = Array.isArray(ctx.media)
       ? ctx.media.filter((m: any) => m && typeof m.url === "string").slice(0, 30)
@@ -675,7 +600,7 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
       await persist();
       return { done: false };
     }
-    const { catalog, currentAttached } = buildCatalog(state, lineIdx);
+    const { catalog } = buildCatalog(state);
     const linkedText = buildLinkedContextText(state);
     const upcoming = (state.input_lines ?? []).slice(lineIdx + 1, lineIdx + 4).map((l: any) => l.text).filter(Boolean);
     const priorOutputsSummary = (state.outputs ?? []).map((o: any, i: number) => {
@@ -695,7 +620,6 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     try {
       decision = await callFn("plan-action-sequence", {
         current_line: line.text,
-        current_line_attached: currentAttached,
         prior_outputs_summary: priorOutputsSummary,
         upcoming_lines_preview: upcoming,
         catalog,
@@ -753,7 +677,7 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
       return abortSequence(`video budget reached (${maxVideos})`);
     }
 
-    const { catalog } = buildCatalog(state, lineIdx);
+    const { catalog } = buildCatalog(state);
     const refs = step.input_refs ?? {};
 
     const resolveList = (arr: any[], kind: "image" | "video" | "audio") => {
