@@ -1238,7 +1238,8 @@ const ChecklistPage = () => {
                   keepaliveRef.current?.blur();
                 }}
                 onContextMenu={(e) => e.preventDefault()}
-                className="flex-1 h-28 rounded-none shadow-floating select-none touch-none bg-action-green text-action-green-foreground hover:bg-action-green/90"
+                style={{ ["--shimmer-delay" as any]: "3.2s" }}
+                className="flex-1 h-28 rounded-none select-none touch-none text-action-green-foreground btn-metallic-green btn-shimmer"
               >
                 <Check className="h-8 w-8" />
               </Button>
