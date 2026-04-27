@@ -65,8 +65,8 @@ const FilledRow = ({ asset, icon: Icon, onClear, onChange }: FilledRowProps) => 
 );
 
 export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, onGenerate, generateLabel = "Generate" }: Props) => {
-  const [aspect, setAspect] = useState<GenOptions["aspectRatio"]>("1:1");
-  const [quality, setQuality] = useState<GenOptions["quality"]>("standard");
+  const [aspect, setAspect] = useState<GenOptions["aspectRatio"]>("9:16");
+  const [quality, setQuality] = useState<GenOptions["quality"]>("high");
   const [assets, setAssets] = useState<MediaAsset[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -93,7 +93,7 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
   const [audioAsset, setAudioAsset] = useState<MediaAsset | null>(null);
   const [audioPickerOpen, setAudioPickerOpen] = useState(false);
   const [talkingStyle, setTalkingStyle] = useState<"stable" | "expressive">("stable");
-  const [resolution, setResolution] = useState<"360p" | "480p" | "540p" | "720p" | "1080p">("720p");
+  const [resolution, setResolution] = useState<"360p" | "480p" | "540p" | "720p" | "1080p">("1080p");
   const [caption, setCaption] = useState<boolean>(false);
 
   // Scroll-to-field refs
