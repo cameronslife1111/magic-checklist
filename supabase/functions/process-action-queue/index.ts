@@ -285,21 +285,31 @@ async function appendItemToChecklist(
   });
 }
 
-function looseMatchGalleryName(needle: string, gallery: { name: string; url: string; type: string }[], wantType?: string) {
+// Unified media catalog entry the per-line planner can pick from.
+type CatalogEntry = {
+  handle: string;
+  name: string;
+  url: string;
+  type: "image" | "video" | "audio";
+  source: string;
+};
+
+const norm = (s: string) => (s ?? "").toLowerCase().replace(/\s+/g, " ").trim();
+
+function looseMatchCatalog(needle: string, catalog: CatalogEntry[], wantType?: "image" | "video" | "audio") {
   if (!needle) return null;
-  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
   const n = norm(needle);
-  const candidates = wantType ? gallery.filter((g) => g.type === wantType) : gallery;
-  let best: { item: typeof candidates[number]; score: number } | null = null;
+  if (!n) return null;
+  const candidates = wantType ? catalog.filter((c) => c.type === wantType) : catalog;
+  let best: { item: CatalogEntry; score: number } | null = null;
   for (const g of candidates) {
     const gn = norm(g.name);
     let score = 0;
     if (gn === n) score = 1000;
     else if (gn.includes(n) || n.includes(gn)) score = 500 - Math.abs(gn.length - n.length);
     else {
-      // token overlap
       const ts = new Set(gn.split(/\s+/));
-      const overlap = n.split(/\s+/).filter((t) => ts.has(t)).length;
+      const overlap = n.split(/\s+/).filter((t) => t && ts.has(t)).length;
       if (overlap > 0) score = overlap * 10;
     }
     if (score > 0 && (!best || score > best.score)) best = { item: g, score };
@@ -307,21 +317,185 @@ function looseMatchGalleryName(needle: string, gallery: { name: string; url: str
   return best?.item ?? null;
 }
 
-// Resolve a planner ref string ("step:N" or a gallery name) to a URL.
-function resolveRef(ref: string, kind: "image" | "video" | "audio", state: any): string | null {
+function topNCatalog(needle: string, catalog: CatalogEntry[], n = 3): CatalogEntry[] {
+  const nn = norm(needle);
+  if (!nn) return catalog.slice(0, n);
+  const scored = catalog.map((c) => {
+    const gn = norm(c.name);
+    let score = 0;
+    if (gn === nn) score = 1000;
+    else if (gn.includes(nn) || nn.includes(gn)) score = 500 - Math.abs(gn.length - nn.length);
+    else {
+      const ts = new Set(gn.split(/\s+/));
+      const overlap = nn.split(/\s+/).filter((t) => t && ts.has(t)).length;
+      score = overlap * 10;
+    }
+    return { c, score };
+  }).sort((a, b) => b.score - a.score);
+  return scored.slice(0, n).map((x) => x.c);
+}
+
+// Resolve a planner ref string to a CatalogEntry. Handles take precedence; otherwise loose-match by name.
+function resolveRef(ref: string, kind: "image" | "video" | "audio", catalog: CatalogEntry[]): CatalogEntry | null {
   if (!ref) return null;
-  if (ref.startsWith("step:")) {
-    const idx = Number(ref.slice(5));
-    if (!Number.isFinite(idx)) return null;
-    const out = state?.outputs?.[idx];
-    if (!out) return null;
-    if (kind === "image" && out.media_type === "image") return out.media_url ?? null;
-    if (kind === "video" && out.media_type === "video") return out.media_url ?? null;
-    return out.media_url ?? null;
+  // Exact-handle match.
+  for (const c of catalog) {
+    if (c.handle === ref) return c.type === kind ? c : null;
   }
-  const gallery = state?.gallery_index ?? [];
-  const match = looseMatchGalleryName(ref, gallery, kind);
-  return match?.url ?? null;
+  // step:N short-circuit (handles are also in catalog under step:N, but be lenient)
+  if (ref.startsWith("step:") || ref.startsWith("line:") || ref.startsWith("linked:") ||
+      ref.startsWith("gallery:") || ref.startsWith("attached:")) {
+    return null; // handle didn't exist in catalog
+  }
+  // Loose name match.
+  const m = looseMatchCatalog(ref, catalog, kind);
+  return m;
+}
+
+// Snippet for human-readable labels.
+const snip = (s: string, n = 60) => {
+  const t = (s ?? "").trim().replace(/\s+/g, " ");
+  return t.length > n ? t.slice(0, n - 1) + "…" : t;
+};
+
+function detectKind(mediaType: string | null | undefined, url: string | null | undefined): "image" | "video" | "audio" | null {
+  if (mediaType === "image" || mediaType === "video" || mediaType === "audio") return mediaType;
+  if (typeof url === "string") {
+    if (/\.(mp4|webm|mov|m4v)(\?|$)/i.test(url)) return "video";
+    if (/\.(mp3|wav|m4a|ogg|aac)(\?|$)/i.test(url)) return "audio";
+    if (/\.(png|jpe?g|webp|gif|avif)(\?|$)/i.test(url)) return "image";
+  }
+  return null;
+}
+
+// Load up to 5 linked checklists referenced by the input checklist's items (1 hop).
+async function loadLinkedLists(supabase: any, inputChecklistId: string) {
+  const { data: refs } = await supabase
+    .from("checklist_items")
+    .select("linked_checklist_id")
+    .eq("checklist_id", inputChecklistId)
+    .not("linked_checklist_id", "is", null);
+  const ids = Array.from(new Set(((refs ?? []) as any[])
+    .map((r) => r.linked_checklist_id).filter((x: any) => typeof x === "string"))).slice(0, 5);
+  if (ids.length === 0) return [];
+  const { data: lists } = await supabase.from("checklists").select("id,title").in("id", ids);
+  const { data: items } = await supabase
+    .from("checklist_items")
+    .select("checklist_id, text, position, media_url, media_type")
+    .in("checklist_id", ids)
+    .order("position", { ascending: true });
+  const titleMap = new Map(((lists ?? []) as any[]).map((l) => [l.id, l.title]));
+  const grouped = new Map<string, any[]>();
+  for (const it of (items ?? []) as any[]) {
+    const arr = grouped.get(it.checklist_id) ?? [];
+    if (arr.length < 50) arr.push(it);
+    grouped.set(it.checklist_id, arr);
+  }
+  return ids.map((id, idx) => ({
+    list_idx: idx,
+    list_id: id,
+    title: titleMap.get(id) ?? "Untitled",
+    items: grouped.get(id) ?? [],
+  }));
+}
+
+// Build the per-step catalog from sequence_state + the line being planned.
+function buildCatalog(state: any, currentLineIdx: number): { catalog: CatalogEntry[]; currentAttached: CatalogEntry | null } {
+  const out: CatalogEntry[] = [];
+  let currentAttached: CatalogEntry | null = null;
+
+  // 1) Prior step outputs (image/video only — refs need URLs the tools can use).
+  const outputs: any[] = state.outputs ?? [];
+  outputs.forEach((o, i) => {
+    if (!o || !o.media_url) return;
+    const k = detectKind(o.media_type, o.media_url);
+    if (!k) return;
+    out.push({
+      handle: `step:${i}`,
+      name: o.name ?? `Step ${i + 1} output`,
+      url: o.media_url,
+      type: k,
+      source: "step-output",
+    });
+  });
+
+  // 2) Input checklist line media.
+  const inputLines: any[] = state.input_lines ?? [];
+  inputLines.forEach((line, i) => {
+    if (!line?.media_url) return;
+    const k = detectKind(line.media_type, line.media_url);
+    if (!k) return;
+    const entry: CatalogEntry = {
+      handle: i === currentLineIdx ? "line:current" : `line:${i}`,
+      name: snip(line.text || `Line ${i + 1}`),
+      url: line.media_url,
+      type: k,
+      source: i === currentLineIdx ? "current-line" : "input-line",
+    };
+    out.push(entry);
+    if (i === currentLineIdx) currentAttached = entry;
+  });
+
+  // 3) Linked checklist line media.
+  const linked: any[] = state.linked_lists ?? [];
+  linked.forEach((ll, lIdx) => {
+    (ll.items ?? []).forEach((it: any, iIdx: number) => {
+      if (!it?.media_url) return;
+      const k = detectKind(it.media_type, it.media_url);
+      if (!k) return;
+      out.push({
+        handle: `linked:${lIdx}:${iIdx}`,
+        name: `${ll.title} – ${snip(it.text || `Line ${iIdx + 1}`, 40)}`,
+        url: it.media_url,
+        type: k,
+        source: "linked-line",
+      });
+    });
+  });
+
+  // 4) Gallery snapshot.
+  const gallery: any[] = state.gallery ?? [];
+  gallery.forEach((g, i) => {
+    if (!g?.url) return;
+    const k = detectKind(g.kind, g.url);
+    if (!k) return;
+    out.push({
+      handle: `gallery:${i}`,
+      name: g.title ?? "Untitled",
+      url: g.url,
+      type: k,
+      source: "gallery",
+    });
+  });
+
+  // 5) Attached context media (from ContextAttacher).
+  const attached: any[] = state.attached_media ?? [];
+  attached.forEach((m, i) => {
+    if (!m?.url) return;
+    const k = detectKind(m.type, m.url);
+    if (!k) return;
+    out.push({
+      handle: `attached:${i}`,
+      name: m.name ?? `Attached ${i + 1}`,
+      url: m.url,
+      type: k,
+      source: "attached",
+    });
+  });
+
+  return { catalog: out.slice(0, 300), currentAttached };
+}
+
+function buildLinkedContextText(state: any): string {
+  const linked: any[] = state.linked_lists ?? [];
+  if (linked.length === 0) return "";
+  const blocks: string[] = [];
+  for (const ll of linked) {
+    const lines = (ll.items ?? []).map((it: any) => it.text).filter((t: any) => typeof t === "string" && t.trim());
+    if (lines.length === 0) continue;
+    blocks.push(`### Steps from linked checklist "${ll.title}"\n${lines.map((l: string) => `- ${l}`).join("\n")}`);
+  }
+  return blocks.join("\n\n");
 }
 
 // One state-machine tick for an action-sequence parent. Idempotent and bounded.
