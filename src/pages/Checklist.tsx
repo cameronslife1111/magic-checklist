@@ -67,6 +67,7 @@ const ChecklistPage = () => {
   const [pendingContext, setPendingContext] = useState<AttachedContext>({ checklists: [], media: [] });
   const [focusItemId, setFocusItemId] = useState<string | null>(null);
   const [reorderMode, setReorderMode] = useState(false);
+  const [sequenceOpen, setSequenceOpen] = useState(false);
   const [muted, setMutedState] = useState<boolean>(() => isMuted());
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
