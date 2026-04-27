@@ -33,11 +33,13 @@ type Job = {
   max_attempts: number;
   created_at: string;
   completed_at: string | null;
+  parent_job_id: string | null;
+  sequence_step: number | null;
   attachments: Attachments;
 };
 
 // Payloads are bounded to <=200KB by enqueue-action; safe to fetch for the dashboard.
-const JOB_COLS = "id,user_id,checklist_id,source_item_id,action_type,status,prompt_preview,error_raw,error_friendly,error_fix,scheduled_for,recurrence,attempts,max_attempts,created_at,completed_at,payload";
+const JOB_COLS = "id,user_id,checklist_id,source_item_id,action_type,status,prompt_preview,error_raw,error_friendly,error_fix,scheduled_for,recurrence,attempts,max_attempts,created_at,completed_at,parent_job_id,sequence_step,payload";
 
 const isHttpUrl = (u: unknown): u is string =>
   typeof u === "string" && (u.startsWith("http://") || u.startsWith("https://"));
@@ -80,8 +82,10 @@ const ACTION_LABELS: Record<string, string> = {
   "remix": "Remix images",
   "image-video": "Image to video",
   "video-video": "Video to video",
+  "audio-image-video": "Audio + image to video",
   "analyze-image": "Analyze image",
   "web-search": "Web search",
+  "action-sequence": "Action Sequence",
 };
 
 const fmt = (iso: string | null) => {
@@ -191,6 +195,51 @@ const AttachmentsBlock = ({
   );
 };
 
+// Renders a list of jobs with sequence children visually grouped under their parent.
+// `jobs` are the rows visible in the current tab; `allJobs` is the full job list
+// so we can find children of a parent that lives in this tab even if the children
+// happen to belong to another status (e.g. a still-running parent with completed children).
+const GroupedJobList = ({
+  jobs, allJobs, renderRow,
+}: {
+  jobs: Job[];
+  allJobs: Job[];
+  renderRow: (j: Job) => React.ReactNode;
+}) => {
+  const visibleIds = new Set(jobs.map((j) => j.id));
+  // Hide child jobs whose parent is also visible in this tab — they'll render under the parent.
+  const topLevel = jobs.filter((j) => !(j.parent_job_id && visibleIds.has(j.parent_job_id)));
+
+  return (
+    <ul className="flex flex-col gap-2 mt-3">
+      {topLevel.map((j) => {
+        const children = j.action_type === "action-sequence"
+          ? allJobs
+              .filter((c) => c.parent_job_id === j.id)
+              .sort((a, b) => (a.sequence_step ?? 0) - (b.sequence_step ?? 0) || a.created_at.localeCompare(b.created_at))
+          : [];
+        return (
+          <li key={j.id} className="flex flex-col gap-2">
+            {renderRow(j)}
+            {children.length > 0 && (
+              <ul className="flex flex-col gap-2 ml-4 pl-3 border-l-2 border-blue-500/30">
+                {children.map((c) => (
+                  <div key={c.id} className="relative">
+                    <span className="absolute -left-3 top-3 text-[10px] font-semibold text-blue-500/70">
+                      {typeof c.sequence_step === "number" ? `#${c.sequence_step + 1}` : ""}
+                    </span>
+                    {renderRow(c)}
+                  </div>
+                ))}
+              </ul>
+            )}
+          </li>
+        );
+      })}
+    </ul>
+  );
+};
+
 const ActionQueue = () => {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
@@ -242,6 +291,8 @@ const ActionQueue = () => {
       max_attempts: r.max_attempts ?? 3,
       created_at: r.created_at,
       completed_at: r.completed_at ?? null,
+      parent_job_id: r.parent_job_id ?? null,
+      sequence_step: r.sequence_step ?? null,
       attachments: deriveAttachments(r.action_type, r.payload),
     }));
     setJobs(mapped);
@@ -288,6 +339,8 @@ const ActionQueue = () => {
             max_attempts: raw.max_attempts ?? 3,
             created_at: raw.created_at,
             completed_at: raw.completed_at ?? null,
+            parent_job_id: raw.parent_job_id ?? null,
+            sequence_step: raw.sequence_step ?? null,
             attachments: deriveAttachments(raw.action_type, raw.payload),
           };
           setJobs((prev) => {
@@ -552,15 +605,15 @@ const ActionQueue = () => {
           <TabsContent value="queue">
             {loading ? <p className="text-muted-foreground text-sm py-6 text-center">Loading…</p>
               : inQueue.length === 0 ? <p className="text-muted-foreground text-sm py-6 text-center">No queued actions.</p>
-              : <ul className="flex flex-col gap-2 mt-3">{inQueue.map((j) => <JobRow key={j.id} j={j} />)}</ul>}
+              : <GroupedJobList jobs={inQueue} allJobs={jobs} renderRow={(j) => <JobRow key={j.id} j={j} />} />}
           </TabsContent>
           <TabsContent value="completed">
             {completed.length === 0 ? <p className="text-muted-foreground text-sm py-6 text-center">No completed actions yet.</p>
-              : <ul className="flex flex-col gap-2 mt-3">{completed.map((j) => <JobRow key={j.id} j={j} />)}</ul>}
+              : <GroupedJobList jobs={completed} allJobs={jobs} renderRow={(j) => <JobRow key={j.id} j={j} />} />}
           </TabsContent>
           <TabsContent value="failed">
             {failed.length === 0 ? <p className="text-muted-foreground text-sm py-6 text-center">No failed or stopped actions.</p>
-              : <ul className="flex flex-col gap-2 mt-3">{failed.map((j) => <JobRow key={j.id} j={j} />)}</ul>}
+              : <GroupedJobList jobs={failed} allJobs={jobs} renderRow={(j) => <JobRow key={j.id} j={j} />} />}
           </TabsContent>
         </Tabs>
       </main>
