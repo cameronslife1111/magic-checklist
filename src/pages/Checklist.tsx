@@ -1403,6 +1403,42 @@ const ChecklistPage = () => {
         context={pendingContext}
         onContextChange={setPendingContext}
       />
+      {checklist && user && (
+        <RunSequenceDialog
+          open={sequenceOpen}
+          userId={user.id}
+          currentChecklist={{ id: checklist.id, title: checklist.title }}
+          onClose={() => setSequenceOpen(false)}
+          onSubmit={async (args) => {
+            const { error } = await supabase.functions.invoke("enqueue-action", {
+              body: {
+                action_type: "action-sequence",
+                checklist_id: checklist.id,
+                source_item_id: null,
+                payload: {
+                  output_checklist_id: args.output_checklist_id,
+                  max_steps: args.max_steps,
+                  max_images: args.max_images,
+                  max_videos: args.max_videos,
+                  max_runtime_minutes: args.max_runtime_minutes,
+                  max_images_per_step: args.max_images_per_step,
+                  allowed_actions: args.allowed_actions,
+                  context: {
+                    checklists: args.context.checklists.map((c) => c.id),
+                    media: args.context.media.map((m) => ({ url: m.url, type: m.type, name: m.name })),
+                  },
+                },
+              },
+            });
+            if (error) {
+              toast.error("Could not start sequence. Try again.");
+            } else {
+              toast.success("Action sequence queued — planning steps…");
+              setSequenceOpen(false);
+            }
+          }}
+        />
+      )}
     </div>
   );
 };
