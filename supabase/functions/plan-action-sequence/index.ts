@@ -40,7 +40,7 @@ Your job: decide the SINGLE next action for this one line. You return exactly on
 Decision kinds:
 - "tool_call": this line maps to one tool invocation. Provide the step.
 - "compound": this line legitimately needs 2 or 3 chained tool calls (e.g. "make an image of X then turn it into a video"). Max 3 sub-steps. Use sparingly.
-- "no_action": this line is a heading, narration, blank, comment, or otherwise not actionable. No tool call.
+- "no_action": this line is a heading, narration, blank, comment, or otherwise not actionable, OR the line needs reference media that simply isn't in the catalog. No tool call.
 
 Available tools (use ONLY these, and only those listed in allowed_actions):
 - text-text: text from prompt.
@@ -54,18 +54,21 @@ Available tools (use ONLY these, and only those listed in allowed_actions):
 - analyze-image: describe/answer about 1 image. REQUIRES 1 image ref.
 
 Reference rules — CRITICAL:
-1. Refs MUST come from the provided catalog. Use the entry's "handle" verbatim (e.g. "step:2", "line:current", "line:4", "linked:0:3", "gallery:7", "attached:1"). If you don't know a handle, use the entry's "name" — the system will loose-match it.
-2. NEVER invent URLs and NEVER invent names that aren't in the catalog.
-3. If the current line has "current_line_attached" set, treat that media as the PRIMARY subject of this line unless the line text clearly says otherwise. Reference it as "line:current".
-4. If the line says "the previous image", "the result", "what we just made", etc., prefer the most recent matching entry from prior_outputs_summary, referenced as "step:N".
-5. If the line names a specific gallery item, prefer that gallery entry's handle.
-6. If the line says "follow the steps from <list>" or similar, the linked-list text is in linked_context_text — incorporate it into your prompt; you do not need to spawn a separate step for that mention itself.
+1. Refs MUST come from the provided catalog. Use the entry's "handle" verbatim. The only valid handle prefixes are:
+   - "step:N" — an output produced earlier in this same run.
+   - "linked:L:I" — media inside a checklist the user attached as context for this run.
+   - "attached:N" — a media item the user attached from their gallery for this run.
+   If you don't know a handle, use the entry's "name" — the system will loose-match it.
+2. NEVER invent URLs and NEVER invent names that aren't in the catalog. There is no implicit access to the user's wider media gallery, and no per-line attached media on the input checklist — only what appears in the catalog exists.
+3. If the line says "the previous image", "the result", "what we just made", etc., prefer the most recent matching entry from prior_outputs_summary, referenced as "step:N".
+4. If the line names a specific item by name, find it in the catalog (under linked:* or attached:*).
+5. If the line says "follow the steps from <list>" or similar, the linked-list text is in linked_context_text — incorporate it into your prompt; you do not need to spawn a separate step for that mention itself.
+6. If the line clearly needs a reference image/video/audio but nothing suitable exists in the catalog, return "no_action" with a brief reason explaining what was missing. Do NOT guess or substitute unrelated media.
 
 Other rules:
 - Each step prompt must be self-contained and concrete (the tool sees only the prompt + refs, not the original line).
 - For aspect ratio cues ("vertical"/"portrait" -> "9:16", "landscape"/"horizontal" -> "16:9", "square" -> "1:1"), set aspect_ratio.
 - count: only set when the line explicitly asks for N copies of the SAME thing (max 5).
-- If a required ref type cannot be found in the catalog, still emit the tool_call with the best ref name you found; the worker will report a precise miss to the user. But if the line clearly cannot map to any allowed tool, return no_action with a short reason.
 - Do NOT include the literal line text in the prompt — rewrite it as a clean instruction for the tool.`;
 
 const TOOL_SCHEMA = {
