@@ -913,42 +913,45 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<Job
       return { kind: "result", result: { text: out.text } };
     }
     case "text-image": {
+      // ASYNC: submit to Fal and hand off. The poll loop completes the job on
+      // a later tick, so the worker never waits past the 150s edge-fn limit.
       const prompt = buildPrompt(p.prompt, ctx, false);
-      // Pass any context image URLs straight through (no fetch/base64/re-upload).
       const out = await callFn("lovable-image", {
+        mode: "submit",
         prompt, aspectRatio: p.aspectRatio, quality: p.quality,
         refImageUrls: ctx.imageUrls,
       }, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-      const url = await uploadDataUrl(supabase, job.user_id, out.dataUrl, "png");
-      const title = await registerGeneratedAsset(supabase, job, {
-        url, kind: "image", mimeType: "image/png", baseLabel: "Generated image",
-      });
-      await insertResultItem(supabase, job, { text: title, media_url: url, media_type: "image" });
-      return { kind: "result", result: { media_url: url } };
+      if (!out.status_url || !out.response_url) throw new Error("lovable-image did not return a queue handle");
+      return {
+        kind: "handoff",
+        provider: "lovable-image",
+        status_url: out.status_url,
+        response_url: out.response_url,
+        request_id: out.request_id ?? null,
+      };
     }
     case "image-image":
     case "remix": {
+      // ASYNC: same submit/poll handoff as text-image.
       const prompt = buildPrompt(p.prompt, ctx, false);
-      // Fast path: forward all URLs directly to lovable-image (no download/base64).
       const galleryUrls: string[] = Array.isArray(p.refImageUrls) ? p.refImageUrls : [];
       const refImageUrls = [...galleryUrls, ...ctx.imageUrls].slice(0, 16);
-      // Legacy: data URL refs (old queued jobs only). Don't compute these for new jobs.
       const refImages: string[] = Array.isArray(p.refImages) ? p.refImages : [];
       const out = await callFn("lovable-image", {
+        mode: "submit",
         prompt, aspectRatio: p.aspectRatio, quality: p.quality,
         refImageUrls, refImages,
       }, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
-      const url = await uploadDataUrl(supabase, job.user_id, out.dataUrl, "png");
-      const baseLabel = job.action_type === "remix" ? "Remixed image" : "Edited image";
-      const title = await registerGeneratedAsset(supabase, job, {
-        url, kind: "image", mimeType: "image/png", baseLabel,
-      });
-      await insertResultItem(supabase, job, {
-        text: title, media_url: url, media_type: "image",
-      });
-      return { kind: "result", result: { media_url: url } };
+      if (!out.status_url || !out.response_url) throw new Error("lovable-image did not return a queue handle");
+      return {
+        kind: "handoff",
+        provider: "lovable-image",
+        status_url: out.status_url,
+        response_url: out.response_url,
+        request_id: out.request_id ?? null,
+      };
     }
     case "image-video":
     case "video-video": {
