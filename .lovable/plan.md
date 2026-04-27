@@ -1,59 +1,59 @@
-# Switch 4 AI functions to OpenAI `gpt-5.4-2026-03-05`
+## The Problem (first principles)
 
-Route `plan-action-sequence`, `process-action-queue` (its inline error explainer + any text-text calls), `explain-error`, and `openai-text` to OpenAI's `gpt-5.4-2026-03-05` model, called directly via `https://api.openai.com/v1/chat/completions` using the existing `OPENAI_API_KEY` secret (already configured).
+Image generation hits `lovable-image 504: IDLE_TIMEOUT 150s`. Why?
 
-> Heads-up I logged earlier and you've acknowledged: I cannot independently verify this model ID exists. If OpenAI returns 404 "model not found", **all four functions will fail simultaneously**. To make that survivable, every call gets clear error logging and surfaces the OpenAI error text back to the caller so we can diagnose in one shot and roll back if needed.
+1. Supabase Edge Functions enforce a **150s wall-clock idle limit** per request.
+2. `lovable-image` does a **synchronous wait**: it submits to Fal's queue, then polls for up to ~230s before returning.
+3. The worker (`process-action-queue`) calls `lovable-image` and *also* waits synchronously for that response.
+4. When Fal's GPT Image 2 takes >150s (which happens regularly under load, especially for edits with multiple reference images), the gateway kills the connection → 504 → the job is marked failed even though Fal may still finish the image successfully a few seconds later.
 
-## What changes per file
+The video pipeline (`fal-video`, `fal-avatar`) **already solved this exact problem** with a `submit` / `poll` two-phase handoff: the worker stores the Fal queue handle on the job row and the cron-triggered worker polls it on subsequent ticks. There is **no synchronous wait**, so 150s is a non-issue. Images need the same pattern.
 
-### 1. `supabase/functions/openai-text/index.ts`
-- Change model from the broken `gpt-5.5-2026-04-23` to `gpt-5.4-2026-03-05`.
-- Keep the existing direct-OpenAI fetch and `OPENAI_API_KEY` usage.
-- On non-OK response, log status + body and return the OpenAI error text in the JSON response (currently it returns a generic "openai error").
+## The Fix
 
-### 2. `supabase/functions/explain-error/index.ts`
-- Replace the Lovable AI Gateway call (`ai.gateway.lovable.dev`, `google/gemini-2.5-flash`, `LOVABLE_API_KEY`) with a direct OpenAI call to `gpt-5.4-2026-03-05` using `OPENAI_API_KEY`.
-- Keep `response_format: { type: "json_object" }` for the `{cause, fix}` JSON shape.
-- Keep the same fallback behavior (return raw error truncated) if the call fails — this function must never throw, since it's called from the worker's error path.
+Convert `lovable-image` to the same async submit/poll handoff used by `fal-video`, and route `text-image` / `image-image` / `remix` through the existing handoff machinery in `process-action-queue`.
 
-### 3. `supabase/functions/process-action-queue/index.ts`
-Two LLM call sites in this file:
-- **`explainErrorInline` (line ~47-73)**: same swap as #2 — direct OpenAI, `gpt-5.4-2026-03-05`, `OPENAI_API_KEY`, JSON response_format. Same silent-fallback behavior.
-- **The `text-text` action handler**: currently uses Lovable AI / `google/gemini-2.5-flash`. Swap to direct OpenAI / `gpt-5.4-2026-03-05`. Bubble OpenAI error text up into the job's `error_message` so failures are visible in the Action Queue UI instead of a generic "AI error".
+### 1. `supabase/functions/lovable-image/index.ts` — add two modes
 
-### 4. `supabase/functions/plan-action-sequence/index.ts`
-- Replace the Lovable AI Gateway call with direct OpenAI to `gpt-5.4-2026-03-05`.
-- **Keep the tool-calling schema unchanged** — OpenAI's chat completions API supports the same `tools` + `tool_choice` shape we're already sending, so the planner's structured output contract (`decide` tool with `kind`/`step`/`steps`) carries over verbatim.
-- Update the error mapping: keep 429 → "rate limited", but rename 402 → "OpenAI quota exhausted, check billing" (Lovable credits don't apply here anymore).
-- Keep the safety fallback: if the model returns no tool call or invalid JSON, still return `{kind:"no_action", reason:"..."}` so the worker doesn't get stuck.
+Keep the existing single-shot behavior for backward compatibility (one-off UI calls outside the queue), but add:
 
-## What does NOT change
-- `supabase/functions/openai-vision/index.ts` (you didn't ask to touch it; still on `gpt-4o-mini`).
-- `lovable-image`, `fal-video`, `fal-avatar`, `perplexity-search` — unrelated providers.
-- `supabase/config.toml` — all four functions already have correct `verify_jwt` settings.
-- No DB migrations, no UI changes, no client changes.
+- **`mode: "submit"`** — POSTs to `https://queue.fal.run/openai/gpt-image-2` (or `/edit` when refs are present) and returns immediately with `{ request_id, status_url, response_url }`. No polling. Returns in <2s.
+- **`mode: "poll"`** — given `{ statusUrl, responseUrl }`, does **one** `GET status_url`. If `COMPLETED`, fetches `response_url`, downloads the image, and returns `{ status: "COMPLETED", dataUrl }`. If `IN_PROGRESS`, returns `{ status: "IN_PROGRESS" }`. If `FAILED`, returns `{ status: "FAILED", error }`. Single round-trip, finishes in <5s — well under the 150s limit.
 
-## Secrets / config
-- `OPENAI_API_KEY` is already set in Supabase secrets — no action required from you.
-- `LOVABLE_API_KEY` stays in place (still used by other features); these 4 functions just stop calling it.
+When `mode` is omitted, behave like today (used by any direct UI calls that aren't through the queue).
 
-## Rollback plan
-If `gpt-5.4-2026-03-05` returns 404 from OpenAI after deploy, the fastest fix is one of:
-- (a) swap the model string to `gpt-5.2` (confirmed-available OpenAI model) in all 4 files, or
-- (b) revert the three Lovable-gateway functions back to `google/gemini-2.5-flash`.
+### 2. `supabase/functions/process-action-queue/index.ts` — handoff for images
 
-I'll watch the first deploy + a test invocation of `openai-text` and `explain-error` and report back the exact OpenAI response so we know within seconds whether the ID is valid.
+In `runJob`, change the three image cases (`text-image`, `image-image`, `remix`) to:
 
-## Technical details
+1. Call `lovable-image` with `mode: "submit"` instead of waiting for the final image.
+2. Return `{ kind: "handoff", provider: "lovable-image", status_url, response_url, request_id }` — exactly the same shape used today by `image-video` / `video-video` / `audio-image-video`.
 
-- All four call sites use the same shape:
-  ```ts
-  fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ model: "gpt-5.4-2026-03-05", messages, /* tools/response_format as needed */ }),
-  })
-  ```
-- The planner keeps `tools: [TOOL_SCHEMA]` and `tool_choice: { type: "function", function: { name: "decide" } }` — OpenAI-compatible.
-- `explain-error` and `explainErrorInline` keep `response_format: { type: "json_object" }` — OpenAI-compatible.
-- Error surfacing: on non-OK, log `status` + first 500 chars of body, and (for non-silent endpoints) include `openai_status` and `openai_error` fields in the JSON error response so the Action Queue UI's existing error display shows something actionable.
+In **PHASE 1 (poll handoff)** of the worker (around line 1082), extend the dispatch so that when `j.provider === "lovable-image"` it calls `lovable-image` with `mode: "poll"` instead of `fal-video` / `fal-avatar`. On `COMPLETED`, run the existing image post-processing path:
+
+- `uploadDataUrl(...)` → Storage
+- `registerGeneratedAsset(...)` → Media Gallery (`Generated image` / `Edited image` / `Remixed image` based on the original `action_type`)
+- `insertResultItem(...)` → checklist row with `media_url` + `media_type: "image"`
+
+Mark the job `complete`. On `FAILED`, route through the existing failure path (which already calls `explainErrorInline`). On `IN_PROGRESS`, leave it as `awaiting_provider` to be polled on the next tick.
+
+The handoff record in `action_jobs` already has the right columns (`provider`, `provider_status_url`, `provider_response_url`, `provider_request_id`, `provider_polled_at`) — no schema change needed.
+
+### 3. Sequence runner (`tickSequence`)
+
+The sequence runner dispatches each step through the same `runJob` path and already handles `kind: "handoff"` outcomes for video. Once images return handoffs, sequence steps that generate images will naturally wait across worker ticks the same way video steps do today. The "stuck on image generation" symptom inside Run Sequence disappears because the worker is no longer holding a connection open against the 150s ceiling.
+
+### Why this is the right fix
+
+- **Removes the only failure mode**: there is no longer any synchronous wait that can exceed 150s. Each HTTP call in the chain finishes in seconds.
+- **Reuses a proven pattern**: the exact same handoff shape works in production today for Kling video (which routinely takes 60–300s).
+- **No schema change, no new table, no new cron** — `action_jobs` already has the provider-handoff columns and the worker already polls them every minute (and within ~8s on the fast path).
+- **Backward compatible**: the no-`mode` form of `lovable-image` still works for any direct UI invocation.
+- **Cancellation still works**: a user cancelling an in-flight image job is observed during the next poll tick, just like video today.
+
+### Files touched
+
+- `supabase/functions/lovable-image/index.ts` — refactor to add `submit` / `poll` modes (single shot path retained).
+- `supabase/functions/process-action-queue/index.ts` — image cases return `handoff`; PHASE 1 poller dispatches `lovable-image` and runs image post-processing on `COMPLETED`.
+
+No frontend, DB, or `config.toml` changes required.
