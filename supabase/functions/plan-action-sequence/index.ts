@@ -1,7 +1,7 @@
-// Plan an action sequence: turn checklist instructions + context into an
-// ordered list of tool calls (text-text, text-image, image-image, remix,
-// image-video, video-video, audio-image-video, analyze-image, web-search).
-// Pure planner — no side effects. Returns strict JSON validated against caps.
+// Per-line planner for the Action Sequence agent.
+// Given ONE checklist line plus a rich media catalog (handles + names + types),
+// returns exactly one decision: tool_call | compound (<=3 sub-steps) | no_action.
+// Uses tool-calling for structured output to avoid JSON parse failures.
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -16,7 +16,12 @@ const ALL_ACTIONS = [
 
 type ActionType = typeof ALL_ACTIONS[number];
 
-type GalleryItem = { name: string; url: string; type: "image" | "video" | "audio" };
+type CatalogEntry = {
+  handle: string;
+  name: string;
+  type: "image" | "video" | "audio";
+  source: string;
+};
 
 type PlanStep = {
   action_type: ActionType;
@@ -28,35 +33,104 @@ type PlanStep = {
   note?: string;
 };
 
-type Plan = { steps: PlanStep[]; rationale: string };
+const SYSTEM = `You are a per-line planner for a multi-step AI agent. The user has a checklist; you receive ONE line at a time plus a catalog of every media file the agent can use right now.
 
-const SYSTEM = `You are a planner for a checklist-driven AI workflow agent. The user's checklist is a list of natural-language instructions. Convert it into an ORDERED plan of tool calls.
+Your job: decide the SINGLE next action for this one line. You return exactly one decision via the "decide" tool.
 
-You have these tools (and ONLY these):
-- text-text: generate text from a prompt (+ optional text/image context).
-- web-search: search the web and return a summary.
-- text-image: generate an image from a prompt. Optionally refImages (image refs) for style.
-- image-image: edit one image with a prompt. Requires 1+ image refs.
-- remix: combine multiple images into a new image. Requires 2+ image refs.
-- image-video: turn an image into a short video. Requires 1 image ref.
-- video-video: edit a video with a prompt. Requires 1 video ref.
-- audio-image-video: lip-sync / talking-head from 1 image + 1 audio.
-- analyze-image: describe / answer a question about 1 image.
+Decision kinds:
+- "tool_call": this line maps to one tool invocation. Provide the step.
+- "compound": this line legitimately needs 2 or 3 chained tool calls (e.g. "make an image of X then turn it into a video"). Max 3 sub-steps. Use sparingly.
+- "no_action": this line is a heading, narration, blank, comment, or otherwise not actionable. No tool call.
 
-Rules:
-1. Output STRICT JSON: {"rationale":"...", "steps":[ ... ]}. No markdown, no comments.
-2. Each step: {"action_type": <tool>, "prompt": <string>, "input_refs"?: {"images"?: [...], "videos"?: [...], "audios"?: [...]}, "aspect_ratio"?: "1:1"|"16:9"|"9:16"|"4:3"|"3:4", "quality"?: "auto"|"standard"|"hd", "count"?: <int>, "note"?: <string>}.
-3. Refs MUST be one of:
-   (a) "step:N" — output of a previous step (0-indexed).
-   (b) An exact or close substring of a name in the provided gallery_index. Use the gallery name verbatim.
-   Never invent URLs. Never put URLs in input_refs.
-4. Only use tools listed in allowed_actions.
-5. NEVER exceed max_steps total steps. NEVER set count > max_images_per_step.
-6. If the user asks for "N of each" image, you MAY emit N separate text-image / remix / image-image steps OR set count=N on a single step (worker will fan out). Prefer count when the prompt is identical.
-7. Keep prompts concrete. Each step's prompt is sent verbatim to the tool.
-8. For aspect ratios mentioned in the instructions (e.g., "9 by 16", "vertical", "portrait"), set aspect_ratio.
-9. If an instruction is unclear or impossible (e.g., references a checklist not provided, a tool not allowed), SKIP it — don't fail the whole plan.
-10. rationale: ONE sentence, max 200 chars, summarizing the plan in plain English.`;
+Available tools (use ONLY these, and only those listed in allowed_actions):
+- text-text: text from prompt.
+- web-search: search the web; returns a summary.
+- text-image: generate an image from a prompt. May include image refs as style/subject inspiration.
+- image-image: edit ONE image with a prompt. REQUIRES >=1 image ref.
+- remix: combine MULTIPLE images. REQUIRES >=1 image ref (>=2 strongly preferred).
+- image-video: turn an image into a short video. REQUIRES exactly 1 image ref.
+- video-video: edit a video. REQUIRES 1 video ref.
+- audio-image-video: lip-sync a talking-head from 1 image + 1 audio. REQUIRES both.
+- analyze-image: describe/answer about 1 image. REQUIRES 1 image ref.
+
+Reference rules — CRITICAL:
+1. Refs MUST come from the provided catalog. Use the entry's "handle" verbatim (e.g. "step:2", "line:current", "line:4", "linked:0:3", "gallery:7", "attached:1"). If you don't know a handle, use the entry's "name" — the system will loose-match it.
+2. NEVER invent URLs and NEVER invent names that aren't in the catalog.
+3. If the current line has "current_line_attached" set, treat that media as the PRIMARY subject of this line unless the line text clearly says otherwise. Reference it as "line:current".
+4. If the line says "the previous image", "the result", "what we just made", etc., prefer the most recent matching entry from prior_outputs_summary, referenced as "step:N".
+5. If the line names a specific gallery item, prefer that gallery entry's handle.
+6. If the line says "follow the steps from <list>" or similar, the linked-list text is in linked_context_text — incorporate it into your prompt; you do not need to spawn a separate step for that mention itself.
+
+Other rules:
+- Each step prompt must be self-contained and concrete (the tool sees only the prompt + refs, not the original line).
+- For aspect ratio cues ("vertical"/"portrait" -> "9:16", "landscape"/"horizontal" -> "16:9", "square" -> "1:1"), set aspect_ratio.
+- count: only set when the line explicitly asks for N copies of the SAME thing (max 5).
+- If a required ref type cannot be found in the catalog, still emit the tool_call with the best ref name you found; the worker will report a precise miss to the user. But if the line clearly cannot map to any allowed tool, return no_action with a short reason.
+- Do NOT include the literal line text in the prompt — rewrite it as a clean instruction for the tool.`;
+
+const TOOL_SCHEMA = {
+  type: "function",
+  function: {
+    name: "decide",
+    description: "Decide the next action for this checklist line.",
+    parameters: {
+      type: "object",
+      properties: {
+        kind: { type: "string", enum: ["tool_call", "compound", "no_action"] },
+        reason: { type: "string", description: "Required when kind=no_action; brief." },
+        step: {
+          type: "object",
+          description: "Required when kind=tool_call.",
+          properties: {
+            action_type: { type: "string", enum: [...ALL_ACTIONS] as any },
+            prompt: { type: "string" },
+            input_refs: {
+              type: "object",
+              properties: {
+                images: { type: "array", items: { type: "string" } },
+                videos: { type: "array", items: { type: "string" } },
+                audios: { type: "array", items: { type: "string" } },
+              },
+              additionalProperties: false,
+            },
+            aspect_ratio: { type: "string", enum: ["1:1", "16:9", "9:16", "4:3", "3:4"] },
+            quality: { type: "string", enum: ["auto", "standard", "hd"] },
+            count: { type: "integer", minimum: 1, maximum: 5 },
+            note: { type: "string" },
+          },
+          required: ["action_type", "prompt"],
+        },
+        steps: {
+          type: "array",
+          description: "Required when kind=compound; 2 or 3 steps.",
+          minItems: 2,
+          maxItems: 3,
+          items: {
+            type: "object",
+            properties: {
+              action_type: { type: "string", enum: [...ALL_ACTIONS] as any },
+              prompt: { type: "string" },
+              input_refs: {
+                type: "object",
+                properties: {
+                  images: { type: "array", items: { type: "string" } },
+                  videos: { type: "array", items: { type: "string" } },
+                  audios: { type: "array", items: { type: "string" } },
+                },
+              },
+              aspect_ratio: { type: "string", enum: ["1:1", "16:9", "9:16", "4:3", "3:4"] },
+              quality: { type: "string", enum: ["auto", "standard", "hd"] },
+              count: { type: "integer", minimum: 1, maximum: 5 },
+              note: { type: "string" },
+            },
+            required: ["action_type", "prompt"],
+          },
+        },
+      },
+      required: ["kind"],
+    },
+  },
+};
 
 function bad(msg: string, status = 400) {
   return new Response(JSON.stringify({ error: msg }), {
@@ -64,39 +138,32 @@ function bad(msg: string, status = 400) {
   });
 }
 
-function clampPlan(raw: any, maxSteps: number, maxImagesPerStep: number, allowed: Set<string>): Plan {
-  const out: Plan = { steps: [], rationale: typeof raw?.rationale === "string" ? raw.rationale.slice(0, 240) : "" };
-  const steps: any[] = Array.isArray(raw?.steps) ? raw.steps : [];
-  for (const s of steps) {
-    if (out.steps.length >= maxSteps) break;
-    if (!s || typeof s !== "object") continue;
-    const at = s.action_type;
-    if (typeof at !== "string" || !allowed.has(at)) continue;
-    if (typeof s.prompt !== "string" || !s.prompt.trim()) continue;
-    const step: PlanStep = {
-      action_type: at as ActionType,
-      prompt: String(s.prompt).slice(0, 4000),
-    };
-    if (s.input_refs && typeof s.input_refs === "object") {
-      const refs: PlanStep["input_refs"] = {};
-      for (const k of ["images", "videos", "audios"] as const) {
-        if (Array.isArray((s.input_refs as any)[k])) {
-          refs[k] = (s.input_refs as any)[k]
-            .filter((x: any) => typeof x === "string")
-            .map((x: string) => x.slice(0, 200))
-            .slice(0, 16);
-        }
+function clampStep(s: any, allowed: Set<string>, maxImagesPerStep: number): PlanStep | null {
+  if (!s || typeof s !== "object") return null;
+  if (typeof s.action_type !== "string" || !allowed.has(s.action_type)) return null;
+  if (typeof s.prompt !== "string" || !s.prompt.trim()) return null;
+  const out: PlanStep = {
+    action_type: s.action_type as ActionType,
+    prompt: String(s.prompt).slice(0, 4000),
+  };
+  if (s.input_refs && typeof s.input_refs === "object") {
+    const refs: PlanStep["input_refs"] = {};
+    for (const k of ["images", "videos", "audios"] as const) {
+      if (Array.isArray((s.input_refs as any)[k])) {
+        refs[k] = (s.input_refs as any)[k]
+          .filter((x: any) => typeof x === "string" && x.trim())
+          .map((x: string) => x.trim().slice(0, 200))
+          .slice(0, 16);
       }
-      if (Object.keys(refs).length) step.input_refs = refs;
     }
-    if (typeof s.aspect_ratio === "string") step.aspect_ratio = s.aspect_ratio.slice(0, 10);
-    if (typeof s.quality === "string") step.quality = s.quality.slice(0, 16);
-    if (typeof s.count === "number" && s.count > 0) {
-      step.count = Math.min(Math.floor(s.count), maxImagesPerStep);
-    }
-    if (typeof s.note === "string") step.note = s.note.slice(0, 200);
-    out.steps.push(step);
+    if (Object.keys(refs).length) out.input_refs = refs;
   }
+  if (typeof s.aspect_ratio === "string") out.aspect_ratio = s.aspect_ratio.slice(0, 10);
+  if (typeof s.quality === "string") out.quality = s.quality.slice(0, 16);
+  if (typeof s.count === "number" && s.count > 0) {
+    out.count = Math.min(Math.floor(s.count), maxImagesPerStep);
+  }
+  if (typeof s.note === "string") out.note = s.note.slice(0, 200);
   return out;
 }
 
@@ -104,26 +171,36 @@ Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
     const body = await req.json();
-    const instructions: string[] = Array.isArray(body.instructions) ? body.instructions.filter((x: any) => typeof x === "string" && x.trim()) : [];
-    const contextText: string = typeof body.context_text === "string" ? body.context_text : "";
-    const galleryIndex: GalleryItem[] = Array.isArray(body.gallery_index) ? body.gallery_index.slice(0, 200) : [];
+    const currentLine: string = typeof body.current_line === "string" ? body.current_line : "";
+    const currentLineAttached: CatalogEntry | null = body.current_line_attached ?? null;
+    const priorOutputs: any[] = Array.isArray(body.prior_outputs_summary) ? body.prior_outputs_summary.slice(-20) : [];
+    const upcoming: string[] = Array.isArray(body.upcoming_lines_preview) ? body.upcoming_lines_preview.slice(0, 5) : [];
+    const catalog: CatalogEntry[] = Array.isArray(body.catalog) ? body.catalog.slice(0, 300) : [];
+    const linkedContextText: string = typeof body.linked_context_text === "string" ? body.linked_context_text.slice(0, 6000) : "";
     const allowedActions: string[] = Array.isArray(body.allowed_actions) && body.allowed_actions.length
       ? body.allowed_actions.filter((x: any) => (ALL_ACTIONS as readonly string[]).includes(x))
       : [...ALL_ACTIONS];
-    const maxSteps = Math.max(1, Math.min(30, Number(body.max_steps) || 12));
     const maxImagesPerStep = Math.max(1, Math.min(5, Number(body.max_images_per_step) || 2));
 
-    if (instructions.length === 0) return bad("instructions required");
+    if (!currentLine.trim()) {
+      return new Response(JSON.stringify({ kind: "no_action", reason: "blank line" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     const key = Deno.env.get("LOVABLE_API_KEY");
     if (!key) return bad("LOVABLE_API_KEY not configured", 500);
 
     const userMsg = JSON.stringify({
-      instructions,
-      additional_text_context: contextText || null,
-      gallery_index: galleryIndex.map((g) => ({ name: g.name, type: g.type })),
+      current_line: currentLine,
+      current_line_attached: currentLineAttached
+        ? { handle: currentLineAttached.handle, name: currentLineAttached.name, type: currentLineAttached.type }
+        : null,
+      prior_outputs_summary: priorOutputs,
+      upcoming_lines_preview: upcoming,
+      catalog: catalog.map((c) => ({ handle: c.handle, name: c.name, type: c.type, source: c.source })),
+      linked_context_text: linkedContextText || null,
       allowed_actions: allowedActions,
-      max_steps: maxSteps,
       max_images_per_step: maxImagesPerStep,
     });
 
@@ -131,28 +208,66 @@ Deno.serve(async (req) => {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "google/gemini-2.5-pro",
+        model: "google/gemini-2.5-flash",
         messages: [
           { role: "system", content: SYSTEM },
           { role: "user", content: userMsg },
         ],
-        response_format: { type: "json_object" },
+        tools: [TOOL_SCHEMA],
+        tool_choice: { type: "function", function: { name: "decide" } },
       }),
     });
     if (!r.ok) {
       const t = await r.text();
+      if (r.status === 429) return bad("rate limited by AI gateway", 429);
+      if (r.status === 402) return bad("AI credits exhausted", 402);
       return bad(`planner LLM error ${r.status}: ${t.slice(0, 300)}`, 502);
     }
     const data = await r.json();
-    const content = data.choices?.[0]?.message?.content ?? "{}";
+    const call = data.choices?.[0]?.message?.tool_calls?.[0];
+    if (!call?.function?.arguments) {
+      // Fallback: model declined to call the tool — treat as no_action.
+      return new Response(JSON.stringify({ kind: "no_action", reason: "planner returned no decision" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
     let parsed: any = {};
-    try { parsed = JSON.parse(content); } catch { return bad("planner returned invalid JSON", 502); }
-
+    try { parsed = JSON.parse(call.function.arguments); } catch {
+      return new Response(JSON.stringify({ kind: "no_action", reason: "planner returned invalid JSON" }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
     const allowed = new Set(allowedActions);
-    const plan = clampPlan(parsed, maxSteps, maxImagesPerStep, allowed);
-    if (plan.steps.length === 0) return bad("planner produced no usable steps", 422);
-
-    return new Response(JSON.stringify(plan), {
+    const kind = parsed.kind;
+    if (kind === "no_action") {
+      return new Response(JSON.stringify({ kind: "no_action", reason: String(parsed.reason ?? "").slice(0, 200) }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (kind === "tool_call") {
+      const step = clampStep(parsed.step, allowed, maxImagesPerStep);
+      if (!step) {
+        return new Response(JSON.stringify({ kind: "no_action", reason: "planner produced unusable step" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ kind: "tool_call", step }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    if (kind === "compound") {
+      const raw = Array.isArray(parsed.steps) ? parsed.steps : [];
+      const steps = raw.map((s: any) => clampStep(s, allowed, maxImagesPerStep)).filter(Boolean).slice(0, 3) as PlanStep[];
+      if (steps.length === 0) {
+        return new Response(JSON.stringify({ kind: "no_action", reason: "compound had no usable steps" }), {
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify({ kind: "compound", steps }), {
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+    return new Response(JSON.stringify({ kind: "no_action", reason: "unknown decision kind" }), {
       headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   } catch (e) {
