@@ -110,7 +110,7 @@
     padding-bottom: max(1rem, env(safe-area-inset-bottom));
   }
   .pb-actions {
-    padding-bottom: calc(env(safe-area-inset-bottom) + 6.5rem);
+    padding-bottom: calc(env(safe-area-inset-bottom) + 9rem);
   }
   .shadow-soft { box-shadow: var(--shadow-soft); }
   .shadow-floating { box-shadow: var(--shadow-floating); }
