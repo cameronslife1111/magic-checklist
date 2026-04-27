@@ -1,63 +1,49 @@
-# Add "Export text file" action
-
 ## Goal
-Add a new button to the Actions sheet that, when tapped, immediately downloads a `.txt` file to the user's device containing **every checklist title and every step (checkbox text)** for the signed-in user.
+Add a checkbox at the top of the "Attach context" section in the action dialog that, when checked, automatically includes **the current checklist** (the one the user is on) as text context for any AI action — without having to open the picker and search for it.
 
-Filename format:
-```
-magic checklist text data export- HH-MM-SS DD-MM-YYYY.txt
-```
-(Colons in the time are replaced with `-` because iOS/Android/Windows disallow `:` in filenames. Spaces are kept as requested.)
-
-## File contents
-Plain UTF-8 text, checklists ordered the same way they appear in the app (using the existing `sortChecklists` helper), each block formatted as:
-
-```
-=== <Checklist Title> ===
-[ ] Step text
-[x] Completed step text
-[ ] Another step
-
-=== <Next Checklist Title> ===
-...
-```
-
-A small header is added at the top:
-```
-Magic Checklist — Text Data Export
-Generated: <local date/time>
-Total checklists: N
-Total steps: M
-
-```
+## First-principles reasoning
+- Current behavior: `ScheduleActionDialog` mounts `<ContextAttacher>` and passes `excludeChecklistId={checklist.id}` so the user *cannot* pick the current checklist from the search picker (sensible default — avoids self-reference confusion).
+- The user's real workflow: they almost always want the current checklist included anyway. A one-tap toggle is faster than re-enabling/searching.
+- The current checklist is already known on the parent (`checklist?.id`, `checklist?.title`) — no new query needed.
+- The existing `value.checklists: { id, title }[]` shape on `AttachedContext` is exactly what the backend already accepts as text context. So "including the current checklist" simply means injecting `{ id, title }` into that array, then removing it on uncheck. **No backend, RLS, or edge function changes required.**
+- Persisting the toggle state isn't necessary — the dialog state resets per action. Default = unchecked (preserves current behavior; no surprise auto-attaching for users who don't want it).
 
 ## Technical changes
 
-### 1. `src/components/ActionsSheet.tsx`
-- Add `"export-text"` to the `ActionKey` union.
-- Add a new entry to `STATIC_ITEMS` near the other utility actions (right after `"media-gallery"` feels natural):
-  ```ts
-  { key: "export-text", label: "Export text file", icon: FileDown }
+### 1. `src/components/ContextAttacher.tsx`
+- Extend `Props` with two optional fields:
+  - `currentChecklist?: { id: string; title: string }` — the checklist the user is on.
+- At the top of the rendered section (above the "Attach context (optional)" header / button grid), render a `<Checkbox>` + `<Label>` row only when `currentChecklist` is provided:
+  > ☐ Include this checklist as context
+- Derive `isCurrentIncluded` from `value.checklists.some(c => c.id === currentChecklist.id)`.
+- On toggle:
+  - If checking → append `{ id, title }` to `value.checklists` (guard against duplicates and the existing `MAX_PER_KIND` cap; show the same toast on overflow).
+  - If unchecking → filter it out of `value.checklists`.
+- Important nuance: the current checklist is still excluded from the search-picker results (`excludeChecklistId` stays as-is) so the user can't add it twice from two places. The checkbox is the *only* way to add the current one — clean and unambiguous.
+- The existing chip strip will naturally render the current checklist as a removable chip when included; clicking the chip's ✕ should also untick the checkbox. Because we derive `isCurrentIncluded` from `value.checklists`, this happens automatically.
+
+### 2. `src/components/ScheduleActionDialog.tsx`
+- Extend `Props` with `currentChecklist?: { id: string; title: string }`.
+- Pass it through to `<ContextAttacher currentChecklist={currentChecklist} … />`.
+
+### 3. `src/pages/Checklist.tsx`
+- Where `<ScheduleActionDialog … />` is mounted (around line 1390), pass:
+  ```tsx
+  currentChecklist={checklist ? { id: checklist.id, title: checklist.title } : undefined}
   ```
-- Import `FileDown` from `lucide-react`.
-
-### 2. `src/pages/Checklist.tsx`
-- In the `onPick` switch (around line 393), add a new `case "export-text":` that:
-  1. Closes the actions sheet.
-  2. Fetches all of the current user's checklists from Supabase (`checklists` table) and all of their items (`checklist_items` table) in two queries scoped by `user_id`.
-  3. Sorts checklists with the existing `sortChecklists` helper from `src/lib/sortChecklists.ts`.
-  4. Sorts each checklist's items by `position`.
-  5. Builds the text body in the format shown above.
-  6. Generates the filename using `new Date()` with zero-padded `HH-MM-SS DD-MM-YYYY` in the user's local time.
-  7. Triggers a browser download via a `Blob` + temporary `<a download>` element (no extra dependencies).
-  8. Shows a toast on success ("Exported N checklists") or on error.
-
-### 3. No backend / migration changes
-- Read-only Supabase queries with existing RLS (already restrict to `auth.uid()`).
-- No new dependencies; uses the standard `Blob` + anchor download pattern that works on iOS Safari, Android Chrome, and desktop.
+- No other changes — `pendingContext` already flows into `submitEnqueue` and onward to the `enqueue-action` edge function, which already accepts checklist context ids and verifies ownership via RLS.
 
 ## Edge cases handled
-- Empty account → still downloads a file with the header and "Total checklists: 0".
-- Items with newlines in their text → newlines are preserved as-is in the export.
-- Long filenames → format is fixed length, well under filesystem limits.
-- iOS Safari quirk → using `Blob` + `URL.createObjectURL` + `a.click()` + `URL.revokeObjectURL` is the standard pattern that works there.
+- **Current checklist not yet loaded**: checkbox simply isn't rendered (the prop is undefined).
+- **User checks, then deletes the chip**: chip removal updates `value.checklists`, derived `isCurrentIncluded` flips to false, checkbox visually unticks. Single source of truth.
+- **Title changes mid-session**: the chip will show the title that was current at the time of attach; that's fine for a one-shot run.
+- **Hitting the 15-checklist context cap while toggling on**: same toast as the picker ("Max 15 checklists.") and the checkbox stays unchecked — predictable behavior.
+- **Backend safety**: `enqueue-action` already validates that every checklist id in the context belongs to the user, so passing the current checklist id is automatically authorized.
+- **No double-add**: search picker still excludes the current checklist via `excludeChecklistId`, so the only entry point for adding it is this checkbox.
+
+## Files touched
+- `src/components/ContextAttacher.tsx` — add checkbox row + toggle logic.
+- `src/components/ScheduleActionDialog.tsx` — forward new prop.
+- `src/pages/Checklist.tsx` — pass `currentChecklist` to the dialog.
+
+No database migrations, no edge function changes, no new dependencies.
