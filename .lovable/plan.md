@@ -1,49 +1,53 @@
-## Goal
-Add a checkbox at the top of the "Attach context" section in the action dialog that, when checked, automatically includes **the current checklist** (the one the user is on) as text context for any AI action — without having to open the picker and search for it.
+# Fix: MediaGalleryPicker won't scroll on iOS Chrome/Safari
 
-## First-principles reasoning
-- Current behavior: `ScheduleActionDialog` mounts `<ContextAttacher>` and passes `excludeChecklistId={checklist.id}` so the user *cannot* pick the current checklist from the search picker (sensible default — avoids self-reference confusion).
-- The user's real workflow: they almost always want the current checklist included anyway. A one-tap toggle is faster than re-enabling/searching.
-- The current checklist is already known on the parent (`checklist?.id`, `checklist?.title`) — no new query needed.
-- The existing `value.checklists: { id, title }[]` shape on `AttachedContext` is exactly what the backend already accepts as text context. So "including the current checklist" simply means injecting `{ id, title }` into that array, then removing it on uncheck. **No backend, RLS, or edge function changes required.**
-- Persisting the toggle state isn't necessary — the dialog state resets per action. Default = unchecked (preserves current behavior; no surprise auto-attaching for users who don't want it).
+## First-principles diagnosis
 
-## Technical changes
+The picker (`MediaGalleryPicker`) is a Radix `Dialog` that opens **on top of another open Dialog** (`MediaActionDialog`). This nested-dialog pattern combined with iOS touch handling produces the bug you described.
 
-### 1. `src/components/ContextAttacher.tsx`
-- Extend `Props` with two optional fields:
-  - `currentChecklist?: { id: string; title: string }` — the checklist the user is on.
-- At the top of the rendered section (above the "Attach context (optional)" header / button grid), render a `<Checkbox>` + `<Label>` row only when `currentChecklist` is provided:
-  > ☐ Include this checklist as context
-- Derive `isCurrentIncluded` from `value.checklists.some(c => c.id === currentChecklist.id)`.
-- On toggle:
-  - If checking → append `{ id, title }` to `value.checklists` (guard against duplicates and the existing `MAX_PER_KIND` cap; show the same toast on overflow).
-  - If unchecking → filter it out of `value.checklists`.
-- Important nuance: the current checklist is still excluded from the search-picker results (`excludeChecklistId` stays as-is) so the user can't add it twice from two places. The checkbox is the *only* way to add the current one — clean and unambiguous.
-- The existing chip strip will naturally render the current checklist as a removable chip when included; clicking the chip's ✕ should also untick the checkbox. Because we derive `isCurrentIncluded` from `value.checklists`, this happens automatically.
+Three compounding causes:
 
-### 2. `src/components/ScheduleActionDialog.tsx`
-- Extend `Props` with `currentChecklist?: { id: string; title: string }`.
-- Pass it through to `<ContextAttacher currentChecklist={currentChecklist} … />`.
+1. **Nested Radix Dialogs + iOS touch**
+   The parent Dialog applies a body scroll-lock and `pointer-events:none` traversal. When the child Dialog mounts, on iOS WebKit the parent's overlay can still intercept the very first `touchstart`/`touchmove` sequence on the child's inner scroll area, so your initial swipe registers on the wrong layer and is silently dropped. Closing and reopening lets the layer order re-stabilize — exactly matching your "works a little better the second time" symptom.
 
-### 3. `src/pages/Checklist.tsx`
-- Where `<ScheduleActionDialog … />` is mounted (around line 1390), pass:
-  ```tsx
-  currentChecklist={checklist ? { id: checklist.id, title: checklist.title } : undefined}
-  ```
-- No other changes — `pendingContext` already flows into `submitEnqueue` and onward to the `enqueue-action` edge function, which already accepts checklist context ids and verifies ownership via RLS.
+2. **Inner list lacks iOS scroll hints**
+   The scrollable `<ul>` uses only `overflow-y-auto`. iOS needs `-webkit-overflow-scrolling: touch`, `overscroll-behavior: contain`, and `touch-action: pan-y` to claim the gesture inside a fixed/locked dialog. Without them, the gesture can bubble up and get cancelled by Radix's outside-press / dismiss handlers.
 
-## Edge cases handled
-- **Current checklist not yet loaded**: checkbox simply isn't rendered (the prop is undefined).
-- **User checks, then deletes the chip**: chip removal updates `value.checklists`, derived `isCurrentIncluded` flips to false, checkbox visually unticks. Single source of truth.
-- **Title changes mid-session**: the chip will show the title that was current at the time of attach; that's fine for a one-shot run.
-- **Hitting the 15-checklist context cap while toggling on**: same toast as the picker ("Max 15 checklists.") and the checkbox stays unchecked — predictable behavior.
-- **Backend safety**: `enqueue-action` already validates that every checklist id in the context belongs to the user, so passing the current checklist id is automatically authorized.
-- **No double-add**: search picker still excludes the current checklist via `excludeChecklistId`, so the only entry point for adding it is this checkbox.
+3. **Dialog has no flex layout / no max-height**
+   `DialogContent` here is `max-w-md p-0 gap-0` with no `max-h`. On a 390×587 viewport (your iPhone), the dialog can exceed the visible area, so the scrollable list's bottom portion sits under the footer / off-screen. The list uses `max-h-[55vh]` instead of flexing to fill remaining space, so when the async asset list loads its measured height shifts after first paint, leaving the touch target in the wrong place until the user reopens the dialog.
 
-## Files touched
-- `src/components/ContextAttacher.tsx` — add checkbox row + toggle logic.
-- `src/components/ScheduleActionDialog.tsx` — forward new prop.
-- `src/pages/Checklist.tsx` — pass `currentChecklist` to the dialog.
+## Plan (file changes)
 
-No database migrations, no edge function changes, no new dependencies.
+### 1. `src/components/MediaGalleryPicker.tsx` — restructure as a flex column dialog with iOS-friendly scroll
+
+- Make `DialogContent` a bounded flex column:
+  `className="max-w-md w-[calc(100vw-1.5rem)] p-0 gap-0 flex flex-col max-h-[85vh] overflow-hidden"`
+- Mark header (`DialogHeader`), the search/upload row, and `DialogFooter` as `shrink-0` so they don't compete for height.
+- Replace the `<ul className="... max-h-[55vh] overflow-y-auto ...">` with a scroll container that:
+  - Flexes to fill: `flex-1 min-h-0 overflow-y-auto`
+  - Adds iOS hints via inline style:
+    `style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain", touchAction: "pan-y" }}`
+  - Drops the brittle `max-h-[55vh]` (parent now constrains height).
+- Remove the autoFocus side-effect on the search Input on touch devices to prevent the iOS keyboard popping on open and reflowing the dialog (add `autoFocus={false}` / no autofocus is already the case — verify and explicitly set `inputMode="search"`).
+
+### 2. Stop the parent Dialog from swallowing touches under the picker
+
+In `src/components/MediaActionDialog.tsx`, when any picker (`pickerOpen`, `endPickerOpen`, `refPickerOpen`, `elementPickerOpen`, `audioPickerOpen`) is open, render the parent `Dialog` with `modal={false}` **OR** simpler and safer: keep the parent modal but ensure the child picker's `DialogContent` calls `onOpenAutoFocus={(e) => e.preventDefault()}` and `onPointerDownOutside`/`onInteractOutside` are not stopped. The minimal, robust fix:
+
+- Add a higher z-index to the picker's overlay/content (`z-[60]`) so it sits cleanly above the parent's `z-50` overlay — eliminates the iOS race where the parent overlay catches the first touch.
+- Add `onOpenAutoFocus={(e) => e.preventDefault()}` to the picker's `DialogContent` so iOS doesn't focus the search field on mount (which is what causes the layout shift + missed first swipe).
+
+### 3. (Defensive) `src/components/ui/dialog.tsx` — no change required, but verify
+We will *not* edit the shared `Dialog` primitive. All fixes live in the picker so they don't ripple to other dialogs.
+
+## Why this resolves the symptoms
+
+- "Won't scroll at all on first open" → caused by (a) parent overlay intercepting first touch and (b) layout shift from autofocus + async load. Raising z-index + preventing autofocus + flex-column layout removes both.
+- "Works a little better after reopen" → the layer/race condition self-corrects after one cycle today; with the fix it works the first time.
+- iOS-specific → the `-webkit-overflow-scrolling`, `overscroll-behavior: contain`, and `touch-action: pan-y` hints are exactly what WebKit needs to take ownership of the gesture inside a locked dialog.
+
+## Out of scope (intentionally)
+
+- No change to Media Gallery data loading, selection logic, or upload flow.
+- No change to other dialogs — fix is scoped to `MediaGalleryPicker`.
+
+After approval I'll implement the changes and you can retest on iPhone Chrome.

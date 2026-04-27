@@ -118,14 +118,17 @@ export const MediaGalleryPicker = ({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-md p-0 gap-0">
-        <DialogHeader className="px-5 pt-5 pb-3">
+      <DialogContent
+        className="max-w-md w-[calc(100vw-1.5rem)] p-0 gap-0 flex flex-col max-h-[85vh] overflow-hidden z-[60]"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
+        <DialogHeader className="px-5 pt-5 pb-3 shrink-0">
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
 
-        <div className="px-5 space-y-3">
+        <div className="px-5 space-y-3 shrink-0">
           <div className="flex gap-2">
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${kindLabel}s`} />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${kindLabel}s`} inputMode="search" autoFocus={false} />
             <Button type="button" variant="outline" onClick={() => fileRef.current?.click()} className="shrink-0">
               <Upload className="h-4 w-4" /> Upload
             </Button>
@@ -145,7 +148,10 @@ export const MediaGalleryPicker = ({
           )}
         </div>
 
-        <ul className="mt-3 max-h-[55vh] overflow-y-auto divide-y divide-border border-y border-border">
+        <ul
+          className="mt-3 flex-1 min-h-0 overflow-y-auto divide-y divide-border border-y border-border"
+          style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain", touchAction: "pan-y" }}
+        >
           {loading ? (
             <li className="px-5 py-6 text-sm text-muted-foreground inline-flex items-center gap-2">
               <Loader2 className="h-4 w-4 animate-spin" /> Loading…
@@ -190,7 +196,7 @@ export const MediaGalleryPicker = ({
           )}
         </ul>
 
-        <DialogFooter className="px-5 py-4 gap-2">
+        <DialogFooter className="px-5 py-4 gap-2 shrink-0">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button onClick={confirm} disabled={orderedIds.length === 0}>
             {mode === "single" ? "Select" : `Done (${orderedIds.length})`}
