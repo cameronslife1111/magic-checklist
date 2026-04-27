@@ -127,20 +127,28 @@ export function notifyDictationStart() {
   resetEngine();
 }
 
-// Called by ItemRow on textarea blur (still inside the user gesture that
-// dismissed the keyboard). Resets the engine, nudges the audio route, and
-// re-primes synchronously so the next speak() is fully armed.
+// Called by ItemRow on textarea blur. The blur event from a mobile keyboard
+// is NOT a fresh user gesture, so we cannot reliably re-prime here. Instead,
+// flag the engine as needing a re-arm and let the next real tap (captured by
+// installGestureRearm) perform the hard reset + prime inside a real gesture.
 export function notifyDictationEnd() {
   resetEngine();
   nudgeAudioRoute();
-  // Re-prime now while we still have gesture context.
-  primeSpeech();
+  needsRearm = true;
 }
 
-// Called from a global pointer/touch listener. Cheap no-op when already primed
-// or muted; silently re-arms the engine on the next tap if dictation broke it.
+// Called from a global pointer/touch listener. If dictation flagged a re-arm,
+// perform a full reset + prime here — this is a real user gesture, so it
+// mirrors exactly what the Mute→Unmute toggle does (which is known to work).
 export function notifyUserGesture() {
   if (muted) return;
+  if (needsRearm) {
+    resetEngine();
+    nudgeAudioRoute();
+    primeSpeech();
+    needsRearm = false;
+    return;
+  }
   if (!primed) primeSpeech();
 }
 
