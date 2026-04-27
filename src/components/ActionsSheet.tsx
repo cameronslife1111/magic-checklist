@@ -36,6 +36,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "uncheck-all",      label: "Uncheck all checkboxes",   icon: Square },
   { key: "combine-checked",  label: "Combine checked checkboxes", icon: Combine },
   { key: "media-gallery",    label: "Media Gallery",            icon: Library },
+  { key: "export-text",      label: "Export text file",         icon: FileDown },
   { key: "bg",               label: "Change checklist background", icon: Palette },
 
   // Middle: AI actions (rendered in blue)
