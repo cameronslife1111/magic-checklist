@@ -600,7 +600,7 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
       await persist();
       return { done: false };
     }
-    const { catalog, currentAttached } = buildCatalog(state, lineIdx);
+    const { catalog } = buildCatalog(state);
     const linkedText = buildLinkedContextText(state);
     const upcoming = (state.input_lines ?? []).slice(lineIdx + 1, lineIdx + 4).map((l: any) => l.text).filter(Boolean);
     const priorOutputsSummary = (state.outputs ?? []).map((o: any, i: number) => {
@@ -620,7 +620,6 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     try {
       decision = await callFn("plan-action-sequence", {
         current_line: line.text,
-        current_line_attached: currentAttached,
         prior_outputs_summary: priorOutputsSummary,
         upcoming_lines_preview: upcoming,
         catalog,
