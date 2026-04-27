@@ -1,1 +1,1 @@
-## Problem (first-principles diagnosis)\n\nThe \
+# Set 9:16 + High Quality as Defaults Everywhere\n\n## First-principles diagnosis\n\nAll defaults live in `src/components/MediaActionDialog.tsx` (the single dialog used for every generation modality — text→image, image→image, remix, image→video, video→video, audio+image→video, analyze).\n\nCurrently the initial `useState` values are:\n- `aspect = \
