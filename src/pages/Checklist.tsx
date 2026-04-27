@@ -1128,7 +1128,8 @@ const ChecklistPage = () => {
           {reorderMode ? (
             <Button
               onClick={() => setReorderMode(false)}
-              className="w-full h-28 rounded-none text-base font-semibold shadow-floating"
+              style={{ ["--shimmer-delay" as any]: "0s" }}
+              className="w-full h-28 rounded-none text-base font-semibold btn-metallic-blue btn-shimmer"
             >
               Done
             </Button>
@@ -1173,7 +1174,8 @@ const ChecklistPage = () => {
                   }
                 }}
                 onContextMenu={(e) => e.preventDefault()}
-                className="flex-1 h-28 rounded-none text-base font-semibold shadow-floating select-none touch-none bg-action-orange text-action-orange-foreground hover:bg-action-orange/90"
+                style={{ ["--shimmer-delay" as any]: "0s" }}
+                className="flex-1 h-28 rounded-none text-base font-semibold select-none touch-none text-action-orange-foreground btn-metallic-orange btn-shimmer"
               >
                 Actions
               </Button>
@@ -1192,7 +1194,8 @@ const ChecklistPage = () => {
                     await openChecklist(highestUnchecked.linked_checklist_id);
                   }
                 }}
-                className="w-20 h-28 rounded-none text-2xl leading-none shadow-floating select-none"
+                style={{ ["--shimmer-delay" as any]: "1.6s" }}
+                className="w-20 h-28 rounded-none text-2xl leading-none select-none text-primary-foreground btn-metallic-blue btn-shimmer"
               >
                 🏠
               </Button>
@@ -1235,7 +1238,8 @@ const ChecklistPage = () => {
                   keepaliveRef.current?.blur();
                 }}
                 onContextMenu={(e) => e.preventDefault()}
-                className="flex-1 h-28 rounded-none shadow-floating select-none touch-none bg-action-green text-action-green-foreground hover:bg-action-green/90"
+                style={{ ["--shimmer-delay" as any]: "3.2s" }}
+                className="flex-1 h-28 rounded-none select-none touch-none text-action-green-foreground btn-metallic-green btn-shimmer"
               >
                 <Check className="h-8 w-8" />
               </Button>

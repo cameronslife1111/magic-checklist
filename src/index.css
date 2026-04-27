@@ -124,4 +124,101 @@
     background-color: hsl(48 96% 55% / 0.18);
     color: hsl(48 100% 92%);
   }
+
+  /* Metallic gradient buttons (used by bottom action bar) */
+  .btn-metallic-orange,
+  .btn-metallic-blue,
+  .btn-metallic-green {
+    position: relative;
+    overflow: hidden;
+    background-image: linear-gradient(
+      to bottom,
+      hsl(var(--btn-top)) 0%,
+      hsl(var(--btn-mid)) 55%,
+      hsl(var(--btn-bot)) 100%
+    );
+    box-shadow:
+      inset 0 1px 0 hsl(0 0% 100% / 0.4),
+      inset 0 -2px 8px hsl(0 0% 0% / 0.22),
+      0 4px 12px hsl(220 15% 15% / 0.08),
+      0 12px 32px hsl(220 15% 15% / 0.12);
+    transition: filter 0.15s ease, box-shadow 0.15s ease;
+  }
+  .btn-metallic-orange:active,
+  .btn-metallic-blue:active,
+  .btn-metallic-green:active {
+    filter: brightness(0.9);
+    box-shadow:
+      inset 0 2px 6px hsl(0 0% 0% / 0.3),
+      inset 0 -1px 0 hsl(0 0% 100% / 0.1),
+      0 2px 6px hsl(220 15% 15% / 0.1);
+  }
+
+  .btn-metallic-orange {
+    --btn-top: 22 90% 58%;
+    --btn-mid: var(--action-orange);
+    --btn-bot: 22 88% 30%;
+  }
+  .btn-metallic-blue {
+    --btn-top: 220 90% 70%;
+    --btn-mid: var(--primary);
+    --btn-bot: 220 85% 38%;
+  }
+  .btn-metallic-green {
+    --btn-top: 142 65% 52%;
+    --btn-mid: var(--action-green);
+    --btn-bot: 142 70% 26%;
+  }
+  .dark .btn-metallic-orange {
+    --btn-top: 22 85% 55%;
+    --btn-bot: 22 85% 28%;
+  }
+  .dark .btn-metallic-blue {
+    --btn-top: 220 90% 75%;
+    --btn-bot: 220 85% 42%;
+  }
+  .dark .btn-metallic-green {
+    --btn-top: 142 60% 55%;
+    --btn-bot: 142 65% 28%;
+  }
+
+  /* Animated diagonal sheen / shimmer */
+  .btn-shimmer {
+    position: relative;
+    overflow: hidden;
+    isolation: isolate;
+  }
+  .btn-shimmer::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background: linear-gradient(
+      115deg,
+      transparent 38%,
+      hsl(0 0% 100% / 0.28) 50%,
+      transparent 62%
+    );
+    transform: translateX(-120%);
+    animation: btn-shimmer-sweep 5s ease-in-out infinite;
+    animation-delay: var(--shimmer-delay, 0s);
+    z-index: 1;
+  }
+  .btn-shimmer > * {
+    position: relative;
+    z-index: 2;
+  }
+
+  @keyframes btn-shimmer-sweep {
+    0%   { transform: translateX(-120%); }
+    25%  { transform: translateX(220%); }
+    100% { transform: translateX(220%); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .btn-shimmer::before {
+      animation: none;
+      display: none;
+    }
+  }
 }
