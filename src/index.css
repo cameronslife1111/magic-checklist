@@ -36,6 +36,11 @@
 
     --checked: 220 8% 60%;
 
+    --action-orange: 22 85% 42%;
+    --action-orange-foreground: 0 0% 100%;
+    --action-green: 142 65% 38%;
+    --action-green-foreground: 0 0% 100%;
+
     --shadow-soft: 0 1px 2px hsl(220 15% 15% / 0.04), 0 4px 16px hsl(220 15% 15% / 0.06);
     --shadow-floating: 0 4px 12px hsl(220 15% 15% / 0.08), 0 12px 32px hsl(220 15% 15% / 0.12);
 
