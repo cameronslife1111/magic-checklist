@@ -1,59 +1,63 @@
-## The Problem (first principles)
+# Auto-load inline checklist links into Run Sequence context
 
-Image generation hits `lovable-image 504: IDLE_TIMEOUT 150s`. Why?
+## Goal
 
-1. Supabase Edge Functions enforce a **150s wall-clock idle limit** per request.
-2. `lovable-image` does a **synchronous wait**: it submits to Fal's queue, then polls for up to ~230s before returning.
-3. The worker (`process-action-queue`) calls `lovable-image` and *also* waits synchronously for that response.
-4. When Fal's GPT Image 2 takes >150s (which happens regularly under load, especially for edits with multiple reference images), the gateway kills the connection → 504 → the job is marked failed even though Fal may still finish the image successfully a few seconds later.
+When the Run Sequence agent starts, it should automatically read every checklist you've inserted via the "insert checklist link" button on the input checklist — including links nested one level inside those linked checklists. The Context Attacher in the Run dialog stays as an additive option.
 
-The video pipeline (`fal-video`, `fal-avatar`) **already solved this exact problem** with a `submit` / `poll` two-phase handoff: the worker stores the Fal queue handle on the job row and the cron-triggered worker polls it on subsequent ticks. There is **no synchronous wait**, so 150s is a non-issue. Images need the same pattern.
+## Changes
 
-## The Fix
+### 1. `supabase/functions/process-action-queue/index.ts`
 
-Convert `lovable-image` to the same async submit/poll handoff used by `fal-video`, and route `text-image` / `image-image` / `remix` through the existing handoff machinery in `process-action-queue`.
+Rewrite `loadLinkedLists()` (currently lines ~376–404) to do a bounded breadth-first traversal:
 
-### 1. `supabase/functions/lovable-image/index.ts` — add two modes
+- Start from the input checklist.
+- Follow `linked_checklist_id` references up to **2 hops deep**.
+- Cap at **15 unique checklists** total, **100 items per list**.
+- Skip the input checklist itself; dedupe by id (cycle-safe).
+- Bulk-fetch titles + items in two queries after collecting ids (same pattern as today, just larger caps).
+- Return the same shape, plus a new `depth` field per list (1 = directly linked, 2 = nested).
 
-Keep the existing single-shot behavior for backward compatibility (one-off UI calls outside the queue), but add:
+Then merge with any checklists the user attached via the Context Attacher (already passed through `payload.context.checklists` / `state.linked_lists` seed):
 
-- **`mode: "submit"`** — POSTs to `https://queue.fal.run/openai/gpt-image-2` (or `/edit` when refs are present) and returns immediately with `{ request_id, status_url, response_url }`. No polling. Returns in <2s.
-- **`mode: "poll"`** — given `{ statusUrl, responseUrl }`, does **one** `GET status_url`. If `COMPLETED`, fetches `response_url`, downloads the image, and returns `{ status: "COMPLETED", dataUrl }`. If `IN_PROGRESS`, returns `{ status: "IN_PROGRESS" }`. If `FAILED`, returns `{ status: "FAILED", error }`. Single round-trip, finishes in <5s — well under the 150s limit.
+- Inline-linked lists take priority.
+- Attached lists are appended, deduped by id.
+- Final array still capped at 15.
 
-When `mode` is omitted, behave like today (used by any direct UI calls that aren't through the queue).
+### 2. `buildLinkedContextText()` (same file, ~line 493)
 
-### 2. `supabase/functions/process-action-queue/index.ts` — handoff for images
+Annotate nested lists in the planner's text context so it knows depth:
 
-In `runJob`, change the three image cases (`text-image`, `image-image`, `remix`) to:
+```
+### Steps from linked checklist "Brand Voice"
+- ...
 
-1. Call `lovable-image` with `mode: "submit"` instead of waiting for the final image.
-2. Return `{ kind: "handoff", provider: "lovable-image", status_url, response_url, request_id }` — exactly the same shape used today by `image-video` / `video-video` / `audio-image-video`.
+### Steps from linked checklist "Tone Examples" (nested inside "Brand Voice")
+- ...
+```
 
-In **PHASE 1 (poll handoff)** of the worker (around line 1082), extend the dispatch so that when `j.provider === "lovable-image"` it calls `lovable-image` with `mode: "poll"` instead of `fal-video` / `fal-avatar`. On `COMPLETED`, run the existing image post-processing path:
+No other planner changes needed — handles `linked:<list>:<item>` and `linked_context_text` already flow through.
 
-- `uploadDataUrl(...)` → Storage
-- `registerGeneratedAsset(...)` → Media Gallery (`Generated image` / `Edited image` / `Remixed image` based on the original `action_type`)
-- `insertResultItem(...)` → checklist row with `media_url` + `media_type: "image"`
+### 3. No schema, no UI changes
 
-Mark the job `complete`. On `FAILED`, route through the existing failure path (which already calls `explainErrorInline`). On `IN_PROGRESS`, leave it as `awaiting_provider` to be polled on the next tick.
+- `checklist_items.linked_checklist_id` already exists and is already populated by the "insert checklist link" button.
+- Run Sequence dialog stays exactly as is — Context Attacher remains for ad-hoc additions.
 
-The handoff record in `action_jobs` already has the right columns (`provider`, `provider_status_url`, `provider_response_url`, `provider_request_id`, `provider_polled_at`) — no schema change needed.
+## Behavior after the change
 
-### 3. Sequence runner (`tickSequence`)
+| Scenario | Result |
+|---|---|
+| Drop a checklist link onto your sequence checklist | Auto-read every run, no attaching needed |
+| Linked checklist itself contains another checklist link | Also auto-read (1 nested hop) |
+| Attach a checklist via the Run dialog | Still works, additive |
+| Same checklist linked AND attached | Loaded once (dedupe) |
+| 20 checklists linked transitively | First 15 loaded (bounded for planner speed) |
 
-The sequence runner dispatches each step through the same `runJob` path and already handles `kind: "handoff"` outcomes for video. Once images return handoffs, sequence steps that generate images will naturally wait across worker ticks the same way video steps do today. The "stuck on image generation" symptom inside Run Sequence disappears because the worker is no longer holding a connection open against the 150s ceiling.
+## Verification
 
-### Why this is the right fix
+After deploy:
+1. Pull a recent `action-sequence` job and inspect `sequence_state.linked_lists` to confirm inline links and nested links appear.
+2. Trigger one run on a checklist with at least one inline link and confirm the planner's per-step decisions reference `linked:0:N` handles.
 
-- **Removes the only failure mode**: there is no longer any synchronous wait that can exceed 150s. Each HTTP call in the chain finishes in seconds.
-- **Reuses a proven pattern**: the exact same handoff shape works in production today for Kling video (which routinely takes 60–300s).
-- **No schema change, no new table, no new cron** — `action_jobs` already has the provider-handoff columns and the worker already polls them every minute (and within ~8s on the fast path).
-- **Backward compatible**: the no-`mode` form of `lovable-image` still works for any direct UI invocation.
-- **Cancellation still works**: a user cancelling an in-flight image job is observed during the next poll tick, just like video today.
+## Files touched
 
-### Files touched
-
-- `supabase/functions/lovable-image/index.ts` — refactor to add `submit` / `poll` modes (single shot path retained).
-- `supabase/functions/process-action-queue/index.ts` — image cases return `handoff`; PHASE 1 poller dispatches `lovable-image` and runs image post-processing on `COMPLETED`.
-
-No frontend, DB, or `config.toml` changes required.
+- `supabase/functions/process-action-queue/index.ts` — only file changed.
