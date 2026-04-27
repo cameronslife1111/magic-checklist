@@ -128,7 +128,7 @@ export const MediaGalleryPicker = ({
 
         <div className="px-5 space-y-3 shrink-0">
           <div className="flex gap-2">
-            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${kindLabel}s`} />
+            <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${kindLabel}s`} inputMode="search" autoFocus={false} />
             <Button type="button" variant="outline" onClick={() => fileRef.current?.click()} className="shrink-0">
               <Upload className="h-4 w-4" /> Upload
             </Button>
