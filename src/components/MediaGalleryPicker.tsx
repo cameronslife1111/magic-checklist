@@ -148,7 +148,10 @@ export const MediaGalleryPicker = ({
           )}
         </div>
 
-        <ul className="mt-3 max-h-[55vh] overflow-y-auto divide-y divide-border border-y border-border">
+        <ul
+          className="mt-3 flex-1 min-h-0 overflow-y-auto divide-y divide-border border-y border-border"
+          style={{ WebkitOverflowScrolling: "touch", overscrollBehavior: "contain", touchAction: "pan-y" }}
+        >
           {loading ? (
             <li className="px-5 py-6 text-sm text-muted-foreground inline-flex items-center gap-2">
               <Loader2 className="h-4 w-4 animate-spin" /> Loading…
