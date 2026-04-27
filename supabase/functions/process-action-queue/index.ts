@@ -638,7 +638,11 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     if (inputLines.length === 0) return abortSequence("input checklist is empty");
     state.input_lines = inputLines.slice(0, 60);
 
-    state.linked_lists = await loadLinkedLists(supabase, parent.checklist_id);
+    const ctx = payload?.context ?? {};
+    const attachedChecklistIds: string[] = Array.isArray(ctx.checklists)
+      ? ctx.checklists.filter((x: any) => typeof x === "string")
+      : [];
+    state.linked_lists = await loadLinkedLists(supabase, parent.checklist_id, attachedChecklistIds);
 
     const { data: gallery } = await supabase
       .from("media_assets")
@@ -648,7 +652,6 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
       .limit(200);
     state.gallery = (gallery ?? []) as any[];
 
-    const ctx = payload?.context ?? {};
     state.attached_media = Array.isArray(ctx.media)
       ? ctx.media.filter((m: any) => m && typeof m.url === "string").slice(0, 30)
       : [];
