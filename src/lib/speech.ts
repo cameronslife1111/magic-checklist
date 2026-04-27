@@ -272,11 +272,28 @@ export function speak(text: string) {
 
   bindVisibilityOnce();
 
-  // Auto-recover from the zombie state before queueing.
-  recoverIfStuck();
-
   const cleaned = stripEmojis(text);
   if (!cleaned) return;
+
+  // If dictation flagged a re-arm and no gesture has cleared it yet, do a
+  // hard reset + prime here and DEFER the speak. This mirrors the Mute→Unmute
+  // recovery path and avoids speaking against a dead audio session.
+  if (needsRearm) {
+    resetEngine();
+    nudgeAudioRoute();
+    primeSpeech();
+    needsRearm = false;
+    const chunks = chunkText(cleaned);
+    window.setTimeout(() => {
+      if (muted) return;
+      recoverIfStuck();
+      speakChunks(chunks);
+    }, 60);
+    return;
+  }
+
+  // Auto-recover from the zombie state before queueing.
+  recoverIfStuck();
 
   const wasBusy = s.speaking || s.pending;
 
