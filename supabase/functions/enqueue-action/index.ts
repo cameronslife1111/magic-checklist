@@ -83,7 +83,7 @@ Deno.serve(async (req) => {
         if (!Number.isFinite(n) || n <= 0) return def;
         return Math.min(Math.floor(n), max);
       };
-      payload.max_steps = cap(payload?.max_steps, 12, 30);
+      payload.max_steps = cap(payload?.max_steps, 12, 50);
       payload.max_images = cap(payload?.max_images, 12, 30);
       payload.max_videos = cap(payload?.max_videos, 4, 8);
       payload.max_runtime_minutes = cap(payload?.max_runtime_minutes, 30, 60);
