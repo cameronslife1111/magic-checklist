@@ -31,7 +31,7 @@ const defaultLocal = () => {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 };
 
-export const ScheduleActionDialog = ({ open, actionLabel, onClose, onPick, userId, excludeChecklistId, context, onContextChange }: Props) => {
+export const ScheduleActionDialog = ({ open, actionLabel, onClose, onPick, userId, excludeChecklistId, currentChecklist, context, onContextChange }: Props) => {
   const [tab, setTab] = useState<"now" | "later" | "recurring">("now");
   const [when, setWhen] = useState<string>(defaultLocal());
   const [recurrence, setRecurrence] = useState<"hourly" | "daily" | "weekly" | "monthly" | "yearly">("daily");
