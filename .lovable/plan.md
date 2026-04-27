@@ -1,37 +1,52 @@
-# Update bottom action bar: full width, taller, colored buttons
+# Make the bottom 3 buttons feel premium & alive
 
-## Goals
-1. The three bottom buttons (Actions, 🏠 Home, ✓ Check) should fill the full width with **no gap** between them.
-2. Buttons should be **double the current height** (h-14 → h-28) for easier tapping.
-3. Recolor button backgrounds:
-   - **Actions** → darker orange
-   - **🏠 Home** → stays blue (current default)
-   - **Check (✓)** → green
+Goal: Keep the same colors (orange / blue / green), same sizes, same edge-to-edge layout — but make them look glossy, metallic, and slightly animated instead of flat.
 
-## Changes (single file: `src/pages/Checklist.tsx`, ~lines 1126–1242)
+## Visual direction
+Each button gets:
+1. **Diagonal metallic gradient** — darker at the bottom, lighter at the top, in its own color family. Looks like brushed/polished metal.
+2. **Inner highlight** — a subtle bright sheen across the top edge (inset white shadow) and a soft dark inner shadow at the bottom for depth.
+3. **Animated sparkle/shimmer** — a faint diagonal light streak that slowly sweeps across each button every few seconds, giving an "alive / shiny" feel without being distracting.
+4. **Press feedback** — when tapped, the button slightly darkens and the sheen dims, so it feels physical.
 
-### 1. Container — remove gap, drop side padding so buttons go edge-to-edge
-- Outer wrapper currently: `fixed bottom-0 left-0 right-0 px-4 pb-[...] pt-3`
-  → change to: `fixed bottom-0 left-0 right-0 pb-[max(0px,env(safe-area-inset-bottom))] pt-0` (remove `px-4` so bar is flush to screen edges).
-- Inner row currently: `flex gap-3`
-  → change to: `flex gap-0`.
-- Reorder-mode "Done" button keeps its current sizing (only the 3-button row changes), but will also become `h-28` and lose rounded corners to match.
+Colors stay the same: Actions = orange family, Home = blue family, Check = green family.
 
-### 2. Button sizing — double height, remove rounded corners (so flush buttons look like one bar)
-- Actions button: `flex-1 h-14 rounded-2xl ...` → `flex-1 h-28 rounded-none ...`
-- Home button: `w-16 h-14 rounded-2xl ...` → `w-20 h-28 rounded-none ...` (slightly wider to fit the emoji comfortably at the larger height)
-- Check button: `flex-1 h-14 rounded-2xl ...` → `flex-1 h-28 rounded-none ...`
-- Increase the check icon from `h-6 w-6` → `h-8 w-8` so it scales with the bigger button.
+## Technical changes
 
-### 3. Button colors
-Use Tailwind utility classes overriding the default primary background:
-- **Actions** → `bg-orange-700 hover:bg-orange-700/90 text-white` (darker orange, not bright).
-- **🏠 Home** → no color override; keeps the existing blue primary background.
-- **Check** → `bg-green-600 hover:bg-green-600/90 text-white`.
+### 1. `src/index.css` — add gradient + shimmer utilities
+Add three new utility classes inside `@layer utilities`:
 
-These colors render identically in light and dark mode and are accessible against white icons/text.
+- `.btn-metallic-orange`, `.btn-metallic-blue`, `.btn-metallic-green`
+  - Each sets `background-image: linear-gradient(to bottom, <lighter hsl>, <base hsl>, <darker hsl>)` using the existing `--action-orange`, `--primary`, `--action-green` tokens (with `calc()` lightness shifts so light/dark mode both work).
+  - Each adds layered `box-shadow`:
+    - `inset 0 1px 0 hsl(0 0% 100% / 0.35)` — top sheen
+    - `inset 0 -2px 6px hsl(0 0% 0% / 0.2)` — bottom depth
+    - keeps the existing `shadow-floating` outer drop shadow
+  - `:active` state: shifts gradient darker and removes the top sheen to feel pressed.
+
+- `.btn-shimmer` — a shared class that adds a `::before` pseudo-element:
+  - Absolutely positioned diagonal white gradient stripe (`linear-gradient(115deg, transparent 40%, rgba(255,255,255,0.25) 50%, transparent 60%)`), 50% width, full height.
+  - Animated with a new `@keyframes shimmer` that translates it from `-120%` to `220%` over ~4.5s, infinite, with a long pause between sweeps (using a non-linear timing or a 0–30% active / 30–100% offscreen keyframe split).
+  - Container needs `position: relative; overflow: hidden;` (already implied by the button, but we'll set explicitly in the utility).
+  - `pointer-events: none` on the pseudo-element so it doesn't block taps.
+
+- Stagger: give each button a slightly different `animation-delay` (0s / 1.5s / 3s) so the three buttons don't shimmer in unison — feels more organic.
+
+### 2. `src/pages/Checklist.tsx` — apply the new classes
+On lines ~1136–1242, swap the flat color classes for the new metallic + shimmer ones (no structural changes):
+
+- Actions button (line 1176):
+  `bg-action-orange ... hover:bg-action-orange/90` → `btn-metallic-orange btn-shimmer`
+- Home button (line 1195): add `btn-metallic-blue btn-shimmer` (alongside existing classes; default primary bg is overridden by the gradient).
+- Check button (line 1238):
+  `bg-action-green ... hover:bg-action-green/90` → `btn-metallic-green btn-shimmer`
+- Reorder-mode "Done" button (line 1131): also gets `btn-metallic-blue btn-shimmer` so it matches the look.
+- Add a per-button `style={{ animationDelay: "0s" | "1.5s" | "3s" }}` (or a small CSS variable) for the shimmer stagger.
+
+### 3. Accessibility
+Wrap the shimmer keyframes in `@media (prefers-reduced-motion: reduce)` and disable the animation for users who opt out — the metallic gradient and sheen still render, just no sweeping highlight.
 
 ## Out of scope
-- No changes to button behavior, long-press handlers, routing, or the Actions sheet contents.
-- No changes to the floating shadow (`shadow-floating` is kept so the bar still lifts off the content).
-- No changes to the home page or other routes.
+- No layout, sizing, color-family, routing, or behavior changes.
+- No changes to other buttons in the app.
+- No new dependencies.
