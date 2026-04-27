@@ -89,7 +89,7 @@ export const RunSequenceDialog = ({ open, userId, currentChecklist, onClose, onS
           </DialogHeader>
           <div className="space-y-4 text-sm">
             <p className="text-muted-foreground text-xs">
-              The agent reads your checklist line by line and decides one tool call per line. For best results, write one instruction per line and attach reference images directly to the line that uses them. The agent can also follow checklists you've linked from any line.
+              The agent reads your checklist line by line. It will only use the checklists and media you attach below as reference — it will not follow checklist links inside lines or pull from your gallery on its own. Attach every reference image, video, audio file, or supporting checklist you want the agent to use.
             </p>
 
             <div>
