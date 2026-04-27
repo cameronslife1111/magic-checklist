@@ -1128,7 +1128,8 @@ const ChecklistPage = () => {
           {reorderMode ? (
             <Button
               onClick={() => setReorderMode(false)}
-              className="w-full h-28 rounded-none text-base font-semibold shadow-floating"
+              style={{ ["--shimmer-delay" as any]: "0s" }}
+              className="w-full h-28 rounded-none text-base font-semibold btn-metallic-blue btn-shimmer"
             >
               Done
             </Button>
