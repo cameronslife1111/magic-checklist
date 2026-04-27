@@ -8,6 +8,7 @@
 const STORAGE_KEY = "speech-muted";
 
 let primed = false;
+let needsRearm = false;
 let heartbeat: number | null = null;
 let visibilityBound = false;
 
@@ -126,20 +127,28 @@ export function notifyDictationStart() {
   resetEngine();
 }
 
-// Called by ItemRow on textarea blur (still inside the user gesture that
-// dismissed the keyboard). Resets the engine, nudges the audio route, and
-// re-primes synchronously so the next speak() is fully armed.
+// Called by ItemRow on textarea blur. The blur event from a mobile keyboard
+// is NOT a fresh user gesture, so we cannot reliably re-prime here. Instead,
+// flag the engine as needing a re-arm and let the next real tap (captured by
+// installGestureRearm) perform the hard reset + prime inside a real gesture.
 export function notifyDictationEnd() {
   resetEngine();
   nudgeAudioRoute();
-  // Re-prime now while we still have gesture context.
-  primeSpeech();
+  needsRearm = true;
 }
 
-// Called from a global pointer/touch listener. Cheap no-op when already primed
-// or muted; silently re-arms the engine on the next tap if dictation broke it.
+// Called from a global pointer/touch listener. If dictation flagged a re-arm,
+// perform a full reset + prime here — this is a real user gesture, so it
+// mirrors exactly what the Mute→Unmute toggle does (which is known to work).
 export function notifyUserGesture() {
   if (muted) return;
+  if (needsRearm) {
+    resetEngine();
+    nudgeAudioRoute();
+    primeSpeech();
+    needsRearm = false;
+    return;
+  }
   if (!primed) primeSpeech();
 }
 
@@ -239,6 +248,7 @@ export function setMuted(v: boolean) {
   } else {
     // Allow re-priming after unmute.
     primed = false;
+    needsRearm = false;
   }
 }
 
@@ -262,11 +272,28 @@ export function speak(text: string) {
 
   bindVisibilityOnce();
 
-  // Auto-recover from the zombie state before queueing.
-  recoverIfStuck();
-
   const cleaned = stripEmojis(text);
   if (!cleaned) return;
+
+  // If dictation flagged a re-arm and no gesture has cleared it yet, do a
+  // hard reset + prime here and DEFER the speak. This mirrors the Mute→Unmute
+  // recovery path and avoids speaking against a dead audio session.
+  if (needsRearm) {
+    resetEngine();
+    nudgeAudioRoute();
+    primeSpeech();
+    needsRearm = false;
+    const chunks = chunkText(cleaned);
+    window.setTimeout(() => {
+      if (muted) return;
+      recoverIfStuck();
+      speakChunks(chunks);
+    }, 60);
+    return;
+  }
+
+  // Auto-recover from the zombie state before queueing.
+  recoverIfStuck();
 
   const wasBusy = s.speaking || s.pending;
 

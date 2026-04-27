@@ -1,52 +1,68 @@
-# Make the bottom 3 buttons feel premium & alive
+# Fix: Speech stops working after using microphone dictation
 
-Goal: Keep the same colors (orange / blue / green), same sizes, same edge-to-edge layout — but make them look glossy, metallic, and slightly animated instead of flat.
+## Symptom
+After tapping the mic/keyboard dictation in an item textarea, the app stops speaking even though it's "unmuted." The only thing that revives it is toggling Mute → Unmute (or refreshing).
 
-## Visual direction
-Each button gets:
-1. **Diagonal metallic gradient** — darker at the bottom, lighter at the top, in its own color family. Looks like brushed/polished metal.
-2. **Inner highlight** — a subtle bright sheen across the top edge (inset white shadow) and a soft dark inner shadow at the bottom for depth.
-3. **Animated sparkle/shimmer** — a faint diagonal light streak that slowly sweeps across each button every few seconds, giving an "alive / shiny" feel without being distracting.
-4. **Press feedback** — when tapped, the button slightly darkens and the sheen dims, so it feels physical.
+## First-principles analysis
 
-Colors stay the same: Actions = orange family, Home = blue family, Check = green family.
+The Web Speech API has three failure modes that all apply here:
 
-## Technical changes
+1. **Audio-route hijack** — On iOS/Android, dictation grabs the microphone audio session. When it releases, `speechSynthesis` is left in a state where `speak()` is accepted (no error) but no audio comes out.
+2. **Lost user-gesture activation** — `speak()` works the first time because it's inside a tap. After dictation completes via `onBlur` (which is *not* a fresh user gesture on mobile keyboards), the activation token is gone.
+3. **"Primed" flag drift** — `src/lib/speech.ts` keeps a module-level `primed` boolean. Once true, `speak()` skips re-priming. But after dictation, the engine is effectively un-primed even though the flag still says `true`.
 
-### 1. `src/index.css` — add gradient + shimmer utilities
-Add three new utility classes inside `@layer utilities`:
+### Why the Mute → Unmute toggle "fixes" it
+Looking at `setMuted(v)` (speech.ts:229):
+- On mute: `cancel()` + `stopHeartbeat()`
+- On unmute: sets `primed = false`
 
-- `.btn-metallic-orange`, `.btn-metallic-blue`, `.btn-metallic-green`
-  - Each sets `background-image: linear-gradient(to bottom, <lighter hsl>, <base hsl>, <darker hsl>)` using the existing `--action-orange`, `--primary`, `--action-green` tokens (with `calc()` lightness shifts so light/dark mode both work).
-  - Each adds layered `box-shadow`:
-    - `inset 0 1px 0 hsl(0 0% 100% / 0.35)` — top sheen
-    - `inset 0 -2px 6px hsl(0 0% 0% / 0.2)` — bottom depth
-    - keeps the existing `shadow-floating` outer drop shadow
-  - `:active` state: shifts gradient darker and removes the top sheen to feel pressed.
+Then the user taps Unmute (a real gesture), which fires the global `pointerup` → `notifyUserGesture()` → `primeSpeech()` inside a *fresh* gesture. That's the only path in the code that reliably re-arms the engine after dictation.
 
-- `.btn-shimmer` — a shared class that adds a `::before` pseudo-element:
-  - Absolutely positioned diagonal white gradient stripe (`linear-gradient(115deg, transparent 40%, rgba(255,255,255,0.25) 50%, transparent 60%)`), 50% width, full height.
-  - Animated with a new `@keyframes shimmer` that translates it from `-120%` to `220%` over ~4.5s, infinite, with a long pause between sweeps (using a non-linear timing or a 0–30% active / 30–100% offscreen keyframe split).
-  - Container needs `position: relative; overflow: hidden;` (already implied by the button, but we'll set explicitly in the utility).
-  - `pointer-events: none` on the pseudo-element so it doesn't block taps.
+### Why the existing "fix" doesn't work
+`notifyDictationEnd()` runs inside `onBlur`, which on mobile is *not* a user gesture. So `resetEngine()` + `nudgeAudioRoute()` + `primeSpeech()` all run, but the subsequent `speak()` has no gesture activation. The `installGestureRearm` listener *should* catch the next tap and re-prime — but:
+- `notifyUserGesture()` early-returns if `primed === true`
+- `notifyDictationEnd()` already set `primed = true` synthetically
+- So the next real tap does nothing, and `speak()` runs against a dead engine
 
-- Stagger: give each button a slightly different `animation-delay` (0s / 1.5s / 3s) so the three buttons don't shimmer in unison — feels more organic.
+That's the bug.
 
-### 2. `src/pages/Checklist.tsx` — apply the new classes
-On lines ~1136–1242, swap the flat color classes for the new metallic + shimmer ones (no structural changes):
+## Fix
 
-- Actions button (line 1176):
-  `bg-action-orange ... hover:bg-action-orange/90` → `btn-metallic-orange btn-shimmer`
-- Home button (line 1195): add `btn-metallic-blue btn-shimmer` (alongside existing classes; default primary bg is overridden by the gradient).
-- Check button (line 1238):
-  `bg-action-green ... hover:bg-action-green/90` → `btn-metallic-green btn-shimmer`
-- Reorder-mode "Done" button (line 1131): also gets `btn-metallic-blue btn-shimmer` so it matches the look.
-- Add a per-button `style={{ animationDelay: "0s" | "1.5s" | "3s" }}` (or a small CSS variable) for the shimmer stagger.
+Three small, surgical changes in `src/lib/speech.ts`:
 
-### 3. Accessibility
-Wrap the shimmer keyframes in `@media (prefers-reduced-motion: reduce)` and disable the animation for users who opt out — the metallic gradient and sheen still render, just no sweeping highlight.
+### 1. Track a "needs re-arm" flag separate from `primed`
+Add `needsRearm = false`. Set it `true` in `notifyDictationEnd()` (and don't optimistically prime there — priming outside a gesture is what creates the false-positive `primed` state).
 
-## Out of scope
-- No layout, sizing, color-family, routing, or behavior changes.
-- No changes to other buttons in the app.
-- No new dependencies.
+### 2. Make `notifyUserGesture()` honor the re-arm flag
+```ts
+export function notifyUserGesture() {
+  if (muted) return;
+  if (needsRearm) {
+    resetEngine();          // hard reset, clears primed
+    nudgeAudioRoute();      // iOS audio route nudge
+    primeSpeech();          // now inside a real gesture
+    needsRearm = false;
+    return;
+  }
+  if (!primed) primeSpeech();
+}
+```
+
+### 3. Make `speak()` defensive when `needsRearm` is set
+If `speak()` is called while `needsRearm` is still true (e.g., user taps a checkbox that triggers speech in the same handler chain), fall through to a hard reset + prime + a small `setTimeout` before speaking, since `cancel()`-then-`speak()` synchronously is the known zombie trigger (already documented in the file).
+
+### 4. Drop the in-blur `primeSpeech()` call
+Remove the optimistic `primeSpeech()` from `notifyDictationEnd()`. It's the line that sets `primed = true` while the engine is actually dead, defeating the gesture re-arm path.
+
+## Files changed
+- `src/lib/speech.ts` — the four edits above. No other files touched.
+
+## Why this has the highest probability of working
+- It mirrors exactly what the **Mute → Unmute** workaround does (which the user confirmed works), but triggers it automatically on the next real tap instead of requiring the toggle.
+- It does **not** try to speak from `onBlur` (which is fundamentally not a gesture on mobile) — it defers re-arm to the next real `pointerup`/`touchend`, which `installGestureRearm` already captures.
+- It keeps all the existing Chrome-15s heartbeat, iOS audio-route nudge, and chunking logic intact.
+- Zero changes to UI, components, or call sites.
+
+## Risk / regressions
+- After dictation, the *first* `speak()` triggered programmatically (without any tap in between) will still be silent — but in this app every speak is downstream of a user tap (toggle, check, open item), so the next tap will re-arm before/at the moment speech is requested.
+- No change to the muted persistence or the existing `setMuted` behavior.
