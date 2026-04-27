@@ -1,63 +1,37 @@
-# Auto-load inline checklist links into Run Sequence context
+# Update bottom action bar: full width, taller, colored buttons
 
-## Goal
+## Goals
+1. The three bottom buttons (Actions, 🏠 Home, ✓ Check) should fill the full width with **no gap** between them.
+2. Buttons should be **double the current height** (h-14 → h-28) for easier tapping.
+3. Recolor button backgrounds:
+   - **Actions** → darker orange
+   - **🏠 Home** → stays blue (current default)
+   - **Check (✓)** → green
 
-When the Run Sequence agent starts, it should automatically read every checklist you've inserted via the "insert checklist link" button on the input checklist — including links nested one level inside those linked checklists. The Context Attacher in the Run dialog stays as an additive option.
+## Changes (single file: `src/pages/Checklist.tsx`, ~lines 1126–1242)
 
-## Changes
+### 1. Container — remove gap, drop side padding so buttons go edge-to-edge
+- Outer wrapper currently: `fixed bottom-0 left-0 right-0 px-4 pb-[...] pt-3`
+  → change to: `fixed bottom-0 left-0 right-0 pb-[max(0px,env(safe-area-inset-bottom))] pt-0` (remove `px-4` so bar is flush to screen edges).
+- Inner row currently: `flex gap-3`
+  → change to: `flex gap-0`.
+- Reorder-mode "Done" button keeps its current sizing (only the 3-button row changes), but will also become `h-28` and lose rounded corners to match.
 
-### 1. `supabase/functions/process-action-queue/index.ts`
+### 2. Button sizing — double height, remove rounded corners (so flush buttons look like one bar)
+- Actions button: `flex-1 h-14 rounded-2xl ...` → `flex-1 h-28 rounded-none ...`
+- Home button: `w-16 h-14 rounded-2xl ...` → `w-20 h-28 rounded-none ...` (slightly wider to fit the emoji comfortably at the larger height)
+- Check button: `flex-1 h-14 rounded-2xl ...` → `flex-1 h-28 rounded-none ...`
+- Increase the check icon from `h-6 w-6` → `h-8 w-8` so it scales with the bigger button.
 
-Rewrite `loadLinkedLists()` (currently lines ~376–404) to do a bounded breadth-first traversal:
+### 3. Button colors
+Use Tailwind utility classes overriding the default primary background:
+- **Actions** → `bg-orange-700 hover:bg-orange-700/90 text-white` (darker orange, not bright).
+- **🏠 Home** → no color override; keeps the existing blue primary background.
+- **Check** → `bg-green-600 hover:bg-green-600/90 text-white`.
 
-- Start from the input checklist.
-- Follow `linked_checklist_id` references up to **2 hops deep**.
-- Cap at **15 unique checklists** total, **100 items per list**.
-- Skip the input checklist itself; dedupe by id (cycle-safe).
-- Bulk-fetch titles + items in two queries after collecting ids (same pattern as today, just larger caps).
-- Return the same shape, plus a new `depth` field per list (1 = directly linked, 2 = nested).
+These colors render identically in light and dark mode and are accessible against white icons/text.
 
-Then merge with any checklists the user attached via the Context Attacher (already passed through `payload.context.checklists` / `state.linked_lists` seed):
-
-- Inline-linked lists take priority.
-- Attached lists are appended, deduped by id.
-- Final array still capped at 15.
-
-### 2. `buildLinkedContextText()` (same file, ~line 493)
-
-Annotate nested lists in the planner's text context so it knows depth:
-
-```
-### Steps from linked checklist "Brand Voice"
-- ...
-
-### Steps from linked checklist "Tone Examples" (nested inside "Brand Voice")
-- ...
-```
-
-No other planner changes needed — handles `linked:<list>:<item>` and `linked_context_text` already flow through.
-
-### 3. No schema, no UI changes
-
-- `checklist_items.linked_checklist_id` already exists and is already populated by the "insert checklist link" button.
-- Run Sequence dialog stays exactly as is — Context Attacher remains for ad-hoc additions.
-
-## Behavior after the change
-
-| Scenario | Result |
-|---|---|
-| Drop a checklist link onto your sequence checklist | Auto-read every run, no attaching needed |
-| Linked checklist itself contains another checklist link | Also auto-read (1 nested hop) |
-| Attach a checklist via the Run dialog | Still works, additive |
-| Same checklist linked AND attached | Loaded once (dedupe) |
-| 20 checklists linked transitively | First 15 loaded (bounded for planner speed) |
-
-## Verification
-
-After deploy:
-1. Pull a recent `action-sequence` job and inspect `sequence_state.linked_lists` to confirm inline links and nested links appear.
-2. Trigger one run on a checklist with at least one inline link and confirm the planner's per-step decisions reference `linked:0:N` handles.
-
-## Files touched
-
-- `supabase/functions/process-action-queue/index.ts` — only file changed.
+## Out of scope
+- No changes to button behavior, long-press handlers, routing, or the Actions sheet contents.
+- No changes to the floating shadow (`shadow-floating` is kept so the bar still lifts off the content).
+- No changes to the home page or other routes.

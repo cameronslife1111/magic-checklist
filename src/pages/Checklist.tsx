@@ -1123,17 +1123,17 @@ const ChecklistPage = () => {
         )}
       </main>
 
-      <div className="fixed bottom-0 left-0 right-0 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3 pointer-events-none">
-        <div className="max-w-2xl mx-auto pointer-events-auto">
+      <div className="fixed bottom-0 left-0 right-0 pb-[max(0px,env(safe-area-inset-bottom))] pointer-events-none">
+        <div className="pointer-events-auto">
           {reorderMode ? (
             <Button
               onClick={() => setReorderMode(false)}
-              className="w-full h-14 rounded-2xl text-base font-semibold shadow-floating"
+              className="w-full h-28 rounded-none text-base font-semibold shadow-floating"
             >
               Done
             </Button>
           ) : (
-            <div className="flex gap-3">
+            <div className="flex gap-0">
               <Button
                 onPointerDown={(e) => {
                   e.preventDefault();
@@ -1173,7 +1173,7 @@ const ChecklistPage = () => {
                   }
                 }}
                 onContextMenu={(e) => e.preventDefault()}
-                className="flex-1 h-14 rounded-2xl text-base font-semibold shadow-floating select-none touch-none"
+                className="flex-1 h-28 rounded-none text-base font-semibold shadow-floating select-none touch-none bg-action-orange text-action-orange-foreground hover:bg-action-orange/90"
               >
                 Actions
               </Button>
@@ -1192,7 +1192,7 @@ const ChecklistPage = () => {
                     await openChecklist(highestUnchecked.linked_checklist_id);
                   }
                 }}
-                className="w-16 h-14 rounded-2xl text-2xl leading-none shadow-floating select-none"
+                className="w-20 h-28 rounded-none text-2xl leading-none shadow-floating select-none"
               >
                 🏠
               </Button>
@@ -1235,9 +1235,9 @@ const ChecklistPage = () => {
                   keepaliveRef.current?.blur();
                 }}
                 onContextMenu={(e) => e.preventDefault()}
-                className="flex-1 h-14 rounded-2xl shadow-floating select-none touch-none"
+                className="flex-1 h-28 rounded-none shadow-floating select-none touch-none bg-action-green text-action-green-foreground hover:bg-action-green/90"
               >
-                <Check className="h-6 w-6" />
+                <Check className="h-8 w-8" />
               </Button>
             </div>
           )}
