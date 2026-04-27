@@ -1,6 +1,11 @@
-// Image generation:
-// - Text-to-image  -> fal openai/gpt-image-2 (high quality)
-// - Image edits / remix (refImages present) -> fal openai/gpt-image-2/edit (high quality)
+// Image generation via Fal (openai/gpt-image-2).
+//
+// Three call modes:
+//  1) mode: "submit"  -> POST to Fal queue, return { request_id, status_url, response_url } in <2s.
+//  2) mode: "poll"    -> single GET on statusUrl; if COMPLETED, fetch responseUrl & return { status:"COMPLETED", dataUrl }.
+//                        Otherwise { status:"IN_PROGRESS" } or { status:"FAILED", error }.
+//  3) (no mode)       -> legacy synchronous path: submit + poll inside the function and return { dataUrl }.
+//                        Kept for any direct UI calls. The action queue uses submit/poll to avoid the 150s edge timeout.
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
@@ -14,12 +19,14 @@ const ASPECT_TO_SIZE: Record<string, string> = {
   "3:4": "portrait_4_3",
 };
 
+const json = (body: any, status = 200) =>
+  new Response(JSON.stringify(body), { status, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+
 async function urlToDataUrl(url: string): Promise<string> {
   const r = await fetch(url);
   if (!r.ok) throw new Error(`fetch image failed: ${r.status}`);
   const blob = await r.blob();
   const buf = await blob.arrayBuffer();
-  // Chunked base64 to avoid blowing the call stack on large images.
   const bytes = new Uint8Array(buf);
   let binary = "";
   const CHUNK = 0x8000;
@@ -30,109 +37,128 @@ async function urlToDataUrl(url: string): Promise<string> {
   return `data:${blob.type || "image/png"};base64,${b64}`;
 }
 
-async function pollFal(falKey: string, statusUrl: string, resultUrl: string): Promise<any> {
-  for (let i = 0; i < 120; i++) {
-    // Faster polling early (1s for first 10 polls), then 2s. Most image edits finish within 5-15s.
-    await new Promise((r) => setTimeout(r, i < 10 ? 1000 : 2000));
-    const s = await fetch(statusUrl, { headers: { Authorization: `Key ${falKey}` } });
-    if (!s.ok) continue;
-    const j = await s.json();
-    if (j.status === "COMPLETED") {
-      const r = await fetch(resultUrl, { headers: { Authorization: `Key ${falKey}` } });
-      return await r.json();
+function pickEndpoint(hasRefs: boolean) {
+  return hasRefs
+    ? "https://queue.fal.run/openai/gpt-image-2/edit"
+    : "https://queue.fal.run/openai/gpt-image-2";
+}
+
+function buildSubmitBody(prompt: string, aspectRatio: string | undefined, refs: string[]) {
+  const hasRefs = refs.length > 0;
+  const image_size = hasRefs
+    ? (aspectRatio ? (ASPECT_TO_SIZE[aspectRatio] ?? "auto") : "auto")
+    : (ASPECT_TO_SIZE[aspectRatio ?? "1:1"] ?? "square_hd");
+  const body: Record<string, any> = {
+    prompt,
+    image_size,
+    quality: "high",
+    num_images: 1,
+    output_format: "png",
+  };
+  if (hasRefs) body.image_urls = refs.slice(0, 16);
+  return body;
+}
+
+async function submitToFal(falKey: string, prompt: string, aspectRatio: string | undefined, refs: string[]) {
+  const endpoint = pickEndpoint(refs.length > 0);
+  const submit = await fetch(endpoint, {
+    method: "POST",
+    headers: { Authorization: `Key ${falKey}`, "Content-Type": "application/json" },
+    body: JSON.stringify(buildSubmitBody(prompt, aspectRatio, refs)),
+  });
+  if (!submit.ok) {
+    const t = await submit.text();
+    console.error("fal submit err", submit.status, t);
+    throw new Error(`fal ${submit.status}: ${t.slice(0, 300)}`);
+  }
+  const queued = await submit.json();
+  return {
+    request_id: queued.request_id ?? null,
+    status_url: queued.status_url,
+    response_url: queued.response_url,
+  };
+}
+
+async function pollFalOnce(falKey: string, statusUrl: string, responseUrl: string) {
+  const s = await fetch(statusUrl, { headers: { Authorization: `Key ${falKey}` } });
+  if (!s.ok) {
+    const t = await s.text();
+    return { status: "IN_PROGRESS" as const, _debug: `status http ${s.status}: ${t.slice(0, 200)}` };
+  }
+  const j = await s.json();
+  if (j.status === "COMPLETED") {
+    const r = await fetch(responseUrl, { headers: { Authorization: `Key ${falKey}` } });
+    if (!r.ok) {
+      const t = await r.text();
+      return { status: "FAILED" as const, error: `response http ${r.status}: ${t.slice(0, 200)}` };
     }
-    if (j.status === "FAILED") throw new Error("fal job failed");
+    const result = await r.json();
+    const url = result?.images?.[0]?.url;
+    if (!url) return { status: "FAILED" as const, error: "no image url returned" };
+    const dataUrl = await urlToDataUrl(url);
+    return { status: "COMPLETED" as const, dataUrl };
+  }
+  if (j.status === "FAILED") {
+    return { status: "FAILED" as const, error: typeof j.error === "string" ? j.error : "fal job failed" };
+  }
+  // IN_QUEUE / IN_PROGRESS / etc
+  return { status: "IN_PROGRESS" as const };
+}
+
+// Legacy synchronous path: submit then poll until done. Kept for direct UI calls
+// that don't go through the action queue. Capped at ~140s so it fits inside the
+// 150s edge-function ceiling — but the action queue uses submit/poll instead.
+async function syncSubmitAndPoll(falKey: string, prompt: string, aspectRatio: string | undefined, refs: string[]) {
+  const handle = await submitToFal(falKey, prompt, aspectRatio, refs);
+  if (!handle.status_url || !handle.response_url) throw new Error("fal did not return queue handle");
+  const start = Date.now();
+  let i = 0;
+  while (Date.now() - start < 140_000) {
+    const wait = i < 10 ? 1000 : 2000;
+    await new Promise((r) => setTimeout(r, wait));
+    i++;
+    const out = await pollFalOnce(falKey, handle.status_url, handle.response_url);
+    if (out.status === "COMPLETED") return out.dataUrl;
+    if (out.status === "FAILED") throw new Error(out.error);
   }
   throw new Error("fal job timeout");
-}
-
-async function generateWithGptImage2(prompt: string, aspectRatio: string | undefined): Promise<string> {
-  const falKey = Deno.env.get("FAL_KEY");
-  if (!falKey) throw new Error("FAL_KEY not configured");
-  const image_size = ASPECT_TO_SIZE[aspectRatio ?? "1:1"] ?? "square_hd";
-
-  const submit = await fetch("https://queue.fal.run/openai/gpt-image-2", {
-    method: "POST",
-    headers: { Authorization: `Key ${falKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt,
-      image_size,
-      quality: "high",
-      num_images: 1,
-      output_format: "png",
-    }),
-  });
-  if (!submit.ok) {
-    const t = await submit.text();
-    console.error("fal gpt-image-2 submit err", submit.status, t);
-    throw new Error(`fal gpt-image-2 ${submit.status}: ${t.slice(0, 300)}`);
-  }
-  const queued = await submit.json();
-  const result = await pollFal(falKey, queued.status_url, queued.response_url);
-  const url = result?.images?.[0]?.url;
-  if (!url) throw new Error("no image url returned");
-  return await urlToDataUrl(url);
-}
-
-async function editWithGptImage2Edit(
-  prompt: string,
-  aspectRatio: string | undefined,
-  refImages: string[],
-): Promise<string> {
-  const falKey = Deno.env.get("FAL_KEY");
-  if (!falKey) throw new Error("FAL_KEY not configured");
-
-  // If the caller passed a known aspect, use it; otherwise let the model infer from inputs.
-  const image_size = aspectRatio ? (ASPECT_TO_SIZE[aspectRatio] ?? "auto") : "auto";
-
-  const submit = await fetch("https://queue.fal.run/openai/gpt-image-2/edit", {
-    method: "POST",
-    headers: { Authorization: `Key ${falKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({
-      prompt,
-      image_urls: refImages.slice(0, 16),
-      image_size,
-      quality: "high",
-      num_images: 1,
-      output_format: "png",
-    }),
-  });
-  if (!submit.ok) {
-    const t = await submit.text();
-    console.error("fal gpt-image-2/edit submit err", submit.status, t);
-    throw new Error(`fal gpt-image-2/edit ${submit.status}: ${t.slice(0, 300)}`);
-  }
-  const queued = await submit.json();
-  const result = await pollFal(falKey, queued.status_url, queued.response_url);
-  const url = result?.images?.[0]?.url;
-  if (!url) throw new Error("no image url returned");
-  return await urlToDataUrl(url);
 }
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
   try {
-    const { prompt, aspectRatio, refImages, refImageUrls } = await req.json();
-    if (!prompt) {
-      return new Response(JSON.stringify({ error: "Missing prompt" }), { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    const falKey = Deno.env.get("FAL_KEY");
+    if (!falKey) return json({ error: "FAL_KEY not configured" }, 500);
+
+    const body = await req.json();
+    const mode = body?.mode;
+
+    // ── Mode: poll ────────────────────────────────────────────────────────
+    if (mode === "poll") {
+      const { statusUrl, responseUrl } = body ?? {};
+      if (!statusUrl || !responseUrl) return json({ error: "statusUrl and responseUrl required" }, 400);
+      const out = await pollFalOnce(falKey, statusUrl, responseUrl);
+      return json(out);
     }
 
-    // Prefer public URLs (fast path: pass straight to fal, no fetch/base64/re-upload).
+    // ── Shared input parsing for submit + legacy ──────────────────────────
+    const { prompt, aspectRatio, refImages, refImageUrls } = body ?? {};
+    if (!prompt) return json({ error: "Missing prompt" }, 400);
     const urlRefs: string[] = Array.isArray(refImageUrls) ? refImageUrls.filter((u) => typeof u === "string") : [];
     const dataUrlRefs: string[] = Array.isArray(refImages) ? refImages.filter((u) => typeof u === "string") : [];
     const allRefs = [...urlRefs, ...dataUrlRefs].slice(0, 16);
 
-    if (allRefs.length === 0) {
-      // Text-to-image -> GPT Image 2 via fal
-      const dataUrl = await generateWithGptImage2(prompt, aspectRatio);
-      return new Response(JSON.stringify({ dataUrl }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    // ── Mode: submit ──────────────────────────────────────────────────────
+    if (mode === "submit") {
+      const handle = await submitToFal(falKey, prompt, aspectRatio, allRefs);
+      return json(handle);
     }
 
-    // Image-to-image / remix -> GPT Image 2 Edit via fal (URLs go directly, data URLs fal also accepts).
-    const dataUrl = await editWithGptImage2Edit(prompt, aspectRatio, allRefs);
-    return new Response(JSON.stringify({ dataUrl }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    // ── Legacy synchronous mode (no `mode` field) ─────────────────────────
+    const dataUrl = await syncSubmitAndPoll(falKey, prompt, aspectRatio, allRefs);
+    return json({ dataUrl });
   } catch (e) {
-    console.error(e);
-    return new Response(JSON.stringify({ error: (e as Error).message }), { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    console.error("lovable-image error", e);
+    return json({ error: (e as Error).message }, 500);
   }
 });
