@@ -572,15 +572,10 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     const attachedChecklistIds: string[] = Array.isArray(ctx.checklists)
       ? ctx.checklists.filter((x: any) => typeof x === "string")
       : [];
-    state.linked_lists = await loadLinkedLists(supabase, parent.checklist_id, attachedChecklistIds);
-
-    const { data: gallery } = await supabase
-      .from("media_assets")
-      .select("title, url, kind")
-      .eq("user_id", parent.user_id)
-      .order("created_at", { ascending: false })
-      .limit(200);
-    state.gallery = (gallery ?? []) as any[];
+    // Only load checklists the user explicitly attached. No BFS over inline
+    // checklist links, no full-gallery snapshot.
+    state.linked_lists = await loadAttachedLists(supabase, attachedChecklistIds);
+    state.gallery = [];
 
     state.attached_media = Array.isArray(ctx.media)
       ? ctx.media.filter((m: any) => m && typeof m.url === "string").slice(0, 30)
