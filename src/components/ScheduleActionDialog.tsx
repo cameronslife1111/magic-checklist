@@ -19,6 +19,7 @@ type Props = {
   onPick: (p: SchedulePick) => void;
   userId?: string;
   excludeChecklistId?: string;
+  currentChecklist?: { id: string; title: string };
   context?: AttachedContext;
   onContextChange?: (c: AttachedContext) => void;
 };
