@@ -27,6 +27,10 @@ type Job = {
   provider_request_id: string | null;
   provider_status_url: string | null;
   provider_response_url: string | null;
+  // Sequence parent state (only set on action-sequence parent rows)
+  sequence_state?: any;
+  parent_job_id?: string | null;
+  sequence_step?: number | null;
 };
 
 function recurrenceToInterval(r: string | null): string | null {
@@ -256,10 +260,366 @@ async function urlToDataUrl(url: string): Promise<string> {
 
 type JobOutcome =
   | { kind: "result"; result: any }
-  | { kind: "handoff"; provider: string; status_url: string; response_url: string; request_id: string | null };
+  | { kind: "handoff"; provider: string; status_url: string; response_url: string; request_id: string | null }
+  | { kind: "sequence-tick" };
+
+// Append a plain text item to the bottom of a checklist (used for sequence outputs / aborts).
+async function appendItemToChecklist(
+  supabase: any,
+  args: { user_id: string; checklist_id: string; text: string; media_url?: string | null; media_type?: string | null },
+) {
+  const { data: list } = await supabase
+    .from("checklist_items")
+    .select("position")
+    .eq("checklist_id", args.checklist_id)
+    .order("position", { ascending: false })
+    .limit(1);
+  const last = (list ?? [])[0]?.position ?? 0;
+  await supabase.from("checklist_items").insert({
+    checklist_id: args.checklist_id,
+    user_id: args.user_id,
+    text: args.text,
+    position: last + POS_STEP,
+    media_url: args.media_url ?? null,
+    media_type: args.media_type ?? null,
+  });
+}
+
+function looseMatchGalleryName(needle: string, gallery: { name: string; url: string; type: string }[], wantType?: string) {
+  if (!needle) return null;
+  const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ").trim();
+  const n = norm(needle);
+  const candidates = wantType ? gallery.filter((g) => g.type === wantType) : gallery;
+  let best: { item: typeof candidates[number]; score: number } | null = null;
+  for (const g of candidates) {
+    const gn = norm(g.name);
+    let score = 0;
+    if (gn === n) score = 1000;
+    else if (gn.includes(n) || n.includes(gn)) score = 500 - Math.abs(gn.length - n.length);
+    else {
+      // token overlap
+      const ts = new Set(gn.split(/\s+/));
+      const overlap = n.split(/\s+/).filter((t) => ts.has(t)).length;
+      if (overlap > 0) score = overlap * 10;
+    }
+    if (score > 0 && (!best || score > best.score)) best = { item: g, score };
+  }
+  return best?.item ?? null;
+}
+
+// Resolve a planner ref string ("step:N" or a gallery name) to a URL.
+function resolveRef(ref: string, kind: "image" | "video" | "audio", state: any): string | null {
+  if (!ref) return null;
+  if (ref.startsWith("step:")) {
+    const idx = Number(ref.slice(5));
+    if (!Number.isFinite(idx)) return null;
+    const out = state?.outputs?.[idx];
+    if (!out) return null;
+    if (kind === "image" && out.media_type === "image") return out.media_url ?? null;
+    if (kind === "video" && out.media_type === "video") return out.media_url ?? null;
+    return out.media_url ?? null;
+  }
+  const gallery = state?.gallery_index ?? [];
+  const match = looseMatchGalleryName(ref, gallery, kind);
+  return match?.url ?? null;
+}
+
+// One state-machine tick for an action-sequence parent. Idempotent and bounded.
+async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean; aborted?: string }> {
+  const state = (parent.sequence_state && Object.keys(parent.sequence_state).length ? parent.sequence_state : null) ?? {
+    phase: "planning",
+    cursor: 0,
+    outputs: [] as any[],
+    steps_used: 0,
+    images_used: 0,
+    videos_used: 0,
+    failures: 0,
+  };
+  const payload = parent.payload ?? {};
+  const maxSteps = Number(payload.max_steps ?? 12);
+  const maxImages = Number(payload.max_images ?? 12);
+  const maxVideos = Number(payload.max_videos ?? 4);
+  const maxRuntimeMin = Number(payload.max_runtime_minutes ?? 30);
+  const maxFailures = Number(payload.max_failures ?? 2);
+  const outputChecklistId: string = payload.output_checklist_id ?? parent.checklist_id;
+
+  const abortSequence = async (reason: string) => {
+    state.phase = "aborted";
+    state.abort_reason = reason;
+    await supabase.from("action_jobs").update({
+      status: "failed",
+      sequence_state: state,
+      error_raw: reason,
+      error_friendly: `Sequence stopped: ${reason}`,
+      error_fix: "Open the parent action and re-run with adjusted budgets or instructions.",
+      completed_at: new Date().toISOString(),
+    }).eq("id", parent.id);
+    await appendItemToChecklist(supabase, {
+      user_id: parent.user_id,
+      checklist_id: outputChecklistId,
+      text: `⚠️ Sequence stopped: ${reason}`,
+    });
+    return { done: true, aborted: reason };
+  };
+
+  // Runtime budget
+  const startedAt = state.started_at ? new Date(state.started_at).getTime() : Date.now();
+  if (!state.started_at) state.started_at = new Date(startedAt).toISOString();
+  if (Date.now() - startedAt > maxRuntimeMin * 60_000) {
+    return abortSequence(`exceeded ${maxRuntimeMin} minute runtime budget`);
+  }
+  if (state.failures >= maxFailures) {
+    return abortSequence(`${state.failures} step(s) failed (limit ${maxFailures})`);
+  }
+
+  // PLANNING
+  if (state.phase === "planning") {
+    // Build instructions = input checklist items text in order.
+    const { data: items } = await supabase
+      .from("checklist_items")
+      .select("text, position")
+      .eq("checklist_id", parent.checklist_id)
+      .order("position", { ascending: true });
+    const instructions = ((items ?? []) as any[]).map((i) => i.text).filter((t) => typeof t === "string" && t.trim());
+    if (instructions.length === 0) return abortSequence("input checklist is empty");
+
+    // Build resolved text context from attached context checklists
+    const ctx = await resolveContext(supabase, payload);
+
+    // Build gallery_index from user's media_assets
+    const { data: gallery } = await supabase
+      .from("media_assets")
+      .select("title, url, kind")
+      .eq("user_id", parent.user_id)
+      .order("created_at", { ascending: false })
+      .limit(200);
+    const gallery_index = ((gallery ?? []) as any[]).map((g) => ({ name: g.title, url: g.url, type: g.kind }));
+
+    const allowed = Array.isArray(payload.allowed_actions) && payload.allowed_actions.length
+      ? payload.allowed_actions
+      : ["text-text","text-image","image-image","remix","image-video","video-video","audio-image-video","analyze-image","web-search"];
+
+    let plan: any;
+    try {
+      plan = await callFn("plan-action-sequence", {
+        instructions,
+        context_text: ctx.textBlock,
+        gallery_index,
+        allowed_actions: allowed,
+        max_steps: maxSteps,
+        max_images_per_step: Number(payload.max_images_per_step ?? 2),
+      });
+    } catch (e) {
+      return abortSequence(`planner failed: ${(e as Error).message.slice(0, 200)}`);
+    }
+    if (!plan?.steps?.length) return abortSequence("planner produced no steps");
+
+    state.plan = plan;
+    state.gallery_index = gallery_index;
+    state.phase = "dispatching";
+    state.cursor = 0;
+    await supabase.from("action_jobs").update({ sequence_state: state }).eq("id", parent.id);
+    // Fall through to dispatch this tick.
+  }
+
+  // DISPATCHING
+  if (state.phase === "dispatching") {
+    if (state.cursor >= state.plan.steps.length || state.steps_used >= maxSteps) {
+      // Done.
+      state.phase = "completed";
+      await supabase.from("action_jobs").update({
+        status: "completed",
+        sequence_state: state,
+        result: { steps: state.outputs.length },
+        completed_at: new Date().toISOString(),
+      }).eq("id", parent.id);
+      await appendItemToChecklist(supabase, {
+        user_id: parent.user_id,
+        checklist_id: outputChecklistId,
+        text: `✅ Sequence finished — ${state.outputs.filter((o: any) => o && !o.failed).length} step(s) completed`,
+      });
+      return { done: true };
+    }
+
+    const step = state.plan.steps[state.cursor];
+    // Pre-budget check by predicted output kind
+    const willMakeImage = step.action_type === "text-image" || step.action_type === "image-image" || step.action_type === "remix";
+    const willMakeVideo = step.action_type === "image-video" || step.action_type === "video-video" || step.action_type === "audio-image-video";
+    if (willMakeImage && state.images_used >= maxImages) {
+      return abortSequence(`image budget reached (${maxImages})`);
+    }
+    if (willMakeVideo && state.videos_used >= maxVideos) {
+      return abortSequence(`video budget reached (${maxVideos})`);
+    }
+
+    // Resolve refs into URLs
+    const refs = step.input_refs ?? {};
+    const imageUrls: string[] = (refs.images ?? [])
+      .map((r: string) => resolveRef(r, "image", state))
+      .filter((u: any) => typeof u === "string");
+    const videoUrls: string[] = (refs.videos ?? [])
+      .map((r: string) => resolveRef(r, "video", state))
+      .filter((u: any) => typeof u === "string");
+    const audioUrls: string[] = (refs.audios ?? [])
+      .map((r: string) => resolveRef(r, "audio", state))
+      .filter((u: any) => typeof u === "string");
+
+    // Build child payload per action_type. Mirror what the dialogs send.
+    const childPayload: any = { prompt: step.prompt };
+    if (step.aspect_ratio) childPayload.aspectRatio = step.aspect_ratio;
+    if (step.quality) childPayload.quality = step.quality;
+    let valid = true;
+    let invalidReason = "";
+    switch (step.action_type) {
+      case "text-text":
+      case "web-search":
+        break;
+      case "text-image":
+        if (imageUrls.length) childPayload.refImageUrls = imageUrls.slice(0, 16);
+        break;
+      case "image-image":
+        if (imageUrls.length === 0) { valid = false; invalidReason = "image-image needs at least 1 image ref"; }
+        else childPayload.refImageUrls = imageUrls.slice(0, 16);
+        break;
+      case "remix":
+        if (imageUrls.length < 1) { valid = false; invalidReason = "remix needs at least 1 image ref"; }
+        else childPayload.refImageUrls = imageUrls.slice(0, 16);
+        break;
+      case "image-video":
+        if (imageUrls.length === 0) { valid = false; invalidReason = "image-video needs 1 image ref"; }
+        else childPayload.sourceUrl = imageUrls[0];
+        break;
+      case "video-video":
+        if (videoUrls.length === 0) { valid = false; invalidReason = "video-video needs 1 video ref"; }
+        else childPayload.sourceUrl = videoUrls[0];
+        break;
+      case "audio-image-video":
+        if (imageUrls.length === 0 || audioUrls.length === 0) { valid = false; invalidReason = "audio-image-video needs 1 image and 1 audio ref"; }
+        else { childPayload.imageUrl = imageUrls[0]; childPayload.audioUrl = audioUrls[0]; }
+        break;
+      case "analyze-image":
+        if (imageUrls.length === 0) { valid = false; invalidReason = "analyze-image needs 1 image ref"; }
+        else childPayload.imageUrl = imageUrls[0];
+        break;
+      default:
+        valid = false; invalidReason = `unknown action ${step.action_type}`;
+    }
+
+    if (!valid) {
+      // Skip this step, record gap on the output checklist, advance cursor.
+      await appendItemToChecklist(supabase, {
+        user_id: parent.user_id,
+        checklist_id: outputChecklistId,
+        text: `⚠️ Skipped step ${state.cursor + 1} (${step.action_type}): ${invalidReason}`,
+      });
+      state.outputs[state.cursor] = { skipped: true, reason: invalidReason };
+      state.cursor += 1;
+      state.steps_used += 1;
+      state.failures += 1;
+      await supabase.from("action_jobs").update({ sequence_state: state }).eq("id", parent.id);
+      // Loop next step on the next tick (not this one — keep ticks short).
+      return { done: false };
+    }
+
+    // Insert the child job. Output goes to the OUTPUT checklist (not source) — appended at bottom.
+    const count = Math.max(1, Number(step.count ?? 1));
+    const insertRows: any[] = [];
+    for (let i = 0; i < count; i++) {
+      insertRows.push({
+        user_id: parent.user_id,
+        checklist_id: outputChecklistId,
+        source_item_id: null,
+        action_type: step.action_type,
+        status: "pending",
+        payload: childPayload,
+        prompt_preview: String(step.prompt).slice(0, 500),
+        parent_job_id: parent.id,
+        sequence_step: state.cursor,
+      });
+    }
+    const { data: inserted, error: insErr } = await supabase
+      .from("action_jobs").insert(insertRows).select("id");
+    if (insErr) {
+      state.failures += 1;
+      await supabase.from("action_jobs").update({ sequence_state: state }).eq("id", parent.id);
+      await appendItemToChecklist(supabase, {
+        user_id: parent.user_id,
+        checklist_id: outputChecklistId,
+        text: `⚠️ Could not queue step ${state.cursor + 1}: ${insErr.message}`,
+      });
+      state.outputs[state.cursor] = { failed: true, reason: insErr.message };
+      state.cursor += 1;
+      state.steps_used += 1;
+      await supabase.from("action_jobs").update({ sequence_state: state }).eq("id", parent.id);
+      return { done: false };
+    }
+    state.phase = "awaiting_children";
+    state.current_child_ids = (inserted ?? []).map((r: any) => r.id);
+    await supabase.from("action_jobs").update({ sequence_state: state }).eq("id", parent.id);
+    return { done: false };
+  }
+
+  // AWAITING_CHILDREN
+  if (state.phase === "awaiting_children") {
+    const childIds: string[] = state.current_child_ids ?? [];
+    if (childIds.length === 0) {
+      state.phase = "dispatching";
+      await supabase.from("action_jobs").update({ sequence_state: state }).eq("id", parent.id);
+      return { done: false };
+    }
+    const { data: children } = await supabase
+      .from("action_jobs")
+      .select("id, status, result, error_friendly, error_raw")
+      .in("id", childIds);
+    const rows = (children ?? []) as any[];
+    const allTerminal = rows.length === childIds.length && rows.every((c) =>
+      c.status === "completed" || c.status === "failed" || c.status === "cancelled");
+    if (!allTerminal) return { done: false };
+
+    // Gather outputs for ref resolution by later steps. Use the FIRST completed child as the canonical output.
+    const completed = rows.find((c) => c.status === "completed");
+    const stepIdx = state.cursor;
+    if (completed) {
+      const result = completed.result ?? {};
+      state.outputs[stepIdx] = {
+        media_url: result.media_url ?? null,
+        media_type: result.media_url ? (result.media_url.match(/\.(mp4|webm|mov)/i) ? "video" : "image") : null,
+        text: result.text ?? null,
+      };
+    } else {
+      const failed = rows.find((c) => c.status === "failed");
+      state.outputs[stepIdx] = { failed: true, reason: failed?.error_friendly ?? failed?.error_raw ?? "step failed" };
+      state.failures += 1;
+    }
+
+    // Update budget tallies based on what was generated
+    for (const c of rows) {
+      if (c.status !== "completed") continue;
+      const url = (c.result ?? {}).media_url;
+      if (typeof url === "string") {
+        if (/\.(mp4|webm|mov)/i.test(url)) state.videos_used += 1;
+        else state.images_used += 1;
+      }
+    }
+
+    state.steps_used += 1;
+    state.cursor += 1;
+    state.current_child_ids = [];
+    state.phase = "dispatching";
+    await supabase.from("action_jobs").update({ sequence_state: state }).eq("id", parent.id);
+    return { done: false };
+  }
+
+  return { done: true };
+}
 
 async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<JobOutcome> {
   const p = job.payload ?? {};
+  if (job.action_type === "action-sequence") {
+    // Sequence parents are managed by tickSequence, not by this synchronous path.
+    // Returning sequence-tick prevents the normal complete/insert flow from running.
+    return { kind: "sequence-tick" };
+  }
   const ctx = await resolveContext(supabase, p);
   switch (job.action_type) {
     case "text-text": {
@@ -599,6 +959,22 @@ Deno.serve(async (req) => {
           attempts: j.attempts + 1,
         }).eq("id", j.id);
         results.push({ id: j.id, ok: true, awaiting: true });
+        continue;
+      }
+
+      if (outcome.kind === "sequence-tick") {
+        // Sequence parent — drive the state machine. Put the parent back to
+        // pending so subsequent worker ticks (cron + child-completion kicks)
+        // continue to process it without it appearing "running" forever.
+        const tickResult = await tickSequence(supabase, j);
+        if (!tickResult.done) {
+          await supabase.from("action_jobs").update({
+            status: "pending",
+            attempts: j.attempts, // sequence ticks don't count against per-job retries
+            started_at: null,
+          }).eq("id", j.id);
+        }
+        results.push({ id: j.id, ok: true, sequence: true, done: tickResult.done });
         continue;
       }
 
