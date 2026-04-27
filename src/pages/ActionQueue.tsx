@@ -560,15 +560,15 @@ const ActionQueue = () => {
           <TabsContent value="queue">
             {loading ? <p className="text-muted-foreground text-sm py-6 text-center">Loading…</p>
               : inQueue.length === 0 ? <p className="text-muted-foreground text-sm py-6 text-center">No queued actions.</p>
-              : <ul className="flex flex-col gap-2 mt-3">{inQueue.map((j) => <JobRow key={j.id} j={j} />)}</ul>}
+              : <GroupedJobList jobs={inQueue} allJobs={jobs} renderRow={(j) => <JobRow key={j.id} j={j} />} />}
           </TabsContent>
           <TabsContent value="completed">
             {completed.length === 0 ? <p className="text-muted-foreground text-sm py-6 text-center">No completed actions yet.</p>
-              : <ul className="flex flex-col gap-2 mt-3">{completed.map((j) => <JobRow key={j.id} j={j} />)}</ul>}
+              : <GroupedJobList jobs={completed} allJobs={jobs} renderRow={(j) => <JobRow key={j.id} j={j} />} />}
           </TabsContent>
           <TabsContent value="failed">
             {failed.length === 0 ? <p className="text-muted-foreground text-sm py-6 text-center">No failed or stopped actions.</p>
-              : <ul className="flex flex-col gap-2 mt-3">{failed.map((j) => <JobRow key={j.id} j={j} />)}</ul>}
+              : <GroupedJobList jobs={failed} allJobs={jobs} renderRow={(j) => <JobRow key={j.id} j={j} />} />}
           </TabsContent>
         </Tabs>
       </main>
