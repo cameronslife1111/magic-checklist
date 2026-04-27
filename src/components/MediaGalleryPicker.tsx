@@ -118,12 +118,15 @@ export const MediaGalleryPicker = ({
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-md p-0 gap-0">
-        <DialogHeader className="px-5 pt-5 pb-3">
+      <DialogContent
+        className="max-w-md w-[calc(100vw-1.5rem)] p-0 gap-0 flex flex-col max-h-[85vh] overflow-hidden z-[60]"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
+        <DialogHeader className="px-5 pt-5 pb-3 shrink-0">
           <DialogTitle>{title}</DialogTitle>
         </DialogHeader>
 
-        <div className="px-5 space-y-3">
+        <div className="px-5 space-y-3 shrink-0">
           <div className="flex gap-2">
             <Input value={q} onChange={(e) => setQ(e.target.value)} placeholder={`Search ${kindLabel}s`} />
             <Button type="button" variant="outline" onClick={() => fileRef.current?.click()} className="shrink-0">
