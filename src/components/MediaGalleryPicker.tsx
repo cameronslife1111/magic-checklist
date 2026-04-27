@@ -196,7 +196,7 @@ export const MediaGalleryPicker = ({
           )}
         </ul>
 
-        <DialogFooter className="px-5 py-4 gap-2">
+        <DialogFooter className="px-5 py-4 gap-2 shrink-0">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button onClick={confirm} disabled={orderedIds.length === 0}>
             {mode === "single" ? "Select" : `Done (${orderedIds.length})`}
