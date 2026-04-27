@@ -465,8 +465,12 @@ Deno.serve(async (req) => {
 
       if (out?.status === "COMPLETED" && out?.url) {
         const isAvatar = j.action_type === "audio-image-video";
+        const baseLabel = isAvatar ? "Generated talking video" : "Generated video";
+        const title = await registerGeneratedAsset(supabase, j, {
+          url: out.url, kind: "video", mimeType: "video/mp4", baseLabel,
+        });
         await insertResultItem(supabase, j, {
-          text: isAvatar ? "Generated talking video" : "Generated video",
+          text: title,
           media_url: out.url,
           media_type: "video",
         });
