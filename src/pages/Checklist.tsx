@@ -438,6 +438,65 @@ const ChecklistPage = () => {
         await combineCheckedItems();
         break;
       }
+      case "export-text": {
+        try {
+          const { data: lists, error: lErr } = await supabase
+            .from("checklists")
+            .select("id, title")
+            .eq("user_id", user.id);
+          if (lErr) throw lErr;
+          const { data: rows, error: iErr } = await supabase
+            .from("checklist_items")
+            .select("checklist_id, text, checked, position")
+            .eq("user_id", user.id);
+          if (iErr) throw iErr;
+
+          const sortedLists = sortChecklistsByTitle(lists ?? []);
+          const itemsByList = new Map<string, { text: string; checked: boolean; position: number }[]>();
+          (rows ?? []).forEach((r) => {
+            const arr = itemsByList.get(r.checklist_id) ?? [];
+            arr.push({ text: r.text, checked: r.checked, position: r.position });
+            itemsByList.set(r.checklist_id, arr);
+          });
+
+          const now = new Date();
+          const pad = (n: number) => String(n).padStart(2, "0");
+          const totalSteps = (rows ?? []).length;
+          const headerLines = [
+            "Magic Checklist — Text Data Export",
+            `Generated: ${now.toLocaleString()}`,
+            `Total checklists: ${sortedLists.length}`,
+            `Total steps: ${totalSteps}`,
+            "",
+            "",
+          ];
+          const blocks = sortedLists.map((c) => {
+            const its = (itemsByList.get(c.id) ?? []).slice().sort((a, b) => a.position - b.position);
+            const lines = [`=== ${c.title} ===`];
+            its.forEach((it) => {
+              lines.push(`${it.checked ? "[x]" : "[ ]"} ${it.text}`);
+            });
+            lines.push("");
+            return lines.join("\n");
+          });
+          const body = headerLines.join("\n") + blocks.join("\n");
+
+          const fname = `magic checklist text data export- ${pad(now.getHours())}-${pad(now.getMinutes())}-${pad(now.getSeconds())} ${pad(now.getDate())}-${pad(now.getMonth() + 1)}-${now.getFullYear()}.txt`;
+          const blob = new Blob([body], { type: "text/plain;charset=utf-8" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          a.href = url;
+          a.download = fname;
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
+          setTimeout(() => URL.revokeObjectURL(url), 1000);
+          toast.success(`Exported ${sortedLists.length} checklist${sortedLists.length === 1 ? "" : "s"}`);
+        } catch (e: any) {
+          toast.error(e?.message ?? "Could not export text file");
+        }
+        break;
+      }
       case "new":
         setDialog({ kind: "new" });
         break;
