@@ -285,7 +285,10 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<Job
       }, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       const url = await uploadDataUrl(supabase, job.user_id, out.dataUrl, "png");
-      await insertResultItem(supabase, job, { text: "Generated image", media_url: url, media_type: "image" });
+      const title = await registerGeneratedAsset(supabase, job, {
+        url, kind: "image", mimeType: "image/png", baseLabel: "Generated image",
+      });
+      await insertResultItem(supabase, job, { text: title, media_url: url, media_type: "image" });
       return { kind: "result", result: { media_url: url } };
     }
     case "image-image":
@@ -302,9 +305,12 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<Job
       }, signal);
       if (signal.aborted) throw new DOMException("Aborted", "AbortError");
       const url = await uploadDataUrl(supabase, job.user_id, out.dataUrl, "png");
+      const baseLabel = job.action_type === "remix" ? "Remixed image" : "Edited image";
+      const title = await registerGeneratedAsset(supabase, job, {
+        url, kind: "image", mimeType: "image/png", baseLabel,
+      });
       await insertResultItem(supabase, job, {
-        text: job.action_type === "remix" ? "Remixed image" : "Edited image",
-        media_url: url, media_type: "image",
+        text: title, media_url: url, media_type: "image",
       });
       return { kind: "result", result: { media_url: url } };
     }
