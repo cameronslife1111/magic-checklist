@@ -372,16 +372,65 @@ function detectKind(mediaType: string | null | undefined, url: string | null | u
   return null;
 }
 
-// Load up to 5 linked checklists referenced by the input checklist's items (1 hop).
-async function loadLinkedLists(supabase: any, inputChecklistId: string) {
-  const { data: refs } = await supabase
-    .from("checklist_items")
-    .select("linked_checklist_id")
-    .eq("checklist_id", inputChecklistId)
-    .not("linked_checklist_id", "is", null);
-  const ids = Array.from(new Set(((refs ?? []) as any[])
-    .map((r) => r.linked_checklist_id).filter((x: any) => typeof x === "string"))).slice(0, 5);
-  if (ids.length === 0) return [];
+// Load checklists referenced (transitively) by the input checklist via the
+// "insert checklist link" button, plus any checklists the user explicitly
+// attached via the Run Sequence Context Attacher.
+//
+// - BFS up to MAX_DEPTH hops from the input checklist (inline links only).
+// - Inline-linked lists take priority; attached lists are appended/deduped.
+// - Bounded for planner speed: MAX_LISTS total, MAX_ITEMS_PER_LIST per list.
+async function loadLinkedLists(
+  supabase: any,
+  inputChecklistId: string,
+  attachedChecklistIds: string[] = [],
+) {
+  const MAX_DEPTH = 2;
+  const MAX_LISTS = 15;
+  const MAX_ITEMS_PER_LIST = 100;
+
+  // BFS over inline `linked_checklist_id` references, recording depth.
+  const visited = new Set<string>([inputChecklistId]);
+  const collected: { id: string; depth: number; via: string | null }[] = [];
+  let frontier: { id: string; depth: number }[] = [{ id: inputChecklistId, depth: 0 }];
+
+  while (frontier.length > 0 && collected.length < MAX_LISTS) {
+    const ids = frontier.map((f) => f.id);
+    const depthOf = new Map(frontier.map((f) => [f.id, f.depth]));
+    const { data: refs } = await supabase
+      .from("checklist_items")
+      .select("checklist_id, linked_checklist_id")
+      .in("checklist_id", ids)
+      .not("linked_checklist_id", "is", null);
+
+    const next: { id: string; depth: number }[] = [];
+    for (const r of (refs ?? []) as any[]) {
+      const cid = r.linked_checklist_id;
+      if (typeof cid !== "string" || visited.has(cid)) continue;
+      visited.add(cid);
+      const parentDepth = depthOf.get(r.checklist_id) ?? 0;
+      const depth = parentDepth + 1;
+      collected.push({
+        id: cid,
+        depth,
+        via: depth > 1 ? r.checklist_id : null,
+      });
+      if (collected.length >= MAX_LISTS) break;
+      if (depth < MAX_DEPTH) next.push({ id: cid, depth });
+    }
+    frontier = next;
+  }
+
+  // Append user-attached checklists (dedupe; treat as depth 1).
+  for (const cid of attachedChecklistIds) {
+    if (typeof cid !== "string" || visited.has(cid)) continue;
+    if (collected.length >= MAX_LISTS) break;
+    visited.add(cid);
+    collected.push({ id: cid, depth: 1, via: null });
+  }
+
+  if (collected.length === 0) return [];
+
+  const ids = collected.map((c) => c.id);
   const { data: lists } = await supabase.from("checklists").select("id,title").in("id", ids);
   const { data: items } = await supabase
     .from("checklist_items")
@@ -392,14 +441,16 @@ async function loadLinkedLists(supabase: any, inputChecklistId: string) {
   const grouped = new Map<string, any[]>();
   for (const it of (items ?? []) as any[]) {
     const arr = grouped.get(it.checklist_id) ?? [];
-    if (arr.length < 50) arr.push(it);
+    if (arr.length < MAX_ITEMS_PER_LIST) arr.push(it);
     grouped.set(it.checklist_id, arr);
   }
-  return ids.map((id, idx) => ({
+  return collected.map((c, idx) => ({
     list_idx: idx,
-    list_id: id,
-    title: titleMap.get(id) ?? "Untitled",
-    items: grouped.get(id) ?? [],
+    list_id: c.id,
+    title: titleMap.get(c.id) ?? "Untitled",
+    depth: c.depth,
+    via_title: c.via ? (titleMap.get(c.via) ?? null) : null,
+    items: grouped.get(c.id) ?? [],
   }));
 }
 
