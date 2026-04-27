@@ -75,6 +75,10 @@
     --input: 220 14% 22%;
     --ring: 220 90% 68%;
     --checked: 220 10% 55%;
+    --action-orange: 22 80% 48%;
+    --action-orange-foreground: 0 0% 100%;
+    --action-green: 142 60% 42%;
+    --action-green-foreground: 0 0% 100%;
   }
 }
 
