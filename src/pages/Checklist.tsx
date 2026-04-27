@@ -1194,7 +1194,8 @@ const ChecklistPage = () => {
                     await openChecklist(highestUnchecked.linked_checklist_id);
                   }
                 }}
-                className="w-20 h-28 rounded-none text-2xl leading-none shadow-floating select-none"
+                style={{ ["--shimmer-delay" as any]: "1.6s" }}
+                className="w-20 h-28 rounded-none text-2xl leading-none select-none text-primary-foreground btn-metallic-blue btn-shimmer"
               >
                 🏠
               </Button>
