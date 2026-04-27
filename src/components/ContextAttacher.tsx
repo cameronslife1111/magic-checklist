@@ -86,6 +86,15 @@ export const ContextAttacher = ({ userId, excludeChecklistId, currentChecklist, 
 
   return (
     <div className="space-y-2 border rounded-md p-3 bg-muted/30">
+      {currentChecklist && (
+        <label className="flex items-center gap-2 text-xs cursor-pointer select-none pb-1 border-b border-border/50">
+          <Checkbox
+            checked={isCurrentIncluded}
+            onCheckedChange={(v) => toggleCurrent(v === true)}
+          />
+          <span className="font-medium">Include this checklist as context</span>
+        </label>
+      )}
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium text-muted-foreground">Attach context (optional)</p>
         {totalCount > 0 && (
