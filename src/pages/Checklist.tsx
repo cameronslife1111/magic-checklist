@@ -1174,7 +1174,8 @@ const ChecklistPage = () => {
                   }
                 }}
                 onContextMenu={(e) => e.preventDefault()}
-                className="flex-1 h-28 rounded-none text-base font-semibold shadow-floating select-none touch-none bg-action-orange text-action-orange-foreground hover:bg-action-orange/90"
+                style={{ ["--shimmer-delay" as any]: "0s" }}
+                className="flex-1 h-28 rounded-none text-base font-semibold select-none touch-none text-action-orange-foreground btn-metallic-orange btn-shimmer"
               >
                 Actions
               </Button>
