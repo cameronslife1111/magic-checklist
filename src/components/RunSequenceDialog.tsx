@@ -89,7 +89,7 @@ export const RunSequenceDialog = ({ open, userId, currentChecklist, onClose, onS
           </DialogHeader>
           <div className="space-y-4 text-sm">
             <p className="text-muted-foreground text-xs">
-              The AI will read this checklist as multi-step instructions and execute them using the blue actions in order. Outputs go to the bottom of your chosen checklist.
+              The agent reads your checklist line by line and decides one tool call per line. For best results, write one instruction per line and attach reference images directly to the line that uses them. The agent can also follow checklists you've linked from any line.
             </p>
 
             <div>
@@ -105,8 +105,8 @@ export const RunSequenceDialog = ({ open, userId, currentChecklist, onClose, onS
             </div>
 
             <div>
-              <Label className="text-xs">Max steps: <span className="font-semibold">{maxSteps}</span></Label>
-              <Slider min={1} max={30} step={1} value={[maxSteps]} onValueChange={(v) => setMaxSteps(v[0])} className="mt-2" />
+              <Label className="text-xs">Max tool calls: <span className="font-semibold">{maxSteps}</span></Label>
+              <Slider min={1} max={50} step={1} value={[maxSteps]} onValueChange={(v) => setMaxSteps(v[0])} className="mt-2" />
             </div>
             <div>
               <Label className="text-xs">Max images total: <span className="font-semibold">{maxImages}</span></Label>
