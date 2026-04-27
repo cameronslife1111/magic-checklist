@@ -175,7 +175,6 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json();
     const currentLine: string = typeof body.current_line === "string" ? body.current_line : "";
-    const currentLineAttached: CatalogEntry | null = body.current_line_attached ?? null;
     const priorOutputs: any[] = Array.isArray(body.prior_outputs_summary) ? body.prior_outputs_summary.slice(-20) : [];
     const upcoming: string[] = Array.isArray(body.upcoming_lines_preview) ? body.upcoming_lines_preview.slice(0, 5) : [];
     const catalog: CatalogEntry[] = Array.isArray(body.catalog) ? body.catalog.slice(0, 300) : [];
@@ -196,9 +195,6 @@ Deno.serve(async (req) => {
 
     const userMsg = JSON.stringify({
       current_line: currentLine,
-      current_line_attached: currentLineAttached
-        ? { handle: currentLineAttached.handle, name: currentLineAttached.name, type: currentLineAttached.type }
-        : null,
       prior_outputs_summary: priorOutputs,
       upcoming_lines_preview: upcoming,
       catalog: catalog.map((c) => ({ handle: c.handle, name: c.name, type: c.type, source: c.source })),
