@@ -412,10 +412,14 @@ async function loadAttachedLists(
   }));
 }
 
-// Build the per-step catalog from sequence_state + the line being planned.
-function buildCatalog(state: any, currentLineIdx: number): { catalog: CatalogEntry[]; currentAttached: CatalogEntry | null } {
+// Build the per-step catalog from sequence_state.
+// Only user-attached context is exposed to the planner: prior step outputs
+// (this run), media on items inside user-attached checklists, and media
+// gallery items the user attached in the Run Sequence dialog. We deliberately
+// do NOT expose per-line media on the input checklist or a snapshot of the
+// user's whole gallery — that auto-discovery was confusing the planner.
+function buildCatalog(state: any): { catalog: CatalogEntry[] } {
   const out: CatalogEntry[] = [];
-  let currentAttached: CatalogEntry | null = null;
 
   // 1) Prior step outputs (image/video only — refs need URLs the tools can use).
   const outputs: any[] = state.outputs ?? [];
@@ -432,24 +436,7 @@ function buildCatalog(state: any, currentLineIdx: number): { catalog: CatalogEnt
     });
   });
 
-  // 2) Input checklist line media.
-  const inputLines: any[] = state.input_lines ?? [];
-  inputLines.forEach((line, i) => {
-    if (!line?.media_url) return;
-    const k = detectKind(line.media_type, line.media_url);
-    if (!k) return;
-    const entry: CatalogEntry = {
-      handle: i === currentLineIdx ? "line:current" : `line:${i}`,
-      name: snip(line.text || `Line ${i + 1}`),
-      url: line.media_url,
-      type: k,
-      source: i === currentLineIdx ? "current-line" : "input-line",
-    };
-    out.push(entry);
-    if (i === currentLineIdx) currentAttached = entry;
-  });
-
-  // 3) Linked checklist line media.
+  // 2) Media inside user-attached checklists (from ContextAttacher).
   const linked: any[] = state.linked_lists ?? [];
   linked.forEach((ll, lIdx) => {
     (ll.items ?? []).forEach((it: any, iIdx: number) => {
@@ -466,22 +453,7 @@ function buildCatalog(state: any, currentLineIdx: number): { catalog: CatalogEnt
     });
   });
 
-  // 4) Gallery snapshot.
-  const gallery: any[] = state.gallery ?? [];
-  gallery.forEach((g, i) => {
-    if (!g?.url) return;
-    const k = detectKind(g.kind, g.url);
-    if (!k) return;
-    out.push({
-      handle: `gallery:${i}`,
-      name: g.title ?? "Untitled",
-      url: g.url,
-      type: k,
-      source: "gallery",
-    });
-  });
-
-  // 5) Attached context media (from ContextAttacher).
+  // 3) Attached context media (from ContextAttacher gallery picker).
   const attached: any[] = state.attached_media ?? [];
   attached.forEach((m, i) => {
     if (!m?.url) return;
@@ -496,7 +468,7 @@ function buildCatalog(state: any, currentLineIdx: number): { catalog: CatalogEnt
     });
   });
 
-  return { catalog: out.slice(0, 300), currentAttached };
+  return { catalog: out.slice(0, 300) };
 }
 
 function buildLinkedContextText(state: any): string {
