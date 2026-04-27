@@ -1173,7 +1173,7 @@ const ChecklistPage = () => {
                   }
                 }}
                 onContextMenu={(e) => e.preventDefault()}
-                className="flex-1 h-14 rounded-2xl text-base font-semibold shadow-floating select-none touch-none"
+                className="flex-1 h-28 rounded-none text-base font-semibold shadow-floating select-none touch-none bg-action-orange text-action-orange-foreground hover:bg-action-orange/90"
               >
                 Actions
               </Button>
@@ -1192,7 +1192,7 @@ const ChecklistPage = () => {
                     await openChecklist(highestUnchecked.linked_checklist_id);
                   }
                 }}
-                className="w-16 h-14 rounded-2xl text-2xl leading-none shadow-floating select-none"
+                className="w-20 h-28 rounded-none text-2xl leading-none shadow-floating select-none"
               >
                 🏠
               </Button>
@@ -1235,9 +1235,9 @@ const ChecklistPage = () => {
                   keepaliveRef.current?.blur();
                 }}
                 onContextMenu={(e) => e.preventDefault()}
-                className="flex-1 h-14 rounded-2xl shadow-floating select-none touch-none"
+                className="flex-1 h-28 rounded-none shadow-floating select-none touch-none bg-action-green text-action-green-foreground hover:bg-action-green/90"
               >
-                <Check className="h-6 w-6" />
+                <Check className="h-8 w-8" />
               </Button>
             </div>
           )}
