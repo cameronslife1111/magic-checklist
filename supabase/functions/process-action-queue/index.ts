@@ -45,14 +45,14 @@ function recurrenceToInterval(r: string | null): string | null {
 }
 
 async function explainErrorInline(action_type: string, error_raw: string): Promise<{ cause: string; fix: string }> {
-  const key = Deno.env.get("LOVABLE_API_KEY");
+  const key = Deno.env.get("OPENAI_API_KEY");
   if (!key) return { cause: error_raw.slice(0, 200), fix: "Try again later." };
   try {
-    const r = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+    const r = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
+        model: "gpt-5.4-2026-03-05",
         messages: [
           { role: "system", content: `Translate this API error into plain English. Respond as strict JSON: {"cause":"<one short sentence, no jargon, no error codes>","fix":"<one short concrete suggestion>"}` },
           { role: "user", content: `Action: ${action_type}\nError:\n${error_raw}` },
@@ -60,7 +60,11 @@ async function explainErrorInline(action_type: string, error_raw: string): Promi
         response_format: { type: "json_object" },
       }),
     });
-    if (!r.ok) return { cause: error_raw.slice(0, 200), fix: "Try the action again." };
+    if (!r.ok) {
+      const t = await r.text();
+      console.error(`explainErrorInline openai status=${r.status} body=${t.slice(0, 300)}`);
+      return { cause: error_raw.slice(0, 200), fix: "Try the action again." };
+    }
     const data = await r.json();
     const parsed = JSON.parse(data.choices?.[0]?.message?.content ?? "{}");
     return {
