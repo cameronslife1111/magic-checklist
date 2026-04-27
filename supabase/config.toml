@@ -26,3 +26,6 @@ verify_jwt = false
 
 [functions.explain-error]
 verify_jwt = false
+
+[functions.plan-action-sequence]
+verify_jwt = false
