@@ -37,6 +37,8 @@ export type Database = {
           recurrence: string | null
           result: Json | null
           scheduled_for: string | null
+          sequence_state: Json
+          sequence_step: number | null
           source_item_id: string | null
           started_at: string | null
           status: string
@@ -65,6 +67,8 @@ export type Database = {
           recurrence?: string | null
           result?: Json | null
           scheduled_for?: string | null
+          sequence_state?: Json
+          sequence_step?: number | null
           source_item_id?: string | null
           started_at?: string | null
           status?: string
@@ -93,6 +97,8 @@ export type Database = {
           recurrence?: string | null
           result?: Json | null
           scheduled_for?: string | null
+          sequence_state?: Json
+          sequence_step?: number | null
           source_item_id?: string | null
           started_at?: string | null
           status?: string
