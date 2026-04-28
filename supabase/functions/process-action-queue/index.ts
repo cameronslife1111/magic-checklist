@@ -646,11 +646,20 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
   if (state.phase === "planning_init") {
     const { data: items } = await supabase
       .from("checklist_items")
-      .select("text, position, media_url, media_type")
+      .select("id, text, position, media_url, media_type, linked_checklist_id, parent_item_id")
       .eq("checklist_id", parent.checklist_id)
       .order("position", { ascending: true });
+    // Skip rows that are themselves children of an earlier sequence run —
+    // those are AI-generated outputs, not new instructions.
     const inputLines = ((items ?? []) as any[])
-      .map((i) => ({ text: (i.text ?? "").trim(), media_url: i.media_url ?? null, media_type: i.media_type ?? null }));
+      .filter((i) => !i.parent_item_id)
+      .map((i) => ({
+        item_id: i.id,
+        text: (i.text ?? "").trim(),
+        media_url: i.media_url ?? null,
+        media_type: i.media_type ?? null,
+        linked_checklist_id: i.linked_checklist_id ?? null,
+      }));
     if (inputLines.length === 0) return abortSequence("input checklist is empty");
     state.input_lines = inputLines.slice(0, 60);
 
@@ -658,9 +667,17 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     const attachedChecklistIds: string[] = Array.isArray(ctx.checklists)
       ? ctx.checklists.filter((x: any) => typeof x === "string")
       : [];
-    // Only load checklists the user explicitly attached. No BFS over inline
-    // checklist links, no full-gallery snapshot.
+    // Global linked checklists from the Run Sequence dialog.
     state.linked_lists = await loadAttachedLists(supabase, attachedChecklistIds);
+    // Per-line linked checklists (one row each line may have its own).
+    const perLineIds = Array.from(new Set(
+      state.input_lines.map((l: any) => l.linked_checklist_id).filter((x: any) => typeof x === "string"),
+    )) as string[];
+    const perLineLoaded = await loadAttachedLists(supabase, perLineIds);
+    state.line_linked_lists = {};
+    for (const ll of perLineLoaded) {
+      state.line_linked_lists[ll.list_id] = ll;
+    }
     state.gallery = [];
 
     state.attached_media = Array.isArray(ctx.media)
@@ -686,9 +703,19 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
       await persist();
       return { done: false };
     }
-    const { catalog } = buildCatalog(state);
-    const linkedText = buildLinkedContextText(state);
+
+    // Highlight this line in the UI as "actively running" before we even call
+    // the planner. The Checklist page subscribes to action_jobs realtime and
+    // turns this row green.
+    if (line.item_id) {
+      try { await supabase.from("action_jobs").update({ active_line_item_id: line.item_id }).eq("id", parent.id); } catch {}
+    }
+
+    const { catalog } = buildLineCatalog(state, lineIdx);
+    const linkedText = buildLinkedContextText(state, lineIdx);
     const upcoming = (state.input_lines ?? []).slice(lineIdx + 1, lineIdx + 4).map((l: any) => l.text).filter(Boolean);
+    // Prior outputs summary: text-only metadata. URLs are intentionally NOT
+    // included; the planner picks media via catalog handles only.
     const priorOutputsSummary = (state.outputs ?? []).map((o: any, i: number) => {
       if (!o) return null;
       if (o.no_action) return null;
@@ -722,6 +749,7 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
         checklist_id: outputChecklistId,
         text: `⚠️ Step ${lineIdx + 1}: planner failed — ${(e as Error).message.slice(0, 200)}`,
       });
+      await clearActiveLine();
       await persist();
       return { done: false };
     }
@@ -729,6 +757,7 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     if (!decision || decision.kind === "no_action") {
       state.outputs.push({ no_action: true, line_idx: lineIdx, reason: decision?.reason ?? "" });
       state.cursor += 1;
+      await clearActiveLine();
       await persist();
       return { done: false };
     }
