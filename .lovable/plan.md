@@ -1,75 +1,88 @@
-# Fix Run Sequence: user-attached context only
 
-## Problem
+## What you're seeing
 
-The Run Sequence agent is picking the wrong media and following the wrong checklists because it auto-discovers context the user never asked for:
+Two reproducible failures:
 
-1. **Inline checklist link following** — `loadLinkedLists` does a BFS up to depth 2 over every `linked_checklist_id` on every line of the input checklist, pulling in unrelated lists.
-2. **Whole gallery snapshot** — the worker loads the user's most recent 200 media assets into the planner's catalog, so the AI freely picks images/videos the user never intended to use.
-3. **Per-line attached media** is also auto-included (line:current, line:N), even when the user wanted to drive everything from the Run Sequence dialog.
+1. **Leave the app and come back** → speech is silent until you Mute → Unmute.
+2. **Tap the keyboard mic (dictation)** → speech is silent until you Mute → Unmute.
 
-Result: the planner sees a giant pile of unrelated media + checklist text and reaches for the wrong things.
+Mute → Unmute always fixes it because internally it sets `primed = false` and the next button tap re-primes the engine inside a real user gesture. That's the only path that reliably works today, so the fix is to **route every recovery scenario through that same exact path automatically.**
 
-## Goal
+## First-principles diagnosis
 
-The Run Sequence dialog becomes the single source of truth for context. The agent only ever sees:
-- The input checklist's own line text (still needed — that's what it iterates over).
-- Step outputs it has produced during this run.
-- Whatever the user explicitly attached in the dialog (checklists + media gallery items).
+The Web Speech API on iOS Safari and Android Chrome has three hard rules the current code violates:
 
-Nothing else. No inline link following, no gallery dump, no implicit per-line attachments.
+1. **`speak()` must be called inside, or shortly after, a real user gesture (tap/pointerup).** A React `onChange` from a Radix Checkbox is async — the gesture activation can already be expired by the time `speak()` runs.
+2. **Any browser audio-session change (backgrounding the tab, OS dictation taking the mic, switching apps) silently kills queued utterances** but leaves `speechSynthesis.speaking === false` and `.paused === false`. There is no error event. The engine looks fine but produces no sound.
+3. **Once you "prime" the engine, that prime is invalidated by ANY of the events in #2** — but the current `primed` boolean is never cleared on backgrounding or dictation-end (only on mute toggle).
 
-## Changes
+Concrete bugs in the current code:
 
-### 1. `supabase/functions/process-action-queue/index.ts`
+- **`primed` never invalidates on `visibilitychange`.** When you return to the app, `primed === true`, so `notifyUserGesture()` skips re-priming. The next `speak()` queues into a dead engine. → Failure #1.
+- **`notifyDictationStart()` runs on every textarea `onFocus`** and calls `resetEngine()` which `cancel()`s any current speech. Just tapping a row to edit kills speech. Worse, focus does NOT reliably fire when the user taps the keyboard mic button (the textarea is already focused), so `notifyDictationEnd` may never fire either.
+- **`needsRearm` is only set in `notifyDictationEnd`**, which only runs on blur AND only when `dictatingRef` was flipped by an `onInput` heuristic. On Android Chrome, dictation often inserts via composition events with non-null `data` — the heuristic misses it, `needsRearm` stays false, and the next `speak()` goes through the "idle path" into a dead engine. → Failure #2.
+- **The "idle path" in `speak()` trusts `primed`.** If `primed` is true but the engine is actually dead (post-background, post-dictation-we-missed), nothing speaks.
+- **`primeSpeech()` after dictation is called from inside the deferred `speak()` (60ms setTimeout), not from a user gesture.** iOS rejects this silently.
 
-In `tickSequence` → `planning_init` phase:
+## The fix (highest-probability solution)
 
-- **Remove `loadLinkedLists` BFS over `linked_checklist_id`.** Replace with a simple fetch of only the checklists in `payload.context.checklists` (already validated as user-owned by `enqueue-action`). Drop the `MAX_DEPTH` traversal entirely.
-- **Remove the `media_assets` gallery snapshot.** Delete the `state.gallery` population block. The planner will no longer see arbitrary gallery items.
-- Keep `state.attached_media` exactly as it is — that's the user's explicit picks.
-- Keep `state.input_lines` (the input checklist text) — needed for iteration.
+**One principle: treat the speech engine as untrusted. Re-prime on every fresh user gesture if anything has happened since the last successful utterance.**
 
-In `buildCatalog`:
+### Changes to `src/lib/speech.ts`
 
-- Remove the **gallery** block (handles like `gallery:N`).
-- Remove the **input checklist line media** block (handles like `line:current`, `line:N`). Per-line attached media on the input checklist is no longer auto-promoted.
-- Keep: `step:N` (prior outputs), `linked:L:I` (now only user-attached checklists, not BFS-discovered), `attached:N` (dialog media).
+1. **Replace the `primed` boolean with a "trust token" pattern.** Add a single `engineDirty` flag that becomes `true` on ANY of:
+   - `visibilitychange` → hidden, OR → visible (always invalidate on resume)
+   - `pagehide` / `pageshow` (iOS Safari fires these instead of visibility on some app switches)
+   - `notifyDictationEnd`
+   - any `SpeechSynthesisUtterance.onerror`
+   - 30 seconds of idle since last successful `onend` (engines time out)
+   - route change (called from a small hook in `App.tsx`)
+   
+   When `engineDirty === true`, the next `speak()` and the next user-gesture handler both perform a hard `resetEngine()` + `nudgeAudioRoute()` + `primeSpeech()` — exactly what Mute → Unmute does today.
 
-The simplified catalog the planner sees becomes:
-```text
-step:N      prior step outputs (this run)
-linked:L:I  media on items inside user-attached checklists
-attached:N  media gallery items the user attached in the dialog
-```
+2. **Make every `speak()` self-healing inside the calling gesture.** Instead of deferring to a `setTimeout` (which leaves the gesture context), do this synchronously:
+   - If `engineDirty`: `resetEngine()` → `primeSpeech()` → `s.speak(utterance)` all in the same tick. This works because `handleToggle`, the auto-speak effect, etc. are all reached from a real tap, and the call chain is synchronous up to the first `speak()`.
+   - Drop the 60ms `setTimeout` recovery entirely. It moves execution out of the gesture window and is the reason iOS still drops the first utterance after dictation.
 
-### 2. `supabase/functions/plan-action-sequence/index.ts`
+3. **Stop killing speech on textarea focus.** Remove `notifyDictationStart()` from `onFocus`. Focus is not dictation. Only call `notifyDictationEnd()` on blur if dictation was actually detected. This stops the "tap a row → speech cuts out" side effect.
 
-Update the SYSTEM prompt's "Reference rules":
+4. **Detect dictation more reliably.** Use a broader heuristic in `onInput`:
+   - `inputType === "insertFromDictation"` (iOS), OR
+   - `inputType === "insertCompositionText"` (Android Chrome dictation), OR
+   - any `insertText` where `data` is null OR longer than 1 character AND inserted in <50ms since the previous insert.
+   Track in `dictatingRef`. Also set `engineDirty = true` the moment dictation is detected (don't wait for blur), so even if blur is missed, the next gesture re-primes.
 
-- Remove the `line:current` / `line:N` / `gallery:N` mentions.
-- Replace rule 3 (current_line_attached) with: media for this run comes only from prior step outputs (`step:N`), the user-attached checklists (`linked:L:I`), and the user-attached gallery items (`attached:N`). If the catalog has nothing suitable for what the line asks for, return `no_action` with a brief reason rather than guessing.
-- Drop the `current_line_attached` field from the request body it expects.
+5. **Strengthen `installGestureRearm`.** On every `pointerup`/`touchend`/`click`:
+   - If `engineDirty`: do the full `resetEngine()` → `nudgeAudioRoute()` → `primeSpeech()` cycle synchronously inside the gesture handler (this is the key — same as Mute→Unmute).
+   - Clear `engineDirty` only after `primeSpeech()` succeeds.
 
-### 3. `src/components/RunSequenceDialog.tsx`
+6. **Add `pagehide` / `pageshow` listeners** in addition to `visibilitychange`. iOS Safari does not always fire `visibilitychange` when you switch apps via the home indicator; `pageshow` is the reliable signal.
 
-Tighten the dialog so it's clearly the only source of context:
+7. **Add a watchdog**: when `speak()` queues an utterance, start a 1.5s timer; if `onstart` never fires, mark `engineDirty = true` so the *next* gesture self-heals. Today, a dropped utterance leaves no trace.
 
-- Update the helper text under the title from "The agent reads your checklist line by line and decides one tool call per line. For best results, write one instruction per line and attach reference images directly to the line that uses them. The agent can also follow checklists you've linked from any line." to something like: "The agent reads your checklist line by line. It will only use the checklists and media you attach below as reference — it will not follow checklist links inside lines or pull from your gallery on its own."
-- Keep the existing `ContextAttacher` (already supports attaching checklists + image/video/audio from the Media Gallery).
-- No prop changes.
+### Change to `src/components/ItemRow.tsx`
 
-### 4. `src/components/ContextAttacher.tsx`
+- Remove `notifyDictationStart()` from `onFocus`.
+- Keep `notifyDictationEnd()` on blur, but also call it (idempotently) the moment dictation is detected in `onInput`, via the new `engineDirty` flag.
 
-No structural changes needed — it already supports text (checklists), images, videos, and audio from the gallery, which is exactly what we want.
+### Change to `src/App.tsx` (or `src/main.tsx`)
 
-## Out of scope
+- Add a tiny `useEffect` (or vanilla listener in `main.tsx`) that calls a new `speech.notifyRouteChange()` on every `popstate`/route change. Route changes break the audio session on iOS the same way backgrounding does.
 
-- The per-item "Run AI on this line" actions (single-line runs from the row menu) keep their existing behavior. This change only affects "Run as Action Sequence".
-- Existing in-flight sequences will keep using their already-snapshotted `sequence_state`. Only newly started sequences pick up the new behavior.
+## Why this has the highest probability of success
 
-## Technical notes
+The Mute → Unmute path **already works 100% of the time** in your app. This plan does exactly two things:
 
-- `enqueue-action` already validates `payload.context.checklists` ownership and `payload.context.media` URL prefixes — no edge function security changes needed.
-- The `loadLinkedLists` function can either be deleted or simplified to a pure "load these N user-attached checklists" helper. Simpler is better — replace it with an inline fetch.
-- `buildCatalog`'s signature changes (no longer needs `currentLineIdx`, no longer returns `currentAttached`); update the single caller in `planning_step`.
+1. Detects every situation where the engine becomes untrusted (background, dictation, route change, dropped utterance, idle timeout).
+2. Runs the exact same Mute → Unmute recovery sequence automatically inside the very next user gesture.
+
+Nothing in this plan invents new speech APIs or fights the browser. It just makes the recovery you already have run automatically instead of requiring a manual toggle.
+
+## Files to be edited
+
+- `src/lib/speech.ts` — the core rewrite
+- `src/components/ItemRow.tsx` — remove `onFocus` reset, broaden dictation detection
+- `src/App.tsx` — add route-change notifier (one `useEffect`)
+- `src/main.tsx` — already calls `installGestureRearm()`; no change needed
+
+No backend, database, or edge function changes. No new dependencies.
