@@ -42,6 +42,7 @@ type DialogState =
   | { kind: "new" }
   | { kind: "edit-title" }
   | { kind: "insert-link" }
+  | { kind: "insert-new-link" }
   | { kind: "send-to" }
   | { kind: "send-to-blank" }
   | { kind: "bg" }
@@ -640,6 +641,13 @@ const ChecklistPage = () => {
           return;
         }
         setDialog({ kind: "insert-link" });
+        break;
+      case "insert-new-link":
+        if (!highestUnchecked) {
+          toast.error("No unchecked checkbox found.");
+          return;
+        }
+        setDialog({ kind: "insert-new-link" });
         break;
       case "send-to":
         if (!highestUnchecked) {
@@ -1482,6 +1490,42 @@ const ChecklistPage = () => {
           const src = highestUnchecked;
           await insertItemAfter(src?.id ?? null, { text: title, linked_checklist_id: id });
           setDialog({ kind: "none" });
+        }}
+      />
+
+      <TextPromptDialog
+        open={dialog.kind === "insert-new-link"}
+        title="Create & link new checklist"
+        label="New checklist title"
+        initial={highestUnchecked?.text ?? ""}
+        saveLabel="Create & link"
+        onClose={() => setDialog({ kind: "none" })}
+        onSave={async (title) => {
+          if (!user || !checklist || !highestUnchecked) { setDialog({ kind: "none" }); return; }
+          const capturedText = highestUnchecked.text;
+          const targetItemId = highestUnchecked.id;
+
+          const { data: newCl, error: clErr } = await supabase
+            .from("checklists").insert({ user_id: user.id, title }).select().single();
+          if (clErr || !newCl) { toast.error("Could not create checklist."); return; }
+
+          await supabase.from("checklist_items").insert([
+            { checklist_id: newCl.id, user_id: user.id, text: capturedText, position: 1024 },
+          ]);
+
+          const { error: updErr } = await supabase
+            .from("checklist_items")
+            .update({ text: title, linked_checklist_id: newCl.id, external_link: null })
+            .eq("id", targetItemId);
+          if (updErr) { toast.error("Could not link checklist."); return; }
+
+          setItems((prev) => prev.map((i) =>
+            i.id === targetItemId
+              ? { ...i, text: title, linked_checklist_id: newCl.id, external_link: null }
+              : i
+          ));
+          setDialog({ kind: "none" });
+          toast.success("Linked new checklist");
         }}
       />
 

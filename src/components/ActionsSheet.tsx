@@ -11,7 +11,7 @@ export type ActionKey =
   | "mute" | "queue"
   | "add" | "duplicate-item" | "new" | "duplicate" | "delete-checklist" | "edit-title" | "split" | "split-emoji"
   | "text-text" | "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "audio-image-video"
-  | "insert-link" | "analyze-image" | "web-search" | "bg" | "rearrange"
+  | "insert-link" | "insert-new-link" | "analyze-image" | "web-search" | "bg" | "rearrange"
   | "copy-sentence" | "copy-checklist" | "send-to" | "send-to-blank" | "uncheck-all" | "combine-checked" | "media-gallery" | "export-text" | "run-sequence" | "theme" | "sign-out";
 
 const AI_KEYS = new Set<ActionKey>([
@@ -31,6 +31,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "copy-sentence",    label: "Copy sentence",            icon: ClipboardCopy },
   { key: "copy-checklist",   label: "Copy full checklist",      icon: ClipboardList },
   { key: "insert-link",      label: "Insert checklist link",    icon: Link2 },
+  { key: "insert-new-link",  label: "Insert new checklist link from text", icon: FilePlus },
   { key: "add",              label: "Add new checkbox",         icon: Plus },
   { key: "duplicate-item",   label: "Duplicate checkbox",       icon: CopyPlus },
   { key: "uncheck-all",      label: "Uncheck all checkboxes",   icon: Square },
