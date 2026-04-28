@@ -42,6 +42,7 @@ type DialogState =
   | { kind: "new" }
   | { kind: "edit-title" }
   | { kind: "insert-link" }
+  | { kind: "insert-new-link" }
   | { kind: "send-to" }
   | { kind: "send-to-blank" }
   | { kind: "bg" }
@@ -640,6 +641,13 @@ const ChecklistPage = () => {
           return;
         }
         setDialog({ kind: "insert-link" });
+        break;
+      case "insert-new-link":
+        if (!highestUnchecked) {
+          toast.error("No unchecked checkbox found.");
+          return;
+        }
+        setDialog({ kind: "insert-new-link" });
         break;
       case "send-to":
         if (!highestUnchecked) {
