@@ -590,12 +590,17 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     await supabase.from("action_jobs").update({ sequence_state: state }).eq("id", parent.id);
   };
 
+  const clearActiveLine = async () => {
+    try { await supabase.from("action_jobs").update({ active_line_item_id: null }).eq("id", parent.id); } catch {}
+  };
+
   const abortSequence = async (reason: string) => {
     state.phase = "aborted";
     state.abort_reason = reason;
     await supabase.from("action_jobs").update({
       status: "failed",
       sequence_state: state,
+      active_line_item_id: null,
       error_raw: reason,
       error_friendly: `Sequence stopped: ${reason}`,
       error_fix: "Open the parent action and re-run with adjusted budgets or instructions.",
@@ -614,6 +619,7 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     await supabase.from("action_jobs").update({
       status: "completed",
       sequence_state: state,
+      active_line_item_id: null,
       result: { steps: state.outputs.length, lines: (state.input_lines ?? []).length },
       completed_at: new Date().toISOString(),
     }).eq("id", parent.id);
