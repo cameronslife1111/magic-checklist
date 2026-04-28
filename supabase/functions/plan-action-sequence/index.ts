@@ -259,7 +259,7 @@ Deno.serve(async (req) => {
     }
     if (kind === "compound") {
       const raw = Array.isArray(parsed.steps) ? parsed.steps : [];
-      const steps = raw.map((s: any) => clampStep(s, allowed, maxImagesPerStep)).filter(Boolean).slice(0, 3) as PlanStep[];
+      const steps = raw.map((s: any) => clampStep(s, allowed, maxImagesPerStep)).filter(Boolean).slice(0, 2) as PlanStep[];
       if (steps.length === 0) {
         return new Response(JSON.stringify({ kind: "no_action", reason: "compound had no usable steps" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
