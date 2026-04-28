@@ -1158,9 +1158,9 @@ const ChecklistPage = () => {
           <p className="text-center text-muted-foreground mt-12 text-sm">This checklist is empty.</p>
         ) : reorderMode ? (
           <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-            <SortableContext items={items.map((i) => i.id)} strategy={verticalListSortingStrategy}>
+            <SortableContext items={topLevelItems.map((i) => i.id)} strategy={verticalListSortingStrategy}>
               <ul className="flex flex-col gap-2 max-w-2xl mx-auto w-full">
-                {items.map((it) => (
+                {topLevelItems.map((it) => (
                   <SortableItemRow
                     key={it.id}
                     item={it}
@@ -1172,21 +1172,44 @@ const ChecklistPage = () => {
           </DndContext>
         ) : (
           <ul className="flex flex-col gap-2 max-w-2xl mx-auto w-full">
-            {items.map((it) => (
-              <ItemRow
-                key={it.id}
-                item={it}
-                autoFocus={focusItemId === it.id}
-                isActive={highestUnchecked?.id === it.id}
-                onToggle={handleToggle}
-                onTextChange={handleTextChange}
-                onOpenLinkedChecklist={openChecklist}
-                onOpenMedia={(url, type) => setViewer({ url, type })}
-                onDelete={handleDelete}
-                registerRef={registerRef}
-              />
-            ))}
-            {items.every((i) => i.checked) && items.length > 0 && (
+            {topLevelItems.map((it) => {
+              const kids = childrenByParent.get(it.id) ?? [];
+              return (
+                <div key={it.id} className="flex flex-col gap-2">
+                  <ItemRow
+                    item={it}
+                    autoFocus={focusItemId === it.id}
+                    isActive={highestUnchecked?.id === it.id}
+                    isRunning={activeLineItemId === it.id}
+                    onToggle={handleToggle}
+                    onTextChange={handleTextChange}
+                    onOpenLinkedChecklist={openChecklist}
+                    onOpenMedia={(url, type) => setViewer({ url, type })}
+                    onDelete={handleDelete}
+                    registerRef={registerRef}
+                  />
+                  {kids.length > 0 && (
+                    <ul className="flex flex-col gap-2 ml-6 border-l-2 border-primary/30 pl-3">
+                      {kids.map((kid, idx) => (
+                        <ItemRow
+                          key={kid.id}
+                          item={kid}
+                          isChild
+                          childLabel={`↳ from step ${idx + 1}`}
+                          onToggle={handleToggle}
+                          onTextChange={handleTextChange}
+                          onOpenLinkedChecklist={openChecklist}
+                          onOpenMedia={(url, type) => setViewer({ url, type })}
+                          onDelete={handleDelete}
+                          registerRef={registerRef}
+                        />
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              );
+            })}
+            {topLevelItems.every((i) => i.checked) && topLevelItems.length > 0 && (
               <p className="text-center text-muted-foreground mt-6 text-sm">All items are checked.</p>
             )}
           </ul>
