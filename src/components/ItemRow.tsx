@@ -26,6 +26,7 @@ export const ItemRow = ({
 }: Props) => {
   const [text, setText] = useState(item.text);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const mirrorRef = useRef<HTMLTextAreaElement>(null);
   const dictatingRef = useRef(false);
   useEffect(() => setText(item.text), [item.text]);
 
@@ -36,11 +37,22 @@ export const ItemRow = ({
     }
   }, [autoFocus]);
 
+  // Auto-size the textarea by measuring a hidden mirror with the same width
+  // and content. We never collapse the live textarea's height to "auto" —
+  // doing so causes a layout reflow that, on iOS Safari, triggers a caret
+  // keep-in-view scroll correction (the page jumps to the top and back while
+  // typing). Measuring on a sibling avoids that entirely.
   useEffect(() => {
     const ta = taRef.current;
-    if (!ta) return;
-    ta.style.height = "auto";
-    ta.style.height = ta.scrollHeight + "px";
+    const mirror = mirrorRef.current;
+    if (!ta || !mirror) return;
+    mirror.style.width = ta.clientWidth + "px";
+    mirror.value = text || " ";
+    const next = mirror.scrollHeight;
+    const cur = ta.clientHeight;
+    if (Math.abs(next - cur) > 1) {
+      ta.style.height = next + "px";
+    }
   }, [text]);
 
   const isExternalLink = !!item.external_link;
