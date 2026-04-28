@@ -154,6 +154,14 @@ const ChecklistPage = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
+  const [activeLineItemId, setActiveLineItemId] = useState<string | null>(null);
+
+  const refreshItems = useCallback(async (checklistId: string) => {
+    const { data: its } = await supabase
+      .from("checklist_items").select("*").eq("checklist_id", checklistId).order("position", { ascending: true });
+    setItems((its ?? []) as ChecklistItem[]);
+  }, []);
+
   const openChecklist = async (id: string) => {
     didAutoFocusRef.current = null;
     stopSpeech();
@@ -163,9 +171,71 @@ const ChecklistPage = () => {
       .from("checklist_items").select("*").eq("checklist_id", id).order("position", { ascending: true });
     setChecklist(cl as Checklist);
     setItems((its ?? []) as ChecklistItem[]);
+    setActiveLineItemId(null);
   };
 
-  const highestUnchecked = useMemo(() => items.find((i) => !i.checked) ?? null, [items]);
+  // Subscribe to the active Run Sequence parent for this checklist so we can
+  // (a) highlight the line currently being worked on in green, and
+  // (b) refresh items when the agent inserts new child rows.
+  useEffect(() => {
+    if (!user || !checklist) return;
+    let cancelled = false;
+    const channel = supabase
+      .channel(`run-seq-${checklist.id}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "action_jobs", filter: `checklist_id=eq.${checklist.id}` },
+        (payload: any) => {
+          const row = (payload.new ?? payload.old) as any;
+          if (!row || row.action_type !== "action-sequence") return;
+          if (!cancelled) {
+            const nextId = row.status === "completed" || row.status === "failed" || row.status === "cancelled"
+              ? null
+              : (row.active_line_item_id ?? null);
+            setActiveLineItemId(nextId);
+          }
+        },
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "checklist_items", filter: `checklist_id=eq.${checklist.id}` },
+        () => { if (!cancelled) refreshItems(checklist.id); },
+      )
+      .subscribe();
+    // Initial fetch of current active line in case a sequence is mid-run.
+    (async () => {
+      const { data } = await supabase
+        .from("action_jobs")
+        .select("active_line_item_id,status")
+        .eq("checklist_id", checklist.id)
+        .eq("action_type", "action-sequence")
+        .in("status", ["pending", "running", "scheduled", "awaiting_provider"])
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (!cancelled) setActiveLineItemId(data?.active_line_item_id ?? null);
+    })();
+    return () => {
+      cancelled = true;
+      supabase.removeChannel(channel);
+    };
+  }, [user, checklist, refreshItems]);
+
+  // Top-level (non-AI-generated) items only — children attached to a line
+  // (parent_item_id) are rendered indented under their parent.
+  const topLevelItems = useMemo(() => items.filter((i) => !i.parent_item_id), [items]);
+  const childrenByParent = useMemo(() => {
+    const m = new Map<string, ChecklistItem[]>();
+    for (const i of items) {
+      if (!i.parent_item_id) continue;
+      const arr = m.get(i.parent_item_id) ?? [];
+      arr.push(i);
+      m.set(i.parent_item_id, arr);
+    }
+    return m;
+  }, [items]);
+
+  const highestUnchecked = useMemo(() => topLevelItems.find((i) => !i.checked) ?? null, [topLevelItems]);
 
   // Auto-scroll & speak the highest unchecked item once per checklist load
   useEffect(() => {
