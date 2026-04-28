@@ -1408,6 +1408,7 @@ const ChecklistPage = () => {
       <input
         ref={keepaliveRef}
         type="text"
+        inputMode="none"
         aria-hidden="true"
         tabIndex={-1}
         className="fixed bottom-0 left-0 w-px h-px opacity-0 pointer-events-none"
