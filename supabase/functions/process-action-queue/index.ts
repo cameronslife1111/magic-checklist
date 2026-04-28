@@ -872,7 +872,19 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     // Tag the child job so insertResultItem attaches the output as a child of
     // the active checklist line (parent_item_id), making lineage visible.
     const sequenceParentItemId: string | null = state.input_lines?.[lineIdx]?.item_id ?? null;
-    const childPayload: any = { prompt: step.prompt, __sequence_parent_item_id: sequenceParentItemId };
+    // Resolve which attached checklists + media should be the working text/media
+    // context for THIS line, so the actual executor (text-text, web-search,
+    // analyze-image, etc.) sees the same context the planner was told to assume.
+    const lineCtx = resolveLineChecklistContext(state, state.input_lines?.[lineIdx]?.text ?? "");
+    const attachedMedia: any[] = Array.isArray(state.attached_media) ? state.attached_media : [];
+    const childPayload: any = {
+      prompt: step.prompt,
+      __sequence_parent_item_id: sequenceParentItemId,
+      context: {
+        checklists: lineCtx.ids,
+        media: attachedMedia.map((m) => ({ url: m.url, type: m.type, name: m.name })),
+      },
+    };
     if (step.aspect_ratio) childPayload.aspectRatio = step.aspect_ratio;
     if (step.quality) childPayload.quality = step.quality;
     let valid = true;
