@@ -1303,8 +1303,34 @@ const ChecklistPage = () => {
                 Actions
               </Button>
               <Button
-                aria-label="Open top checklist"
-                onClick={async () => {
+                aria-label="Open top checklist (long-press: add new item)"
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  homeLongPressFiredRef.current = false;
+                  // Focus the hidden keepalive input synchronously inside the
+                  // user gesture. On iOS this is required so the keyboard can
+                  // be shown later when we hand focus over to the new textarea.
+                  keepaliveRef.current?.focus({ preventScroll: true });
+                  if (homeLongPressTimerRef.current) window.clearTimeout(homeLongPressTimerRef.current);
+                  homeLongPressTimerRef.current = window.setTimeout(async () => {
+                    homeLongPressFiredRef.current = true;
+                    primeSpeech();
+                    // Re-focus right before the async insert to keep the
+                    // keyboard session alive across the await.
+                    keepaliveRef.current?.focus({ preventScroll: true });
+                    await addNewBeforeCurrent();
+                  }, 600);
+                }}
+                onPointerUp={async (e) => {
+                  e.preventDefault();
+                  if (homeLongPressTimerRef.current) {
+                    window.clearTimeout(homeLongPressTimerRef.current);
+                    homeLongPressTimerRef.current = null;
+                  }
+                  if (homeLongPressFiredRef.current) return;
+                  // Short tap: drop the keepalive focus, then open the top
+                  // checklist (or drill into the linked one).
+                  keepaliveRef.current?.blur();
                   const { data } = await supabase.from("checklists").select("id,title");
                   const sorted = sortChecklistsByTitle(data ?? []);
                   const top = sorted[0];
@@ -1317,28 +1343,28 @@ const ChecklistPage = () => {
                     await openChecklist(highestUnchecked.linked_checklist_id);
                   }
                 }}
+                onPointerCancel={() => {
+                  if (homeLongPressTimerRef.current) {
+                    window.clearTimeout(homeLongPressTimerRef.current);
+                    homeLongPressTimerRef.current = null;
+                  }
+                  keepaliveRef.current?.blur();
+                }}
+                onContextMenu={(e) => e.preventDefault()}
                 style={{ ["--shimmer-delay" as any]: "1.6s" }}
-                className="w-20 h-28 rounded-none text-2xl leading-none select-none text-primary-foreground btn-metallic-blue btn-shimmer"
+                className="w-20 h-28 rounded-none text-2xl leading-none select-none touch-none text-primary-foreground btn-metallic-blue btn-shimmer"
               >
                 🏠
               </Button>
               <Button
-                aria-label="Check current and advance"
+                aria-label="Check current and advance (long-press: go back one)"
                 onPointerDown={(e) => {
                   e.preventDefault();
                   longPressFiredRef.current = false;
-                  // Focus the hidden keepalive input synchronously inside the
-                  // user gesture. On iOS this is required so the keyboard can
-                  // be shown later when we hand focus over to the new textarea.
-                  keepaliveRef.current?.focus({ preventScroll: true });
                   if (longPressTimerRef.current) window.clearTimeout(longPressTimerRef.current);
                   longPressTimerRef.current = window.setTimeout(async () => {
                     longPressFiredRef.current = true;
-                    primeSpeech();
-                    // Re-focus right before the async insert to keep the
-                    // keyboard session alive across the await.
-                    keepaliveRef.current?.focus({ preventScroll: true });
-                    await addNewBeforeCurrent();
+                    await goBackOneStep();
                   }, 600);
                 }}
                 onPointerUp={(e) => {
@@ -1348,9 +1374,6 @@ const ChecklistPage = () => {
                     longPressTimerRef.current = null;
                   }
                   if (longPressFiredRef.current) return;
-                  // Short tap: drop the keepalive focus so the keyboard does
-                  // not appear, then toggle the current item.
-                  keepaliveRef.current?.blur();
                   if (highestUnchecked) handleToggle(highestUnchecked, true);
                 }}
                 onPointerCancel={() => {
@@ -1358,7 +1381,6 @@ const ChecklistPage = () => {
                     window.clearTimeout(longPressTimerRef.current);
                     longPressTimerRef.current = null;
                   }
-                  keepaliveRef.current?.blur();
                 }}
                 onContextMenu={(e) => e.preventDefault()}
                 style={{ ["--shimmer-delay" as any]: "3.2s" }}
