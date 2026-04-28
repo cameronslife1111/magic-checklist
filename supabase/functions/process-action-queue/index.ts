@@ -811,7 +811,10 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     const audRes = resolveList(refs.audios ?? [], "audio");
 
     const actionType: string = step.action_type;
-    const childPayload: any = { prompt: step.prompt };
+    // Tag the child job so insertResultItem attaches the output as a child of
+    // the active checklist line (parent_item_id), making lineage visible.
+    const sequenceParentItemId: string | null = state.input_lines?.[lineIdx]?.item_id ?? null;
+    const childPayload: any = { prompt: step.prompt, __sequence_parent_item_id: sequenceParentItemId };
     if (step.aspect_ratio) childPayload.aspectRatio = step.aspect_ratio;
     if (step.quality) childPayload.quality = step.quality;
     let valid = true;
