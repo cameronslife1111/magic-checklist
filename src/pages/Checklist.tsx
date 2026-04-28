@@ -1318,6 +1318,8 @@ const ChecklistPage = () => {
                   // Focus the hidden keepalive input synchronously inside the
                   // user gesture. On iOS this is required so the keyboard can
                   // be shown later when we hand focus over to the new textarea.
+                  // The input has inputMode="none" so this focus does NOT raise
+                  // the keyboard on its own — only the eventual textarea focus does.
                   keepaliveRef.current?.focus({ preventScroll: true });
                   if (homeLongPressTimerRef.current) window.clearTimeout(homeLongPressTimerRef.current);
                   homeLongPressTimerRef.current = window.setTimeout(async () => {
@@ -1406,6 +1408,7 @@ const ChecklistPage = () => {
       <input
         ref={keepaliveRef}
         type="text"
+        inputMode="none"
         aria-hidden="true"
         tabIndex={-1}
         className="fixed bottom-0 left-0 w-px h-px opacity-0 pointer-events-none"

@@ -26,6 +26,7 @@ export const ItemRow = ({
 }: Props) => {
   const [text, setText] = useState(item.text);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const mirrorRef = useRef<HTMLTextAreaElement>(null);
   const dictatingRef = useRef(false);
   useEffect(() => setText(item.text), [item.text]);
 
@@ -36,11 +37,22 @@ export const ItemRow = ({
     }
   }, [autoFocus]);
 
+  // Auto-size the textarea by measuring a hidden mirror with the same width
+  // and content. We never collapse the live textarea's height to "auto" —
+  // doing so causes a layout reflow that, on iOS Safari, triggers a caret
+  // keep-in-view scroll correction (the page jumps to the top and back while
+  // typing). Measuring on a sibling avoids that entirely.
   useEffect(() => {
     const ta = taRef.current;
-    if (!ta) return;
-    ta.style.height = "auto";
-    ta.style.height = ta.scrollHeight + "px";
+    const mirror = mirrorRef.current;
+    if (!ta || !mirror) return;
+    mirror.style.width = ta.clientWidth + "px";
+    mirror.value = text || " ";
+    const next = mirror.scrollHeight;
+    const cur = ta.clientHeight;
+    if (Math.abs(next - cur) > 1) {
+      ta.style.height = next + "px";
+    }
   }, [text]);
 
   const isExternalLink = !!item.external_link;
@@ -137,6 +149,18 @@ export const ItemRow = ({
             placeholder="Item…"
           />
         )}
+
+        {/* Hidden mirror used to measure required textarea height without
+            collapsing the live textarea (which would cause iOS scroll jumps). */}
+        <textarea
+          ref={mirrorRef}
+          tabIndex={-1}
+          aria-hidden="true"
+          readOnly
+          rows={1}
+          className="resize-none bg-transparent text-base md:text-[15px] leading-snug absolute -left-[9999px] top-0 invisible pointer-events-none"
+          style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+        />
 
         {item.media_url && (
           <button

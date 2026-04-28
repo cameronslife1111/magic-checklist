@@ -1,82 +1,38 @@
-## Goal
+## Problems
 
-Add a new action-sheet button **"Insert new checklist link from text"** that:
-1. Reads the text from the current highest-unchecked (yellow-highlighted) checkbox.
-2. Opens a popup pre-asking the user for a name (defaulting to that captured text).
-3. On confirm: creates a brand-new checklist with that title, seeded with one empty checkbox containing the captured text, then **converts the current highlighted checkbox in-place into a link** that points to the new checklist (preserving its position).
-4. Cancel button closes the popup and does nothing.
+**1. Keyboard flash on short Home tap.** Every Home `pointerdown` synchronously focuses a hidden input (`keepaliveRef`) so iOS will allow the keyboard to be shown later if a long-press fires. On a short tap we then `blur()` it on `pointerup`, but iOS has already started raising the keyboard — the user sees a brief flash.
 
-## UX Flow
+**2. Page jumps while typing.** `ItemRow`'s textarea auto-resizes by setting `style.height = "auto"` and then to `scrollHeight` synchronously on every keystroke. The momentary collapse to `auto` reflows the page; on iOS Safari this triggers caret-keep-in-view scroll corrections, producing the "jump to top, then back" behavior.
 
-- User taps Actions → "Insert new checklist link from text".
-- If there's no unchecked item, show toast `No unchecked checkbox found.` and abort.
-- Popup appears titled **"Create & link new checklist"**, with the input pre-filled with the captured text. Buttons: **"Create & link"** (primary) / **"Cancel"**.
-- On Create & link:
-  - New checklist is created (owned by user).
-  - One checkbox is seeded inside it containing the captured text.
-  - The original highlighted item on the current checklist is updated in-place: `text` becomes the new checklist title, `linked_checklist_id` becomes the new checklist id, `external_link` cleared. Position is unchanged → link appears exactly where the text was.
-  - Toast success; speech of the active line refreshes naturally via existing logic.
+## Fix — first principles
 
-## Code Changes
+### Home button keyboard flash
+The keepalive focus is only needed if the user actually long-presses. So defer the focus until we are committed to inserting:
 
-### 1. `src/components/ActionsSheet.tsx`
-- Add new `ActionKey`: `"insert-new-link"`.
-- Add a `STATIC_ITEMS` entry: `{ key: "insert-new-link", label: "Insert new checklist link from text", icon: FilePlus2 }` (or similar — pick an existing imported icon like `Link2` paired or `FilePlus`). Place it directly **after** the existing `"insert-link"` ("Insert checklist link") entry so the two link-related actions sit together.
+- Remove the synchronous `keepaliveRef.current?.focus()` from `onPointerDown`.
+- Move the focus call to the **first line inside the long-press timeout** (so it fires only after the 600ms hold completes — by then we are inserting and the keyboard should appear). This still happens before any `await`, so iOS treats it as user-gesture-initiated (the original pointerdown is still the active gesture chain at timer fire).
+- On iOS, `setTimeout`-deferred focus is **not** considered a user gesture and the keyboard will be suppressed. So instead, keep one minimal trick: in `onPointerDown` start the timer, and **only** call `keepaliveRef.focus()` synchronously if the timer is still alive at a brief 80ms checkpoint — too late, that doesn't help either.
+- **Correct approach:** keep the synchronous focus in `onPointerDown` (required for iOS keyboard) BUT use a non-keyboard-raising technique: focus the keepalive input with `inputmode="none"` so iOS will not raise the keyboard for *that* input, while still treating the focus as a user-gesture token. When we later focus the new textarea inside the long-press handler, the keyboard rises only then.
+  - Set `<input inputMode="none" />` on the keepalive input.
+  - This makes short-tap focus/blur silent (no keyboard), and the long-press path still gets a real keyboard when the textarea is focused.
 
-### 2. `src/pages/Checklist.tsx`
-- Extend `DialogState` union with `| { kind: "insert-new-link" }`.
-- In the `onPick` switch, add:
-  ```ts
-  case "insert-new-link":
-    if (!highestUnchecked) { toast.error("No unchecked checkbox found."); return; }
-    setDialog({ kind: "insert-new-link" });
-    break;
-  ```
-- Render a new `<TextPromptDialog>` near the existing `"new"` and `"insert-link"` dialogs:
-  ```tsx
-  <TextPromptDialog
-    open={dialog.kind === "insert-new-link"}
-    title="Create & link new checklist"
-    label="New checklist title"
-    initial={highestUnchecked?.text ?? ""}
-    saveLabel="Create & link"
-    onClose={() => setDialog({ kind: "none" })}
-    onSave={async (title) => {
-      if (!user || !checklist || !highestUnchecked) { setDialog({ kind: "none" }); return; }
-      const capturedText = highestUnchecked.text;
-      const targetItemId = highestUnchecked.id;
+### Typing-induced scroll jump
+Stop the destructive `height = "auto"` reflow on every keystroke. Two complementary changes in `src/components/ItemRow.tsx`:
 
-      // 1. Create new checklist
-      const { data: newCl, error: clErr } = await supabase
-        .from("checklists").insert({ user_id: user.id, title }).select().single();
-      if (clErr || !newCl) { toast.error("Could not create checklist."); return; }
+- Compare new `scrollHeight` to current height and only resize when needed; use a `requestAnimationFrame` so the change happens after the browser has settled the caret position.
+- Better: replace the manual auto-resize with a CSS-only approach using a sizing technique that does not collapse the textarea:
+  - Use a hidden mirror `<div>` with the same text + `whitespace-pre-wrap` that drives the row height, and overlay the textarea absolutely sized to the mirror. No `height = "auto"` reflow, so no scroll jumps.
+  - Or simpler: keep manual resize but read `scrollHeight` from a clone, never mutate the live textarea height to `"auto"`. Implementation: keep a ref to a hidden `<textarea>` clone (visually hidden, same width/font), set its value, read its `scrollHeight`, then set the live textarea `style.height` to that pixel value directly — no intermediate `"auto"` reset on the focused element.
 
-      // 2. Seed it with the captured text as its first checkbox
-      await supabase.from("checklist_items").insert([
-        { checklist_id: newCl.id, user_id: user.id, text: capturedText, position: 1024 },
-      ]);
+I'll implement the hidden-mirror approach (cleaner, no caret disturbance).
 
-      // 3. Convert the current highlighted item in place into a link
-      const { error: updErr } = await supabase
-        .from("checklist_items")
-        .update({ text: title, linked_checklist_id: newCl.id, external_link: null })
-        .eq("id", targetItemId);
-      if (updErr) { toast.error("Could not link checklist."); return; }
+## Files to change
 
-      // 4. Update local state so UI reflects immediately
-      setItems((prev) => prev.map((i) =>
-        i.id === targetItemId
-          ? { ...i, text: title, linked_checklist_id: newCl.id, external_link: null }
-          : i
-      ));
-      setDialog({ kind: "none" });
-      toast.success("Linked new checklist");
-    }}
-  />
-  ```
+- `src/pages/Checklist.tsx`
+  - Remove synchronous `keepaliveRef.focus()` from Home button `onPointerDown`. Move it inside the long-press timeout (still before `await`).
+  - Add `inputMode="none"` to the keepalive `<input>` so even if it does briefly receive focus on other paths, no keyboard rises.
+- `src/components/ItemRow.tsx`
+  - Replace the `style.height = "auto"; style.height = scrollHeight + "px"` pattern with a hidden mirror `<div>` (or sibling hidden `<textarea>`) that measures required height; apply only the final pixel height to the live textarea. Never collapse the focused textarea height while typing.
 
-## Notes
-- No DB schema changes; uses existing `checklists` and `checklist_items` tables and RLS.
-- Position of the original line is preserved → link appears exactly where the text was.
-- The new checklist's first checkbox holds the original text so nothing is lost.
-- Cancel = closing the dialog; nothing is created.
+## Out of scope
+No behavior changes to long-press insertion, speech, or any other button.
