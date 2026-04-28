@@ -1,88 +1,84 @@
 
-## What you're seeing
+# Run Sequence v2 — Strict Per-Line Agent
 
-Two reproducible failures:
+## Why we're redoing this
+Today's planner sees too much: full prior outputs, gallery-style catalogs, free-form refs. So when a line says "make a video" it sometimes grabs the wrong asset. We're going to lock down what the agent can see at each step, attach outputs back to the step that produced them, and visibly walk through the checklist line-by-line in green.
 
-1. **Leave the app and come back** → speech is silent until you Mute → Unmute.
-2. **Tap the keyboard mic (dictation)** → speech is silent until you Mute → Unmute.
+## How it will behave (user-facing)
 
-Mute → Unmute always fixes it because internally it sets `primed = false` and the next button tap re-primes the engine inside a real user gesture. That's the only path that reliably works today, so the fix is to **route every recovery scenario through that same exact path automatically.**
+1. **You attach context two ways** (not one):
+   - **Run Sequence dialog**: global context (reference checklists + media available to the whole run).
+   - **Per line, on the checklist itself**: each line can already have inline media + a linked checklist. Those become *that line's private context only*.
+2. **Press Run.** The first line turns **green** (background highlight) — that's the active step. A small "▶ Running…" badge appears.
+3. The agent processes **only that one line**, using:
+   - The line's text.
+   - The line's own attached media + linked checklist (private).
+   - The Run Sequence global context (shared).
+   - A read-only summary of the *full input checklist* so it knows what's coming (text only, no media).
+   - Prior step outputs (text titles only — URLs hidden unless the line clearly references them).
+   - Its tool capabilities + allowed actions.
+4. When it produces output, that output is **attached to the line that produced it** (inserted as a child row directly underneath, with a "↳ from step N" label and a stable `step:N` handle). The line is then auto-checked.
+5. The next line turns green. Repeat until done. At the end, the source line's row shows the final output media; intermediate steps stay attached to their lines so you can see exactly where each artifact came from.
 
-## First-principles diagnosis
+## The core fix: scoped context per tool
 
-The Web Speech API on iOS Safari and Android Chrome has three hard rules the current code violates:
+This is the rule that solves the "wrong video" problem:
 
-1. **`speak()` must be called inside, or shortly after, a real user gesture (tap/pointerup).** A React `onChange` from a Radix Checkbox is async — the gesture activation can already be expired by the time `speak()` runs.
-2. **Any browser audio-session change (backgrounding the tab, OS dictation taking the mic, switching apps) silently kills queued utterances** but leaves `speechSynthesis.speaking === false` and `.paused === false`. There is no error event. The engine looks fine but produces no sound.
-3. **Once you "prime" the engine, that prime is invalidated by ANY of the events in #2** — but the current `primed` boolean is never cleared on backgrounding or dictation-end (only on mute toggle).
+| Tool kind | What the agent sees |
+|---|---|
+| `text-text`, `web-search` | Full text context: line, attached checklists' text, full input checklist text, prior outputs' text + names |
+| `text-image`, `image-image`, `remix`, `image-video`, `video-video`, `audio-image-video`, `analyze-image` | **Only** media the line itself references, OR media the line explicitly names from the catalog. Prior step outputs are visible *only* if the line uses words like "the previous", "the result", "what we just made", or names a prior step. |
 
-Concrete bugs in the current code:
+The planner's job becomes: **pick exact handles** for media. The dispatcher refuses to run a media tool with refs the planner didn't explicitly choose — no "fall back to most recent image" guessing.
 
-- **`primed` never invalidates on `visibilitychange`.** When you return to the app, `primed === true`, so `notifyUserGesture()` skips re-priming. The next `speak()` queues into a dead engine. → Failure #1.
-- **`notifyDictationStart()` runs on every textarea `onFocus`** and calls `resetEngine()` which `cancel()`s any current speech. Just tapping a row to edit kills speech. Worse, focus does NOT reliably fire when the user taps the keyboard mic button (the textarea is already focused), so `notifyDictationEnd` may never fire either.
-- **`needsRearm` is only set in `notifyDictationEnd`**, which only runs on blur AND only when `dictatingRef` was flipped by an `onInput` heuristic. On Android Chrome, dictation often inserts via composition events with non-null `data` — the heuristic misses it, `needsRearm` stays false, and the next `speak()` goes through the "idle path" into a dead engine. → Failure #2.
-- **The "idle path" in `speak()` trusts `primed`.** If `primed` is true but the engine is actually dead (post-background, post-dictation-we-missed), nothing speaks.
-- **`primeSpeech()` after dictation is called from inside the deferred `speak()` (60ms setTimeout), not from a user gesture.** iOS rejects this silently.
+## Technical changes
 
-## The fix (highest-probability solution)
+### Database (one migration)
+- Add `checklist_items.parent_item_id uuid` (nullable, FK to `checklist_items.id` ON DELETE CASCADE) — lets generated outputs hang off the line that produced them.
+- Add `action_jobs.active_line_item_id uuid` (nullable) on the parent sequence job — the UI subscribes to this for the green highlight.
+- Index: `idx_items_parent` on `(parent_item_id)`.
 
-**One principle: treat the speech engine as untrusted. Re-prime on every fresh user gesture if anything has happened since the last successful utterance.**
+### Worker — `supabase/functions/process-action-queue/index.ts`
+- **planning_init**: snapshot input lines *with their item ids*, inline `media_url`/`media_type`, and `linked_checklist_id`. Resolve each linked_checklist into a per-line linked_list block (depth 1 only, no BFS). Store as `state.input_lines[i] = { item_id, text, line_media, line_linked_list }`.
+- **planning_step**: before calling planner, set `active_line_item_id = input_lines[cursor].item_id` on the parent and persist (drives green highlight). Build a *per-line catalog*:
+  - `line:image|video|audio` — media on this line only.
+  - `linked-line:I` — media inside the line's own linked checklist.
+  - `attached:N` — global Run Sequence media.
+  - `step:N` — prior outputs, but **filtered**: only included if the line text contains a back-reference token (regex: `previous|prior|that|result|step \d|above|just made|earlier`) OR matches a prior step's name.
+  - Global linked checklists (from Run Sequence dialog) — included only as text in `linked_context_text`, never as media unless explicitly referenced.
+- **dispatching**: when inserting child jobs, set `parent_item_id = input_lines[cursor].item_id` on the resulting checklist row (added below). Keep `parent_job_id` linkage for queue UI.
+- **awaiting_children → completed step**: insert the output as a `checklist_items` row with `parent_item_id = active line.item_id`, position = right after the active line (or after its last existing child). Auto-check the source line. Clear `active_line_item_id`. Advance cursor.
+- Remove the loose name-matching fallback in `resolveRef` for media tools — require exact handle match. For text tools, keep loose matching since it's harmless.
 
-### Changes to `src/lib/speech.ts`
+### Planner — `supabase/functions/plan-action-sequence/index.ts`
+- Update SYSTEM prompt:
+  - "You see ONE line. The catalog you receive is already filtered to what is legitimately available for this line. Do not invent handles. Do not reference prior `step:N` outputs unless the current line explicitly says so."
+  - Tighten compound rule: max 2 sub-steps (was 3).
+  - For media tools, require `input_refs` to use **only** handles present in the catalog — no name-only refs.
+- Drop `prior_outputs_summary` URLs entirely; pass only `{step, kind, name}`.
 
-1. **Replace the `primed` boolean with a "trust token" pattern.** Add a single `engineDirty` flag that becomes `true` on ANY of:
-   - `visibilitychange` → hidden, OR → visible (always invalidate on resume)
-   - `pagehide` / `pageshow` (iOS Safari fires these instead of visibility on some app switches)
-   - `notifyDictationEnd`
-   - any `SpeechSynthesisUtterance.onerror`
-   - 30 seconds of idle since last successful `onend` (engines time out)
-   - route change (called from a small hook in `App.tsx`)
-   
-   When `engineDirty === true`, the next `speak()` and the next user-gesture handler both perform a hard `resetEngine()` + `nudgeAudioRoute()` + `primeSpeech()` — exactly what Mute → Unmute does today.
+### UI — `src/pages/Checklist.tsx` + `src/components/ItemRow.tsx` + `src/components/SortableItemRow.tsx`
+- Subscribe (realtime) to the running sequence's parent `action_jobs` row for the current checklist; read `active_line_item_id`.
+- Pass `activeLineItemId` to each rendered `ItemRow`. When `item.id === activeLineItemId`, apply a green background (`bg-green-500/15 ring-1 ring-green-500/40`) and show a small "▶ Running…" badge.
+- Render child rows (`parent_item_id === item.id`) indented under the parent with a "↳ from step N" prefix. They behave like normal items (drag/edit/delete still work) but visually grouped.
+- When the sequence completes/aborts, clear the highlight.
 
-2. **Make every `speak()` self-healing inside the calling gesture.** Instead of deferring to a `setTimeout` (which leaves the gesture context), do this synchronously:
-   - If `engineDirty`: `resetEngine()` → `primeSpeech()` → `s.speak(utterance)` all in the same tick. This works because `handleToggle`, the auto-speak effect, etc. are all reached from a real tap, and the call chain is synchronous up to the first `speak()`.
-   - Drop the 60ms `setTimeout` recovery entirely. It moves execution out of the gesture window and is the reason iOS still drops the first utterance after dictation.
+### Run Sequence dialog — `src/components/RunSequenceDialog.tsx`
+- Update helper text: "The agent runs your checklist line by line. Each line can have its own attached media or linked checklist (added directly on the line). Anything you attach below is shared across all steps as global context."
+- No structural changes — global context still flows through `payload.context`.
 
-3. **Stop killing speech on textarea focus.** Remove `notifyDictationStart()` from `onFocus`. Focus is not dictation. Only call `notifyDictationEnd()` on blur if dictation was actually detected. This stops the "tap a row → speech cuts out" side effect.
+## Files to touch
+- New migration (add 2 columns + index).
+- `supabase/functions/process-action-queue/index.ts` (per-line context build, output attachment, active-line tracking).
+- `supabase/functions/plan-action-sequence/index.ts` (stricter prompt + ref rules).
+- `src/pages/Checklist.tsx` (realtime subscription, pass active line, render children).
+- `src/components/ItemRow.tsx` + `SortableItemRow.tsx` (green highlight + child row label).
+- `src/components/RunSequenceDialog.tsx` (helper text only).
+- `src/lib/types.ts` (add `parent_item_id` to ChecklistItem).
 
-4. **Detect dictation more reliably.** Use a broader heuristic in `onInput`:
-   - `inputType === "insertFromDictation"` (iOS), OR
-   - `inputType === "insertCompositionText"` (Android Chrome dictation), OR
-   - any `insertText` where `data` is null OR longer than 1 character AND inserted in <50ms since the previous insert.
-   Track in `dictatingRef`. Also set `engineDirty = true` the moment dictation is detected (don't wait for blur), so even if blur is missed, the next gesture re-primes.
+## Out of scope (intentionally)
+- No changes to non-sequence single actions.
+- No new tools/modalities.
+- The green highlight is realtime-driven; we won't add polling fallback unless you ask.
 
-5. **Strengthen `installGestureRearm`.** On every `pointerup`/`touchend`/`click`:
-   - If `engineDirty`: do the full `resetEngine()` → `nudgeAudioRoute()` → `primeSpeech()` cycle synchronously inside the gesture handler (this is the key — same as Mute→Unmute).
-   - Clear `engineDirty` only after `primeSpeech()` succeeds.
-
-6. **Add `pagehide` / `pageshow` listeners** in addition to `visibilitychange`. iOS Safari does not always fire `visibilitychange` when you switch apps via the home indicator; `pageshow` is the reliable signal.
-
-7. **Add a watchdog**: when `speak()` queues an utterance, start a 1.5s timer; if `onstart` never fires, mark `engineDirty = true` so the *next* gesture self-heals. Today, a dropped utterance leaves no trace.
-
-### Change to `src/components/ItemRow.tsx`
-
-- Remove `notifyDictationStart()` from `onFocus`.
-- Keep `notifyDictationEnd()` on blur, but also call it (idempotently) the moment dictation is detected in `onInput`, via the new `engineDirty` flag.
-
-### Change to `src/App.tsx` (or `src/main.tsx`)
-
-- Add a tiny `useEffect` (or vanilla listener in `main.tsx`) that calls a new `speech.notifyRouteChange()` on every `popstate`/route change. Route changes break the audio session on iOS the same way backgrounding does.
-
-## Why this has the highest probability of success
-
-The Mute → Unmute path **already works 100% of the time** in your app. This plan does exactly two things:
-
-1. Detects every situation where the engine becomes untrusted (background, dictation, route change, dropped utterance, idle timeout).
-2. Runs the exact same Mute → Unmute recovery sequence automatically inside the very next user gesture.
-
-Nothing in this plan invents new speech APIs or fights the browser. It just makes the recovery you already have run automatically instead of requiring a manual toggle.
-
-## Files to be edited
-
-- `src/lib/speech.ts` — the core rewrite
-- `src/components/ItemRow.tsx` — remove `onFocus` reset, broaden dictation detection
-- `src/App.tsx` — add route-change notifier (one `useEffect`)
-- `src/main.tsx` — already calls `installGestureRearm()`; no change needed
-
-No backend, database, or edge function changes. No new dependencies.
+Approve and I'll implement it.

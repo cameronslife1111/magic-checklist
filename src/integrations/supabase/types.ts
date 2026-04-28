@@ -17,6 +17,7 @@ export type Database = {
       action_jobs: {
         Row: {
           action_type: string
+          active_line_item_id: string | null
           attempts: number
           checklist_id: string
           completed_at: string | null
@@ -47,6 +48,7 @@ export type Database = {
         }
         Insert: {
           action_type: string
+          active_line_item_id?: string | null
           attempts?: number
           checklist_id: string
           completed_at?: string | null
@@ -77,6 +79,7 @@ export type Database = {
         }
         Update: {
           action_type?: string
+          active_line_item_id?: string | null
           attempts?: number
           checklist_id?: string
           completed_at?: string | null
@@ -117,6 +120,7 @@ export type Database = {
           linked_checklist_id: string | null
           media_type: string | null
           media_url: string | null
+          parent_item_id: string | null
           position: number
           text: string
           updated_at: string
@@ -131,6 +135,7 @@ export type Database = {
           linked_checklist_id?: string | null
           media_type?: string | null
           media_url?: string | null
+          parent_item_id?: string | null
           position?: number
           text?: string
           updated_at?: string
@@ -145,6 +150,7 @@ export type Database = {
           linked_checklist_id?: string | null
           media_type?: string | null
           media_url?: string | null
+          parent_item_id?: string | null
           position?: number
           text?: string
           updated_at?: string
@@ -163,6 +169,13 @@ export type Database = {
             columns: ["linked_checklist_id"]
             isOneToOne: false
             referencedRelation: "checklists"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "checklist_items_parent_item_id_fkey"
+            columns: ["parent_item_id"]
+            isOneToOne: false
+            referencedRelation: "checklist_items"
             referencedColumns: ["id"]
           },
         ]
