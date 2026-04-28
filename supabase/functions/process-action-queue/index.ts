@@ -437,48 +437,72 @@ async function loadAttachedLists(
   }));
 }
 
-// Build the per-step catalog from sequence_state.
-// Only user-attached context is exposed to the planner: prior step outputs
-// (this run), media on items inside user-attached checklists, and media
-// gallery items the user attached in the Run Sequence dialog. We deliberately
-// do NOT expose per-line media on the input checklist or a snapshot of the
-// user's whole gallery — that auto-discovery was confusing the planner.
-function buildCatalog(state: any): { catalog: CatalogEntry[] } {
+// Detects whether the current checklist line back-references prior step
+// outputs. If it does, prior step outputs are exposed in this line's catalog;
+// otherwise they are hidden, so the planner can't accidentally grab a stale
+// asset for a fresh, unrelated line.
+const BACKREF_RE = /\b(previous|prior|the\s+result|that\s+(image|video|audio|file|one)|what\s+we\s+(just|previously)\s+made|step\s+\d+|above|earlier|just\s+made|last\s+(image|video|output))\b/i;
+function lineBackReferences(text: string, priorOutputs: any[]): boolean {
+  if (!text) return false;
+  if (BACKREF_RE.test(text)) return true;
+  // Also expose prior outputs if the line names one of them.
+  const t = norm(text);
+  for (const o of priorOutputs ?? []) {
+    if (!o?.name) continue;
+    const n = norm(o.name);
+    if (n && t.includes(n)) return true;
+  }
+  return false;
+}
+
+// Build the per-LINE catalog for the planner. Scope is intentionally narrow:
+//  - The current line's own attached media (line:image/video/audio).
+//  - Media inside the line's own linked checklist (linked-line:I).
+//  - Global media attached in the Run Sequence dialog (attached:N).
+//  - Prior step outputs (step:N) — ONLY if this line clearly back-references
+//    a prior result, otherwise hidden.
+//  - Global linked checklists from the Run Sequence dialog: their TEXT goes
+//    into linked_context_text only; their MEDIA is intentionally NOT in the
+//    catalog for media tools (that's how the planner used to grab the wrong
+//    video). If the user wants a specific media file used, they attach it
+//    via the gallery picker (attached:N).
+function buildLineCatalog(state: any, lineIdx: number): { catalog: CatalogEntry[] } {
   const out: CatalogEntry[] = [];
+  const line = (state.input_lines ?? [])[lineIdx];
+  if (!line) return { catalog: [] };
 
-  // 1) Prior step outputs (image/video only — refs need URLs the tools can use).
-  const outputs: any[] = state.outputs ?? [];
-  outputs.forEach((o, i) => {
-    if (!o || !o.media_url) return;
-    const k = detectKind(o.media_type, o.media_url);
-    if (!k) return;
-    out.push({
-      handle: `step:${i}`,
-      name: o.name ?? `Step ${i + 1} output`,
-      url: o.media_url,
-      type: k,
-      source: "step-output",
-    });
-  });
+  // 1) The line's own attached media.
+  if (line.media_url) {
+    const k = detectKind(line.media_type, line.media_url);
+    if (k) {
+      out.push({
+        handle: `line:${k}:0`,
+        name: `This line's ${k}`,
+        url: line.media_url,
+        type: k,
+        source: "line-media",
+      });
+    }
+  }
 
-  // 2) Media inside user-attached checklists (from ContextAttacher).
-  const linked: any[] = state.linked_lists ?? [];
-  linked.forEach((ll, lIdx) => {
-    (ll.items ?? []).forEach((it: any, iIdx: number) => {
+  // 2) Media inside the line's own linked checklist.
+  const lineLinked = state.line_linked_lists?.[line.linked_checklist_id];
+  if (lineLinked && Array.isArray(lineLinked.items)) {
+    lineLinked.items.forEach((it: any, iIdx: number) => {
       if (!it?.media_url) return;
       const k = detectKind(it.media_type, it.media_url);
       if (!k) return;
       out.push({
-        handle: `linked:${lIdx}:${iIdx}`,
-        name: `${ll.title} – ${snip(it.text || `Line ${iIdx + 1}`, 40)}`,
+        handle: `linked-line:${iIdx}`,
+        name: `${lineLinked.title} – ${snip(it.text || `Line ${iIdx + 1}`, 40)}`,
         url: it.media_url,
         type: k,
-        source: "linked-line",
+        source: "line-linked",
       });
     });
-  });
+  }
 
-  // 3) Attached context media (from ContextAttacher gallery picker).
+  // 3) Global attached media (from Run Sequence dialog).
   const attached: any[] = state.attached_media ?? [];
   attached.forEach((m, i) => {
     if (!m?.url) return;
@@ -493,21 +517,52 @@ function buildCatalog(state: any): { catalog: CatalogEntry[] } {
     });
   });
 
-  return { catalog: out.slice(0, 300) };
+  // 4) Prior step outputs — gated by back-reference detection.
+  const outputs: any[] = state.outputs ?? [];
+  if (lineBackReferences(line.text, outputs)) {
+    outputs.forEach((o, i) => {
+      if (!o || !o.media_url) return;
+      const k = detectKind(o.media_type, o.media_url);
+      if (!k) return;
+      out.push({
+        handle: `step:${i}`,
+        name: o.name ?? `Step ${i + 1} output`,
+        url: o.media_url,
+        type: k,
+        source: "step-output",
+      });
+    });
+  }
+
+  return { catalog: out.slice(0, 100) };
 }
 
-function buildLinkedContextText(state: any): string {
-  const linked: any[] = state.linked_lists ?? [];
-  if (linked.length === 0) return "";
+function buildLinkedContextText(state: any, lineIdx: number): string {
   const blocks: string[] = [];
+
+  // Full input checklist (text-only) so the agent knows what's coming.
+  const inputLines: any[] = state.input_lines ?? [];
+  if (inputLines.length) {
+    const lines = inputLines.map((l: any, i: number) => `${i + 1}. ${l.text}`).filter((s: string) => s.trim());
+    if (lines.length) blocks.push(`### Full input checklist (for context only)\n${lines.join("\n")}`);
+  }
+
+  // Global linked checklists (Run Sequence dialog) — TEXT only.
+  const linked: any[] = state.linked_lists ?? [];
   for (const ll of linked) {
     const lines = (ll.items ?? []).map((it: any) => it.text).filter((t: any) => typeof t === "string" && t.trim());
     if (lines.length === 0) continue;
-    const suffix = ll.depth && ll.depth > 1 && ll.via_title
-      ? ` (nested inside "${ll.via_title}")`
-      : "";
-    blocks.push(`### Steps from linked checklist "${ll.title}"${suffix}\n${lines.map((l: string) => `- ${l}`).join("\n")}`);
+    blocks.push(`### Reference checklist "${ll.title}"\n${lines.map((l: string) => `- ${l}`).join("\n")}`);
   }
+
+  // The current line's own linked checklist — TEXT only.
+  const line = inputLines[lineIdx];
+  const own = line ? state.line_linked_lists?.[line.linked_checklist_id] : null;
+  if (own && Array.isArray(own.items)) {
+    const lines = own.items.map((it: any) => it.text).filter((t: any) => typeof t === "string" && t.trim());
+    if (lines.length) blocks.push(`### This line's linked checklist "${own.title}"\n${lines.map((l: string) => `- ${l}`).join("\n")}`);
+  }
+
   return blocks.join("\n\n");
 }
 
