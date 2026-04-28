@@ -980,6 +980,17 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     if (state.pending_steps && state.pending_steps.length > 0) {
       state.pending_steps.shift();
     }
+    // If this was the LAST sub-step for the line (no more pending_steps),
+    // auto-check the source line and drop the active highlight. The cursor
+    // advances back at the top of the next dispatching pass.
+    const lineDone = !state.pending_steps || state.pending_steps.length === 0;
+    if (lineDone) {
+      const sourceItemId = state.input_lines?.[lineIdx]?.item_id;
+      if (sourceItemId) {
+        try { await supabase.from("checklist_items").update({ checked: true }).eq("id", sourceItemId); } catch {}
+      }
+      await clearActiveLine();
+    }
     state.phase = "dispatching";
     await persist();
     return { done: false };
