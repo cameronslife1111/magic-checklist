@@ -461,6 +461,34 @@ const ChecklistPage = () => {
     return created;
   };
 
+  // Long-press on the green Check button: step backwards by one line.
+  // Unchecks the line directly above the current yellow-highlighted (highest
+  // unchecked) line, scrolls it into view, and reads it aloud. If everything
+  // is checked, unchecks the last item instead.
+  const goBackOneStep = async () => {
+    const idx = highestUnchecked
+      ? topLevelItems.findIndex((i) => i.id === highestUnchecked.id)
+      : topLevelItems.length;
+    const prev = idx > 0 ? topLevelItems[idx - 1] : null;
+    if (!prev) {
+      toast.message("Already at the top");
+      return;
+    }
+    primeSpeech();
+    setItems((cur) => cur.map((i) => (i.id === prev.id ? { ...i, checked: false } : i)));
+    const { error } = await supabase
+      .from("checklist_items")
+      .update({ checked: false })
+      .eq("id", prev.id);
+    if (error) {
+      toast.error("Could not save. Try again.");
+      return;
+    }
+    scrollItemToCenter(prev.id);
+    const speakText = prev.linked_checklist_id ? (prev.text || "Open checklist") : prev.text;
+    if (speakText) speak(speakText);
+  };
+
   // ---------- Action Handlers ----------
 
 
