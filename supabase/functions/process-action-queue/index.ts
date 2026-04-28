@@ -537,6 +537,64 @@ function buildLineCatalog(state: any, lineIdx: number): { catalog: CatalogEntry[
   return { catalog: out.slice(0, 100) };
 }
 
+// Per-line attached-checklist resolver. Picks which of the globally attached
+// checklists should be used as the PRIMARY text context for THIS line, using
+// loose matching against the line text. Falls back to "all attached" when the
+// line is generic or references attached context with no specific name.
+//
+// Returns the list of attached checklist IDs to inject into the child job's
+// payload.context.checklists (so the executor — not just the planner — sees
+// the right text). Also returns a short human-readable label for the queue UI.
+const ATTACHED_REF_RE = /\b(this|the|attached|provided|given|above|below)\s+(checklist|list|notes|info|context|document|doc|file|content|data)\b/i;
+function resolveLineChecklistContext(state: any, lineText: string): { ids: string[]; titles: string[]; label: string } {
+  const linked: any[] = state.linked_lists ?? [];
+  if (linked.length === 0) return { ids: [], titles: [], label: "" };
+
+  const all = linked.map((l) => ({ id: l.list_id as string, title: String(l.title ?? "Untitled") }));
+
+  // 1) Loose title match — score each attached list by token overlap with the line.
+  const t = norm(lineText);
+  if (t) {
+    type Scored = { id: string; title: string; score: number };
+    const scored: Scored[] = all.map(({ id, title }) => {
+      const gn = norm(title);
+      let score = 0;
+      if (!gn) return { id, title, score: 0 };
+      if (gn === t) score = 1000;
+      else if (t.includes(gn) || gn.includes(t)) score = 500 - Math.abs(gn.length - t.length);
+      else {
+        const titleTokens = new Set(gn.split(/\s+/).filter((x) => x.length >= 3));
+        const lineTokens = t.split(/\s+/).filter((x) => x.length >= 3);
+        const overlap = lineTokens.filter((tok) => titleTokens.has(tok)).length;
+        score = overlap * 25;
+      }
+      return { id, title, score };
+    });
+    scored.sort((a, b) => b.score - a.score);
+    if (scored[0] && scored[0].score >= 25) {
+      // Strong-ish match — use that one as the primary.
+      return { ids: [scored[0].id], titles: [scored[0].title], label: scored[0].title };
+    }
+  }
+
+  // 2) Generic "use the attached checklist" reference, or only one attached.
+  if (all.length === 1 || ATTACHED_REF_RE.test(lineText ?? "")) {
+    return {
+      ids: all.map((a) => a.id),
+      titles: all.map((a) => a.title),
+      label: all.length === 1 ? all[0].title : `${all.length} attached checklists`,
+    };
+  }
+
+  // 3) Default: pass all attached as context (bounded). The executor merges
+  //    them into one prompt block, ordered as the user attached them.
+  return {
+    ids: all.map((a) => a.id),
+    titles: all.map((a) => a.title),
+    label: `${all.length} attached checklists`,
+  };
+}
+
 function buildLinkedContextText(state: any, lineIdx: number): string {
   const blocks: string[] = [];
 
@@ -814,7 +872,19 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     // Tag the child job so insertResultItem attaches the output as a child of
     // the active checklist line (parent_item_id), making lineage visible.
     const sequenceParentItemId: string | null = state.input_lines?.[lineIdx]?.item_id ?? null;
-    const childPayload: any = { prompt: step.prompt, __sequence_parent_item_id: sequenceParentItemId };
+    // Resolve which attached checklists + media should be the working text/media
+    // context for THIS line, so the actual executor (text-text, web-search,
+    // analyze-image, etc.) sees the same context the planner was told to assume.
+    const lineCtx = resolveLineChecklistContext(state, state.input_lines?.[lineIdx]?.text ?? "");
+    const attachedMedia: any[] = Array.isArray(state.attached_media) ? state.attached_media : [];
+    const childPayload: any = {
+      prompt: step.prompt,
+      __sequence_parent_item_id: sequenceParentItemId,
+      context: {
+        checklists: lineCtx.ids,
+        media: attachedMedia.map((m) => ({ url: m.url, type: m.type, name: m.name })),
+      },
+    };
     if (step.aspect_ratio) childPayload.aspectRatio = step.aspect_ratio;
     if (step.quality) childPayload.quality = step.quality;
     let valid = true;
@@ -915,6 +985,7 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     state.current_step_action = actionType;
     state.current_step_note = step.note ?? null;
     state.current_step_line_idx = lineIdx;
+    state.current_step_context_label = lineCtx.label || null;
     await persist();
     return { done: false };
   }
@@ -941,16 +1012,19 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     const completed = rows.find((c) => c.status === "completed");
     const noteName = state.current_step_note ?? null;
 
+    const ctxLabel: string | null = state.current_step_context_label ?? null;
     if (completed) {
       const result = completed.result ?? {};
       const url = result.media_url ?? null;
       const k = detectKind(null, url);
+      const baseName = noteName ?? (k ? `Step ${stepGlobalIdx + 1} ${k}` : `Step ${stepGlobalIdx + 1} output`);
       state.outputs[stepGlobalIdx] = {
         line_idx: lineIdx,
         media_url: url,
         media_type: k,
         text: result.text ?? null,
-        name: noteName ?? (k ? `Step ${stepGlobalIdx + 1} ${k}` : `Step ${stepGlobalIdx + 1} output`),
+        name: ctxLabel ? `${baseName} (using: ${ctxLabel})` : baseName,
+        context_used: ctxLabel,
       };
     } else {
       const failed = rows.find((c) => c.status === "failed");
@@ -958,6 +1032,7 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
         line_idx: lineIdx,
         failed: true,
         reason: failed?.error_friendly ?? failed?.error_raw ?? "step failed",
+        context_used: ctxLabel,
       };
       state.failures += 1;
     }
@@ -977,6 +1052,7 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     state.current_step_line_idx = null;
     state.current_step_action = null;
     state.current_step_note = null;
+    state.current_step_context_label = null;
     if (state.pending_steps && state.pending_steps.length > 0) {
       state.pending_steps.shift();
     }
