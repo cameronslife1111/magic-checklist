@@ -1012,16 +1012,19 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     const completed = rows.find((c) => c.status === "completed");
     const noteName = state.current_step_note ?? null;
 
+    const ctxLabel: string | null = state.current_step_context_label ?? null;
     if (completed) {
       const result = completed.result ?? {};
       const url = result.media_url ?? null;
       const k = detectKind(null, url);
+      const baseName = noteName ?? (k ? `Step ${stepGlobalIdx + 1} ${k}` : `Step ${stepGlobalIdx + 1} output`);
       state.outputs[stepGlobalIdx] = {
         line_idx: lineIdx,
         media_url: url,
         media_type: k,
         text: result.text ?? null,
-        name: noteName ?? (k ? `Step ${stepGlobalIdx + 1} ${k}` : `Step ${stepGlobalIdx + 1} output`),
+        name: ctxLabel ? `${baseName} (using: ${ctxLabel})` : baseName,
+        context_used: ctxLabel,
       };
     } else {
       const failed = rows.find((c) => c.status === "failed");
@@ -1029,6 +1032,7 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
         line_idx: lineIdx,
         failed: true,
         reason: failed?.error_friendly ?? failed?.error_raw ?? "step failed",
+        context_used: ctxLabel,
       };
       state.failures += 1;
     }
@@ -1048,6 +1052,7 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     state.current_step_line_idx = null;
     state.current_step_action = null;
     state.current_step_note = null;
+    state.current_step_context_label = null;
     if (state.pending_steps && state.pending_steps.length > 0) {
       state.pending_steps.shift();
     }
