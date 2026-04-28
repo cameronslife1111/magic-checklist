@@ -1394,7 +1394,7 @@ const ChecklistPage = () => {
       </div>
 
       {/* Hidden input used to keep the iOS keyboard alive across async work
-          when long-pressing the Check button to add a new item. */}
+          when long-pressing the Home button to add a new item. */}
       <input
         ref={keepaliveRef}
         type="text"
