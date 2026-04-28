@@ -985,6 +985,7 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     state.current_step_action = actionType;
     state.current_step_note = step.note ?? null;
     state.current_step_line_idx = lineIdx;
+    state.current_step_context_label = lineCtx.label || null;
     await persist();
     return { done: false };
   }
