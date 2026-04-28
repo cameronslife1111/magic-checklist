@@ -108,7 +108,7 @@ const TOOL_SCHEMA = {
           type: "array",
           description: "Required when kind=compound; 2 or 3 steps.",
           minItems: 2,
-          maxItems: 3,
+          maxItems: 2,
           items: {
             type: "object",
             properties: {
