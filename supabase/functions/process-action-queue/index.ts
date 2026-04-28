@@ -156,17 +156,46 @@ async function insertResultItem(
   job: Job,
   fields: { text: string; media_url?: string | null; media_type?: string | null },
 ) {
-  // Compute position right after source item, like client insertItemAfter
+  // Sequence-aware: if this child job was dispatched by a Run Sequence parent,
+  // attach the output as a child of the active checklist line (parent_item_id)
+  // and place it immediately after that line. This makes the lineage visible
+  // in the UI and gives each step a stable owner.
+  const seqParentItemId: string | null = (job.payload as any)?.__sequence_parent_item_id ?? null;
+
+  // Compute position right after either the active sequence line or the source item.
+  const anchorItemId = seqParentItemId ?? job.source_item_id;
+
   const { data: list } = await supabase
     .from("checklist_items")
-    .select("id,position")
+    .select("id,position,parent_item_id")
     .eq("checklist_id", job.checklist_id)
     .order("position", { ascending: true });
-  const items = (list ?? []) as { id: string; position: number }[];
+  const items = (list ?? []) as { id: string; position: number; parent_item_id: string | null }[];
 
   let position: number;
-  if (job.source_item_id && items.length) {
-    const idx = items.findIndex((i) => i.id === job.source_item_id);
+  if (seqParentItemId) {
+    // Place after the parent line AND after any existing children of that line.
+    const parentIdx = items.findIndex((i) => i.id === seqParentItemId);
+    if (parentIdx === -1) {
+      position = (items[items.length - 1]?.position ?? 0) + POS_STEP;
+    } else {
+      // Find the last existing child of this parent (consecutive children are
+      // expected to come right after the parent in position order, but be
+      // defensive and scan the whole list).
+      let anchorPos = items[parentIdx].position;
+      let nextPos: number | null = items[parentIdx + 1]?.position ?? null;
+      for (let k = parentIdx + 1; k < items.length; k++) {
+        if (items[k].parent_item_id === seqParentItemId) {
+          anchorPos = items[k].position;
+          nextPos = items[k + 1]?.position ?? null;
+        } else {
+          break;
+        }
+      }
+      position = nextPos != null ? (anchorPos + nextPos) / 2 : anchorPos + POS_STEP;
+    }
+  } else if (anchorItemId && items.length) {
+    const idx = items.findIndex((i) => i.id === anchorItemId);
     if (idx === -1) {
       position = (items[items.length - 1]?.position ?? 0) + POS_STEP;
     } else {
@@ -187,6 +216,7 @@ async function insertResultItem(
     position,
     media_url: fields.media_url ?? null,
     media_type: fields.media_type ?? null,
+    parent_item_id: seqParentItemId,
   });
   if (error) throw new Error(`insert item failed: ${error.message}`);
 }
