@@ -33,19 +33,25 @@ type PlanStep = {
   note?: string;
 };
 
-const SYSTEM = `You are a per-line planner for a multi-step AI agent. The user has a checklist; you receive ONE line at a time plus a catalog of every media file the agent can use right now.
+const SYSTEM = `You are a per-line planner for a multi-step AI agent. The user has a checklist; you receive ONE line at a time.
+
+You also receive a CATALOG of media that has ALREADY BEEN FILTERED to what is legitimately available for THIS line. The catalog may include:
+- The line's own attached media ("line:image" / "line:video" / "line:audio").
+- Media inside the line's own linked checklist ("linked-line:I").
+- Global media the user attached in the Run Sequence dialog ("attached:N").
+- Prior step outputs ("step:N") — INCLUDED ONLY IF this line's text clearly back-references a prior result (words like "previous", "prior", "the result", "what we just made", "step N", "above", "earlier") OR names a prior step's output. If you do not see "step:N" entries in the catalog, prior outputs are OFF-LIMITS for this line.
 
 Your job: decide the SINGLE next action for this one line. You return exactly one decision via the "decide" tool.
 
 Decision kinds:
 - "tool_call": this line maps to one tool invocation. Provide the step.
-- "compound": this line legitimately needs 2 or 3 chained tool calls (e.g. "make an image of X then turn it into a video"). Max 3 sub-steps. Use sparingly.
+- "compound": this line legitimately needs 2 chained tool calls (e.g. "make an image of X then turn it into a video"). Max 2 sub-steps. Use sparingly.
 - "no_action": this line is a heading, narration, blank, comment, or otherwise not actionable, OR the line needs reference media that simply isn't in the catalog. No tool call.
 
-Available tools (use ONLY these, and only those listed in allowed_actions):
+Available tools (use ONLY those listed in allowed_actions):
 - text-text: text from prompt.
 - web-search: search the web; returns a summary.
-- text-image: generate an image from a prompt. May include image refs as style/subject inspiration.
+- text-image: generate an image from a prompt.
 - image-image: edit ONE image with a prompt. REQUIRES >=1 image ref.
 - remix: combine MULTIPLE images. REQUIRES >=1 image ref (>=2 strongly preferred).
 - image-video: turn an image into a short video. REQUIRES exactly 1 image ref.
@@ -53,20 +59,15 @@ Available tools (use ONLY these, and only those listed in allowed_actions):
 - audio-image-video: lip-sync a talking-head from 1 image + 1 audio. REQUIRES both.
 - analyze-image: describe/answer about 1 image. REQUIRES 1 image ref.
 
-Reference rules — CRITICAL:
-1. Refs MUST come from the provided catalog. Use the entry's "handle" verbatim. The only valid handle prefixes are:
-   - "step:N" — an output produced earlier in this same run.
-   - "linked:L:I" — media inside a checklist the user attached as context for this run.
-   - "attached:N" — a media item the user attached from their gallery for this run.
-   If you don't know a handle, use the entry's "name" — the system will loose-match it.
-2. NEVER invent URLs and NEVER invent names that aren't in the catalog. There is no implicit access to the user's wider media gallery, and no per-line attached media on the input checklist — only what appears in the catalog exists.
-3. If the line says "the previous image", "the result", "what we just made", etc., prefer the most recent matching entry from prior_outputs_summary, referenced as "step:N".
-4. If the line names a specific item by name, find it in the catalog (under linked:* or attached:*).
-5. If the line says "follow the steps from <list>" or similar, the linked-list text is in linked_context_text — incorporate it into your prompt; you do not need to spawn a separate step for that mention itself.
-6. If the line clearly needs a reference image/video/audio but nothing suitable exists in the catalog, return "no_action" with a brief reason explaining what was missing. Do NOT guess or substitute unrelated media.
+Reference rules — CRITICAL for media tools:
+1. Every entry in input_refs MUST be the EXACT "handle" string of a CATALOG entry (e.g. "line:image:0", "linked-line:2", "attached:0", "step:3"). Name-only refs are REJECTED for media tools.
+2. NEVER invent handles. NEVER guess. NEVER substitute unrelated media.
+3. If the line clearly needs a reference image/video/audio but no suitable handle exists in the catalog, return "no_action" with a brief reason naming what was missing.
+4. For text-text / web-search / analyze-image of a *general* topic, you do NOT need any refs.
 
 Other rules:
-- Each step prompt must be self-contained and concrete (the tool sees only the prompt + refs, not the original line).
+- Each step prompt must be self-contained, concrete, and IMAGE/VIDEO PROMPTS MUST DESCRIBE THE VISUAL ONLY — do not paste the surrounding checklist context, narration, or instructions into the prompt. The image/video tool sees only the prompt + refs.
+- For text tools, you may incorporate context naturally; for media tools, write a clean visual prompt.
 - For aspect ratio cues ("vertical"/"portrait" -> "9:16", "landscape"/"horizontal" -> "16:9", "square" -> "1:1"), set aspect_ratio.
 - count: only set when the line explicitly asks for N copies of the SAME thing (max 5).
 - Do NOT include the literal line text in the prompt — rewrite it as a clean instruction for the tool.`;
@@ -107,7 +108,7 @@ const TOOL_SCHEMA = {
           type: "array",
           description: "Required when kind=compound; 2 or 3 steps.",
           minItems: 2,
-          maxItems: 3,
+          maxItems: 2,
           items: {
             type: "object",
             properties: {
@@ -258,7 +259,7 @@ Deno.serve(async (req) => {
     }
     if (kind === "compound") {
       const raw = Array.isArray(parsed.steps) ? parsed.steps : [];
-      const steps = raw.map((s: any) => clampStep(s, allowed, maxImagesPerStep)).filter(Boolean).slice(0, 3) as PlanStep[];
+      const steps = raw.map((s: any) => clampStep(s, allowed, maxImagesPerStep)).filter(Boolean).slice(0, 2) as PlanStep[];
       if (steps.length === 0) {
         return new Response(JSON.stringify({ kind: "no_action", reason: "compound had no usable steps" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },

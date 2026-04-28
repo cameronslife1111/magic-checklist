@@ -15,10 +15,14 @@ type Props = {
   registerRef: (id: string, el: HTMLLIElement | null) => void;
   autoFocus?: boolean;
   isActive?: boolean;
+  isRunning?: boolean;
+  isChild?: boolean;
+  childLabel?: string;
 };
 
 export const ItemRow = ({
-  item, onToggle, onTextChange, onOpenLinkedChecklist, onOpenMedia, onDelete, registerRef, autoFocus, isActive,
+  item, onToggle, onTextChange, onOpenLinkedChecklist, onOpenMedia, onDelete, registerRef, autoFocus,
+  isActive, isRunning, isChild, childLabel,
 }: Props) => {
   const [text, setText] = useState(item.text);
   const taRef = useRef<HTMLTextAreaElement>(null);
@@ -48,9 +52,21 @@ export const ItemRow = ({
       className={cn(
         "flex gap-3 px-4 py-3 rounded-2xl bg-card/60 transition-all",
         item.checked && "opacity-80",
-        isActive && "glow-active"
+        isActive && "glow-active",
+        isRunning && "bg-green-500/15 ring-2 ring-green-500/60 animate-pulse",
+        isChild && "bg-muted/40",
       )}
     >
+      {isRunning && (
+        <span className="absolute -mt-1 -ml-1 text-[10px] font-semibold text-green-700 bg-green-100 dark:bg-green-900/40 dark:text-green-300 px-1.5 py-0.5 rounded-full">
+          ▶ Running…
+        </span>
+      )}
+      {childLabel && (
+        <span className="absolute -mt-2 ml-2 text-[10px] font-medium text-muted-foreground bg-background px-1.5 rounded">
+          {childLabel}
+        </span>
+      )}
       <div className="pt-1">
         <Checkbox
           checked={item.checked}

@@ -156,17 +156,46 @@ async function insertResultItem(
   job: Job,
   fields: { text: string; media_url?: string | null; media_type?: string | null },
 ) {
-  // Compute position right after source item, like client insertItemAfter
+  // Sequence-aware: if this child job was dispatched by a Run Sequence parent,
+  // attach the output as a child of the active checklist line (parent_item_id)
+  // and place it immediately after that line. This makes the lineage visible
+  // in the UI and gives each step a stable owner.
+  const seqParentItemId: string | null = (job.payload as any)?.__sequence_parent_item_id ?? null;
+
+  // Compute position right after either the active sequence line or the source item.
+  const anchorItemId = seqParentItemId ?? job.source_item_id;
+
   const { data: list } = await supabase
     .from("checklist_items")
-    .select("id,position")
+    .select("id,position,parent_item_id")
     .eq("checklist_id", job.checklist_id)
     .order("position", { ascending: true });
-  const items = (list ?? []) as { id: string; position: number }[];
+  const items = (list ?? []) as { id: string; position: number; parent_item_id: string | null }[];
 
   let position: number;
-  if (job.source_item_id && items.length) {
-    const idx = items.findIndex((i) => i.id === job.source_item_id);
+  if (seqParentItemId) {
+    // Place after the parent line AND after any existing children of that line.
+    const parentIdx = items.findIndex((i) => i.id === seqParentItemId);
+    if (parentIdx === -1) {
+      position = (items[items.length - 1]?.position ?? 0) + POS_STEP;
+    } else {
+      // Find the last existing child of this parent (consecutive children are
+      // expected to come right after the parent in position order, but be
+      // defensive and scan the whole list).
+      let anchorPos = items[parentIdx].position;
+      let nextPos: number | null = items[parentIdx + 1]?.position ?? null;
+      for (let k = parentIdx + 1; k < items.length; k++) {
+        if (items[k].parent_item_id === seqParentItemId) {
+          anchorPos = items[k].position;
+          nextPos = items[k + 1]?.position ?? null;
+        } else {
+          break;
+        }
+      }
+      position = nextPos != null ? (anchorPos + nextPos) / 2 : anchorPos + POS_STEP;
+    }
+  } else if (anchorItemId && items.length) {
+    const idx = items.findIndex((i) => i.id === anchorItemId);
     if (idx === -1) {
       position = (items[items.length - 1]?.position ?? 0) + POS_STEP;
     } else {
@@ -187,6 +216,7 @@ async function insertResultItem(
     position,
     media_url: fields.media_url ?? null,
     media_type: fields.media_type ?? null,
+    parent_item_id: seqParentItemId,
   });
   if (error) throw new Error(`insert item failed: ${error.message}`);
 }
@@ -339,21 +369,16 @@ function topNCatalog(needle: string, catalog: CatalogEntry[], n = 3): CatalogEnt
   return scored.slice(0, n).map((x) => x.c);
 }
 
-// Resolve a planner ref string to a CatalogEntry. Handles take precedence; otherwise loose-match by name.
+// Resolve a planner ref string to a CatalogEntry. STRICT: exact-handle match
+// only. We do NOT loose-match by name anymore — the catalog is per-line and
+// already filtered, so name-based fallbacks were the main source of "wrong
+// video" errors. The planner is instructed to always emit handles.
 function resolveRef(ref: string, kind: "image" | "video" | "audio", catalog: CatalogEntry[]): CatalogEntry | null {
   if (!ref) return null;
-  // Exact-handle match.
   for (const c of catalog) {
     if (c.handle === ref) return c.type === kind ? c : null;
   }
-  // step:N short-circuit (handles are also in catalog under step:N, but be lenient)
-  if (ref.startsWith("step:") || ref.startsWith("line:") || ref.startsWith("linked:") ||
-      ref.startsWith("gallery:") || ref.startsWith("attached:")) {
-    return null; // handle didn't exist in catalog
-  }
-  // Loose name match.
-  const m = looseMatchCatalog(ref, catalog, kind);
-  return m;
+  return null;
 }
 
 // Snippet for human-readable labels.
@@ -412,48 +437,72 @@ async function loadAttachedLists(
   }));
 }
 
-// Build the per-step catalog from sequence_state.
-// Only user-attached context is exposed to the planner: prior step outputs
-// (this run), media on items inside user-attached checklists, and media
-// gallery items the user attached in the Run Sequence dialog. We deliberately
-// do NOT expose per-line media on the input checklist or a snapshot of the
-// user's whole gallery — that auto-discovery was confusing the planner.
-function buildCatalog(state: any): { catalog: CatalogEntry[] } {
+// Detects whether the current checklist line back-references prior step
+// outputs. If it does, prior step outputs are exposed in this line's catalog;
+// otherwise they are hidden, so the planner can't accidentally grab a stale
+// asset for a fresh, unrelated line.
+const BACKREF_RE = /\b(previous|prior|the\s+result|that\s+(image|video|audio|file|one)|what\s+we\s+(just|previously)\s+made|step\s+\d+|above|earlier|just\s+made|last\s+(image|video|output))\b/i;
+function lineBackReferences(text: string, priorOutputs: any[]): boolean {
+  if (!text) return false;
+  if (BACKREF_RE.test(text)) return true;
+  // Also expose prior outputs if the line names one of them.
+  const t = norm(text);
+  for (const o of priorOutputs ?? []) {
+    if (!o?.name) continue;
+    const n = norm(o.name);
+    if (n && t.includes(n)) return true;
+  }
+  return false;
+}
+
+// Build the per-LINE catalog for the planner. Scope is intentionally narrow:
+//  - The current line's own attached media (line:image/video/audio).
+//  - Media inside the line's own linked checklist (linked-line:I).
+//  - Global media attached in the Run Sequence dialog (attached:N).
+//  - Prior step outputs (step:N) — ONLY if this line clearly back-references
+//    a prior result, otherwise hidden.
+//  - Global linked checklists from the Run Sequence dialog: their TEXT goes
+//    into linked_context_text only; their MEDIA is intentionally NOT in the
+//    catalog for media tools (that's how the planner used to grab the wrong
+//    video). If the user wants a specific media file used, they attach it
+//    via the gallery picker (attached:N).
+function buildLineCatalog(state: any, lineIdx: number): { catalog: CatalogEntry[] } {
   const out: CatalogEntry[] = [];
+  const line = (state.input_lines ?? [])[lineIdx];
+  if (!line) return { catalog: [] };
 
-  // 1) Prior step outputs (image/video only — refs need URLs the tools can use).
-  const outputs: any[] = state.outputs ?? [];
-  outputs.forEach((o, i) => {
-    if (!o || !o.media_url) return;
-    const k = detectKind(o.media_type, o.media_url);
-    if (!k) return;
-    out.push({
-      handle: `step:${i}`,
-      name: o.name ?? `Step ${i + 1} output`,
-      url: o.media_url,
-      type: k,
-      source: "step-output",
-    });
-  });
+  // 1) The line's own attached media.
+  if (line.media_url) {
+    const k = detectKind(line.media_type, line.media_url);
+    if (k) {
+      out.push({
+        handle: `line:${k}:0`,
+        name: `This line's ${k}`,
+        url: line.media_url,
+        type: k,
+        source: "line-media",
+      });
+    }
+  }
 
-  // 2) Media inside user-attached checklists (from ContextAttacher).
-  const linked: any[] = state.linked_lists ?? [];
-  linked.forEach((ll, lIdx) => {
-    (ll.items ?? []).forEach((it: any, iIdx: number) => {
+  // 2) Media inside the line's own linked checklist.
+  const lineLinked = state.line_linked_lists?.[line.linked_checklist_id];
+  if (lineLinked && Array.isArray(lineLinked.items)) {
+    lineLinked.items.forEach((it: any, iIdx: number) => {
       if (!it?.media_url) return;
       const k = detectKind(it.media_type, it.media_url);
       if (!k) return;
       out.push({
-        handle: `linked:${lIdx}:${iIdx}`,
-        name: `${ll.title} – ${snip(it.text || `Line ${iIdx + 1}`, 40)}`,
+        handle: `linked-line:${iIdx}`,
+        name: `${lineLinked.title} – ${snip(it.text || `Line ${iIdx + 1}`, 40)}`,
         url: it.media_url,
         type: k,
-        source: "linked-line",
+        source: "line-linked",
       });
     });
-  });
+  }
 
-  // 3) Attached context media (from ContextAttacher gallery picker).
+  // 3) Global attached media (from Run Sequence dialog).
   const attached: any[] = state.attached_media ?? [];
   attached.forEach((m, i) => {
     if (!m?.url) return;
@@ -468,21 +517,52 @@ function buildCatalog(state: any): { catalog: CatalogEntry[] } {
     });
   });
 
-  return { catalog: out.slice(0, 300) };
+  // 4) Prior step outputs — gated by back-reference detection.
+  const outputs: any[] = state.outputs ?? [];
+  if (lineBackReferences(line.text, outputs)) {
+    outputs.forEach((o, i) => {
+      if (!o || !o.media_url) return;
+      const k = detectKind(o.media_type, o.media_url);
+      if (!k) return;
+      out.push({
+        handle: `step:${i}`,
+        name: o.name ?? `Step ${i + 1} output`,
+        url: o.media_url,
+        type: k,
+        source: "step-output",
+      });
+    });
+  }
+
+  return { catalog: out.slice(0, 100) };
 }
 
-function buildLinkedContextText(state: any): string {
-  const linked: any[] = state.linked_lists ?? [];
-  if (linked.length === 0) return "";
+function buildLinkedContextText(state: any, lineIdx: number): string {
   const blocks: string[] = [];
+
+  // Full input checklist (text-only) so the agent knows what's coming.
+  const inputLines: any[] = state.input_lines ?? [];
+  if (inputLines.length) {
+    const lines = inputLines.map((l: any, i: number) => `${i + 1}. ${l.text}`).filter((s: string) => s.trim());
+    if (lines.length) blocks.push(`### Full input checklist (for context only)\n${lines.join("\n")}`);
+  }
+
+  // Global linked checklists (Run Sequence dialog) — TEXT only.
+  const linked: any[] = state.linked_lists ?? [];
   for (const ll of linked) {
     const lines = (ll.items ?? []).map((it: any) => it.text).filter((t: any) => typeof t === "string" && t.trim());
     if (lines.length === 0) continue;
-    const suffix = ll.depth && ll.depth > 1 && ll.via_title
-      ? ` (nested inside "${ll.via_title}")`
-      : "";
-    blocks.push(`### Steps from linked checklist "${ll.title}"${suffix}\n${lines.map((l: string) => `- ${l}`).join("\n")}`);
+    blocks.push(`### Reference checklist "${ll.title}"\n${lines.map((l: string) => `- ${l}`).join("\n")}`);
   }
+
+  // The current line's own linked checklist — TEXT only.
+  const line = inputLines[lineIdx];
+  const own = line ? state.line_linked_lists?.[line.linked_checklist_id] : null;
+  if (own && Array.isArray(own.items)) {
+    const lines = own.items.map((it: any) => it.text).filter((t: any) => typeof t === "string" && t.trim());
+    if (lines.length) blocks.push(`### This line's linked checklist "${own.title}"\n${lines.map((l: string) => `- ${l}`).join("\n")}`);
+  }
+
   return blocks.join("\n\n");
 }
 
@@ -510,12 +590,17 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     await supabase.from("action_jobs").update({ sequence_state: state }).eq("id", parent.id);
   };
 
+  const clearActiveLine = async () => {
+    try { await supabase.from("action_jobs").update({ active_line_item_id: null }).eq("id", parent.id); } catch {}
+  };
+
   const abortSequence = async (reason: string) => {
     state.phase = "aborted";
     state.abort_reason = reason;
     await supabase.from("action_jobs").update({
       status: "failed",
       sequence_state: state,
+      active_line_item_id: null,
       error_raw: reason,
       error_friendly: `Sequence stopped: ${reason}`,
       error_fix: "Open the parent action and re-run with adjusted budgets or instructions.",
@@ -534,6 +619,7 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     await supabase.from("action_jobs").update({
       status: "completed",
       sequence_state: state,
+      active_line_item_id: null,
       result: { steps: state.outputs.length, lines: (state.input_lines ?? []).length },
       completed_at: new Date().toISOString(),
     }).eq("id", parent.id);
@@ -560,11 +646,20 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
   if (state.phase === "planning_init") {
     const { data: items } = await supabase
       .from("checklist_items")
-      .select("text, position, media_url, media_type")
+      .select("id, text, position, media_url, media_type, linked_checklist_id, parent_item_id")
       .eq("checklist_id", parent.checklist_id)
       .order("position", { ascending: true });
+    // Skip rows that are themselves children of an earlier sequence run —
+    // those are AI-generated outputs, not new instructions.
     const inputLines = ((items ?? []) as any[])
-      .map((i) => ({ text: (i.text ?? "").trim(), media_url: i.media_url ?? null, media_type: i.media_type ?? null }));
+      .filter((i) => !i.parent_item_id)
+      .map((i) => ({
+        item_id: i.id,
+        text: (i.text ?? "").trim(),
+        media_url: i.media_url ?? null,
+        media_type: i.media_type ?? null,
+        linked_checklist_id: i.linked_checklist_id ?? null,
+      }));
     if (inputLines.length === 0) return abortSequence("input checklist is empty");
     state.input_lines = inputLines.slice(0, 60);
 
@@ -572,9 +667,17 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     const attachedChecklistIds: string[] = Array.isArray(ctx.checklists)
       ? ctx.checklists.filter((x: any) => typeof x === "string")
       : [];
-    // Only load checklists the user explicitly attached. No BFS over inline
-    // checklist links, no full-gallery snapshot.
+    // Global linked checklists from the Run Sequence dialog.
     state.linked_lists = await loadAttachedLists(supabase, attachedChecklistIds);
+    // Per-line linked checklists (one row each line may have its own).
+    const perLineIds = Array.from(new Set(
+      state.input_lines.map((l: any) => l.linked_checklist_id).filter((x: any) => typeof x === "string"),
+    )) as string[];
+    const perLineLoaded = await loadAttachedLists(supabase, perLineIds);
+    state.line_linked_lists = {};
+    for (const ll of perLineLoaded) {
+      state.line_linked_lists[ll.list_id] = ll;
+    }
     state.gallery = [];
 
     state.attached_media = Array.isArray(ctx.media)
@@ -600,9 +703,19 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
       await persist();
       return { done: false };
     }
-    const { catalog } = buildCatalog(state);
-    const linkedText = buildLinkedContextText(state);
+
+    // Highlight this line in the UI as "actively running" before we even call
+    // the planner. The Checklist page subscribes to action_jobs realtime and
+    // turns this row green.
+    if (line.item_id) {
+      try { await supabase.from("action_jobs").update({ active_line_item_id: line.item_id }).eq("id", parent.id); } catch {}
+    }
+
+    const { catalog } = buildLineCatalog(state, lineIdx);
+    const linkedText = buildLinkedContextText(state, lineIdx);
     const upcoming = (state.input_lines ?? []).slice(lineIdx + 1, lineIdx + 4).map((l: any) => l.text).filter(Boolean);
+    // Prior outputs summary: text-only metadata. URLs are intentionally NOT
+    // included; the planner picks media via catalog handles only.
     const priorOutputsSummary = (state.outputs ?? []).map((o: any, i: number) => {
       if (!o) return null;
       if (o.no_action) return null;
@@ -636,6 +749,7 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
         checklist_id: outputChecklistId,
         text: `⚠️ Step ${lineIdx + 1}: planner failed — ${(e as Error).message.slice(0, 200)}`,
       });
+      await clearActiveLine();
       await persist();
       return { done: false };
     }
@@ -643,6 +757,7 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     if (!decision || decision.kind === "no_action") {
       state.outputs.push({ no_action: true, line_idx: lineIdx, reason: decision?.reason ?? "" });
       state.cursor += 1;
+      await clearActiveLine();
       await persist();
       return { done: false };
     }
@@ -677,7 +792,7 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
       return abortSequence(`video budget reached (${maxVideos})`);
     }
 
-    const { catalog } = buildCatalog(state);
+    const { catalog } = buildLineCatalog(state, lineIdx);
     const refs = step.input_refs ?? {};
 
     const resolveList = (arr: any[], kind: "image" | "video" | "audio") => {
@@ -696,7 +811,10 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     const audRes = resolveList(refs.audios ?? [], "audio");
 
     const actionType: string = step.action_type;
-    const childPayload: any = { prompt: step.prompt };
+    // Tag the child job so insertResultItem attaches the output as a child of
+    // the active checklist line (parent_item_id), making lineage visible.
+    const sequenceParentItemId: string | null = state.input_lines?.[lineIdx]?.item_id ?? null;
+    const childPayload: any = { prompt: step.prompt, __sequence_parent_item_id: sequenceParentItemId };
     if (step.aspect_ratio) childPayload.aspectRatio = step.aspect_ratio;
     if (step.quality) childPayload.quality = step.quality;
     let valid = true;
@@ -861,6 +979,17 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     state.current_step_note = null;
     if (state.pending_steps && state.pending_steps.length > 0) {
       state.pending_steps.shift();
+    }
+    // If this was the LAST sub-step for the line (no more pending_steps),
+    // auto-check the source line and drop the active highlight. The cursor
+    // advances back at the top of the next dispatching pass.
+    const lineDone = !state.pending_steps || state.pending_steps.length === 0;
+    if (lineDone) {
+      const sourceItemId = state.input_lines?.[lineIdx]?.item_id;
+      if (sourceItemId) {
+        try { await supabase.from("checklist_items").update({ checked: true }).eq("id", sourceItemId); } catch {}
+      }
+      await clearActiveLine();
     }
     state.phase = "dispatching";
     await persist();
