@@ -150,6 +150,18 @@ export const ItemRow = ({
           />
         )}
 
+        {/* Hidden mirror used to measure required textarea height without
+            collapsing the live textarea (which would cause iOS scroll jumps). */}
+        <textarea
+          ref={mirrorRef}
+          tabIndex={-1}
+          aria-hidden="true"
+          readOnly
+          rows={1}
+          className="resize-none bg-transparent text-base md:text-[15px] leading-snug absolute -left-[9999px] top-0 invisible pointer-events-none"
+          style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
+        />
+
         {item.media_url && (
           <button
             type="button"
