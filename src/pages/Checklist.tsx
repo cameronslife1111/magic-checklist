@@ -112,6 +112,8 @@ const ChecklistPage = () => {
   const longPressFiredRef = useRef(false);
   const actionsLongPressTimerRef = useRef<number | null>(null);
   const actionsLongPressFiredRef = useRef(false);
+  const homeLongPressTimerRef = useRef<number | null>(null);
+  const homeLongPressFiredRef = useRef(false);
   const keepaliveRef = useRef<HTMLInputElement>(null);
   const didAutoFocusRef = useRef<string | null>(null);
   const registerRef = useCallback((id: string, el: HTMLLIElement | null) => {
