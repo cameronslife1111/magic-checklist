@@ -3,7 +3,7 @@ import { ChecklistItem } from "@/lib/types";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { ExternalLink, Link2, X } from "lucide-react";
-import { notifyDictationStart, notifyDictationEnd } from "@/lib/speech";
+import { notifyDictationDetected, notifyDictationEnd } from "@/lib/speech";
 
 type Props = {
   item: ChecklistItem;
@@ -90,14 +90,21 @@ export const ItemRow = ({
             ref={taRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
-            onFocus={() => { dictatingRef.current = false; notifyDictationStart(); }}
+            onFocus={() => { dictatingRef.current = false; }}
             onInput={(e) => {
               const ne = e.nativeEvent as InputEvent;
-              // Safari/iOS reports dictation explicitly. Chrome Android often
-              // inserts multi-char chunks with null `data` and a generic type.
-              if (ne.inputType === "insertFromDictation" ||
-                  (ne.inputType === "insertText" && ne.data == null)) {
+              const it = ne.inputType || "";
+              const data: any = (ne as any).data;
+              // iOS Safari: explicit dictation event.
+              // Android Chrome: composition inserts, or chunked insertText
+              // (multi-char with null/long data) — heuristic catches both.
+              const isDictation =
+                it === "insertFromDictation" ||
+                it === "insertCompositionText" ||
+                (it === "insertText" && (data == null || (typeof data === "string" && data.length > 1)));
+              if (isDictation && !dictatingRef.current) {
                 dictatingRef.current = true;
+                notifyDictationDetected();
               }
             }}
             onBlur={() => {

@@ -1,5 +1,7 @@
+import { useEffect } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { notifyRouteChange } from "@/lib/speech";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
@@ -27,6 +29,12 @@ const PublicOnly = ({ children }: { children: JSX.Element }) => {
   return children;
 };
 
+const RouteChangeNotifier = () => {
+  const location = useLocation();
+  useEffect(() => { notifyRouteChange(); }, [location.pathname]);
+  return null;
+};
+
 const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
@@ -34,6 +42,7 @@ const App = () => (
       <Sonner />
       <BrowserRouter>
         <AuthProvider>
+          <RouteChangeNotifier />
           <Routes>
             <Route path="/" element={<RequireAuth><Checklist /></RequireAuth>} />
             <Route path="/queue" element={<RequireAuth><ActionQueue /></RequireAuth>} />
