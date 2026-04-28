@@ -537,6 +537,64 @@ function buildLineCatalog(state: any, lineIdx: number): { catalog: CatalogEntry[
   return { catalog: out.slice(0, 100) };
 }
 
+// Per-line attached-checklist resolver. Picks which of the globally attached
+// checklists should be used as the PRIMARY text context for THIS line, using
+// loose matching against the line text. Falls back to "all attached" when the
+// line is generic or references attached context with no specific name.
+//
+// Returns the list of attached checklist IDs to inject into the child job's
+// payload.context.checklists (so the executor — not just the planner — sees
+// the right text). Also returns a short human-readable label for the queue UI.
+const ATTACHED_REF_RE = /\b(this|the|attached|provided|given|above|below)\s+(checklist|list|notes|info|context|document|doc|file|content|data)\b/i;
+function resolveLineChecklistContext(state: any, lineText: string): { ids: string[]; titles: string[]; label: string } {
+  const linked: any[] = state.linked_lists ?? [];
+  if (linked.length === 0) return { ids: [], titles: [], label: "" };
+
+  const all = linked.map((l) => ({ id: l.list_id as string, title: String(l.title ?? "Untitled") }));
+
+  // 1) Loose title match — score each attached list by token overlap with the line.
+  const t = norm(lineText);
+  if (t) {
+    type Scored = { id: string; title: string; score: number };
+    const scored: Scored[] = all.map(({ id, title }) => {
+      const gn = norm(title);
+      let score = 0;
+      if (!gn) return { id, title, score: 0 };
+      if (gn === t) score = 1000;
+      else if (t.includes(gn) || gn.includes(t)) score = 500 - Math.abs(gn.length - t.length);
+      else {
+        const titleTokens = new Set(gn.split(/\s+/).filter((x) => x.length >= 3));
+        const lineTokens = t.split(/\s+/).filter((x) => x.length >= 3);
+        const overlap = lineTokens.filter((tok) => titleTokens.has(tok)).length;
+        score = overlap * 25;
+      }
+      return { id, title, score };
+    });
+    scored.sort((a, b) => b.score - a.score);
+    if (scored[0] && scored[0].score >= 25) {
+      // Strong-ish match — use that one as the primary.
+      return { ids: [scored[0].id], titles: [scored[0].title], label: scored[0].title };
+    }
+  }
+
+  // 2) Generic "use the attached checklist" reference, or only one attached.
+  if (all.length === 1 || ATTACHED_REF_RE.test(lineText ?? "")) {
+    return {
+      ids: all.map((a) => a.id),
+      titles: all.map((a) => a.title),
+      label: all.length === 1 ? all[0].title : `${all.length} attached checklists`,
+    };
+  }
+
+  // 3) Default: pass all attached as context (bounded). The executor merges
+  //    them into one prompt block, ordered as the user attached them.
+  return {
+    ids: all.map((a) => a.id),
+    titles: all.map((a) => a.title),
+    label: `${all.length} attached checklists`,
+  };
+}
+
 function buildLinkedContextText(state: any, lineIdx: number): string {
   const blocks: string[] = [];
 
