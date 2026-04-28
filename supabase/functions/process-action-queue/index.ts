@@ -369,21 +369,16 @@ function topNCatalog(needle: string, catalog: CatalogEntry[], n = 3): CatalogEnt
   return scored.slice(0, n).map((x) => x.c);
 }
 
-// Resolve a planner ref string to a CatalogEntry. Handles take precedence; otherwise loose-match by name.
+// Resolve a planner ref string to a CatalogEntry. STRICT: exact-handle match
+// only. We do NOT loose-match by name anymore — the catalog is per-line and
+// already filtered, so name-based fallbacks were the main source of "wrong
+// video" errors. The planner is instructed to always emit handles.
 function resolveRef(ref: string, kind: "image" | "video" | "audio", catalog: CatalogEntry[]): CatalogEntry | null {
   if (!ref) return null;
-  // Exact-handle match.
   for (const c of catalog) {
     if (c.handle === ref) return c.type === kind ? c : null;
   }
-  // step:N short-circuit (handles are also in catalog under step:N, but be lenient)
-  if (ref.startsWith("step:") || ref.startsWith("line:") || ref.startsWith("linked:") ||
-      ref.startsWith("gallery:") || ref.startsWith("attached:")) {
-    return null; // handle didn't exist in catalog
-  }
-  // Loose name match.
-  const m = looseMatchCatalog(ref, catalog, kind);
-  return m;
+  return null;
 }
 
 // Snippet for human-readable labels.
