@@ -792,7 +792,7 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
       return abortSequence(`video budget reached (${maxVideos})`);
     }
 
-    const { catalog } = buildCatalog(state);
+    const { catalog } = buildLineCatalog(state, lineIdx);
     const refs = step.input_refs ?? {};
 
     const resolveList = (arr: any[], kind: "image" | "video" | "audio") => {
