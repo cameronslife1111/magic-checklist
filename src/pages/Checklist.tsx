@@ -513,6 +513,14 @@ const ChecklistPage = () => {
         await duplicateCurrentItem();
         break;
       }
+      case "delete-current": {
+        if (!highestUnchecked) {
+          toast.error("No checkbox to delete.");
+          break;
+        }
+        await handleDelete(highestUnchecked);
+        break;
+      }
       case "uncheck-all": {
         setActionsOpen(false);
         const checkedIds = items.filter((i) => i.checked).map((i) => i.id);
