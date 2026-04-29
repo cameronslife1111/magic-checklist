@@ -280,6 +280,15 @@ const ChecklistPage = () => {
   };
 
   const handleToggle = async (item: ChecklistItem, next: boolean) => {
+    if (combineMode) {
+      setCombineSelection((prev) => {
+        const n = new Set(prev);
+        if (n.has(item.id)) n.delete(item.id);
+        else n.add(item.id);
+        return n;
+      });
+      return;
+    }
     primeSpeech();
     const targetIdx = items.findIndex((i) => i.id === item.id);
     if (targetIdx < 0) return;
