@@ -12,13 +12,15 @@ export type ActionKey =
   | "add" | "duplicate-item" | "new" | "duplicate" | "delete-checklist" | "edit-title" | "split" | "split-emoji"
   | "text-text" | "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "audio-image-video"
   | "insert-link" | "insert-new-link" | "analyze-image" | "web-search" | "bg" | "rearrange"
-  | "copy-sentence" | "copy-checklist" | "send-to" | "send-to-blank" | "uncheck-all" | "combine-checked" | "media-gallery" | "export-text" | "run-sequence" | "theme" | "sign-out";
+  | "copy-sentence" | "copy-checklist" | "delete-current" | "send-to" | "send-to-blank" | "uncheck-all" | "combine-checked" | "media-gallery" | "export-text" | "run-sequence" | "theme" | "sign-out";
 
 const AI_KEYS = new Set<ActionKey>([
   "text-text", "text-image", "image-image", "remix",
   "image-video", "video-video", "audio-image-video",
   "analyze-image", "web-search", "run-sequence",
 ]);
+
+const RED_KEYS = new Set<ActionKey>(["delete-current"]);
 
 const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   // Top: moved-up quick actions (right under Mute)
@@ -30,6 +32,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   // Most-used quick utilities
   { key: "copy-sentence",    label: "Copy sentence",            icon: ClipboardCopy },
   { key: "copy-checklist",   label: "Copy full checklist",      icon: ClipboardList },
+  { key: "delete-current",   label: "Delete current sentence",  icon: Trash2 },
   { key: "insert-link",      label: "Insert checklist link",    icon: Link2 },
   { key: "insert-new-link",  label: "Insert new checklist link from text", icon: FilePlus },
   { key: "add",              label: "Add new checkbox",         icon: Plus },
@@ -94,6 +97,7 @@ export const ActionsSheet = ({ open, onOpenChange, onPick, currentTheme, muted }
             {items.map((it) => {
               const Icon = it.icon;
               const isAI = AI_KEYS.has(it.key as ActionKey);
+              const isRed = RED_KEYS.has(it.key as ActionKey);
               return (
                 <li key={it.key}>
                   <Button
@@ -102,9 +106,10 @@ export const ActionsSheet = ({ open, onOpenChange, onPick, currentTheme, muted }
                     className={cn(
                       "w-full h-12 justify-start gap-3 text-base font-medium",
                       isAI && "text-blue-500 hover:text-blue-500",
+                      isRed && "text-red-500 hover:text-red-500",
                     )}
                   >
-                    <Icon className={cn("h-5 w-5", isAI ? "text-blue-500" : "text-muted-foreground")} />
+                    <Icon className={cn("h-5 w-5", isAI ? "text-blue-500" : isRed ? "text-red-500" : "text-muted-foreground")} />
                     {it.label}
                   </Button>
                 </li>
