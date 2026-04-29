@@ -976,7 +976,8 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<Job
     case "text-image": {
       // ASYNC: submit to Fal and hand off. The poll loop completes the job on
       // a later tick, so the worker never waits past the 150s edge-fn limit.
-      const prompt = buildPrompt(p.prompt, ctx, false);
+      // Media tools always use the prompt verbatim — no checklist text injected.
+      const prompt = String(p.prompt ?? "");
       const out = await callFn("lovable-image", {
         mode: "submit",
         prompt, aspectRatio: p.aspectRatio, quality: p.quality,
@@ -995,7 +996,7 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<Job
     case "image-image":
     case "remix": {
       // ASYNC: same submit/poll handoff as text-image.
-      const prompt = buildPrompt(p.prompt, ctx, false);
+      const prompt = String(p.prompt ?? "");
       const galleryUrls: string[] = Array.isArray(p.refImageUrls) ? p.refImageUrls : [];
       const refImageUrls = [...galleryUrls, ...ctx.imageUrls].slice(0, 16);
       const refImages: string[] = Array.isArray(p.refImages) ? p.refImages : [];
@@ -1018,7 +1019,7 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<Job
     case "video-video": {
       // ASYNC: submit to Fal, return a handoff. The worker stores the queue handle
       // on the job row and polls it on subsequent ticks (no synchronous wait → no 150s timeout).
-      const prompt = buildPrompt(p.prompt, ctx, true);
+      const prompt = String(p.prompt ?? "");
       let sourceUrl: string | undefined = p.sourceUrl;
       if (!sourceUrl) {
         const fallback = job.action_type === "video-video" ? ctx.videoUrls[0] : ctx.imageUrls[0];
@@ -1056,7 +1057,7 @@ async function runJob(supabase: any, job: Job, signal: AbortSignal): Promise<Job
     }
     case "audio-image-video": {
       // ASYNC: same submit/poll handoff pattern as the Kling video models.
-      const prompt = buildPrompt(p.prompt, ctx, false);
+      const prompt = String(p.prompt ?? "");
       const imageUrl = p.imageUrl ?? ctx.imageUrls[0];
       const audioUrl = p.audioUrl ?? ctx.audioUrls[0];
       if (!imageUrl) throw new Error("missing reference image");
