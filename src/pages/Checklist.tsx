@@ -1296,7 +1296,29 @@ const ChecklistPage = () => {
 
       <div className="fixed bottom-0 left-0 right-0 pb-[max(0px,env(safe-area-inset-bottom))] pointer-events-none">
         <div className="pointer-events-auto">
-          {reorderMode ? (
+          {combineMode ? (
+            <div className="flex gap-0">
+              <Button
+                onClick={exitCombineMode}
+                style={{ ["--shimmer-delay" as any]: "0s" }}
+                className="flex-1 h-28 rounded-none text-base font-semibold btn-metallic-orange btn-shimmer"
+              >
+                Cancel
+              </Button>
+              <Button
+                disabled={combineSelection.size < 2}
+                onClick={async () => {
+                  const ids = items.filter((i) => combineSelection.has(i.id)).map((i) => i.id);
+                  await combineCheckedItems(ids);
+                  exitCombineMode();
+                }}
+                style={{ ["--shimmer-delay" as any]: "0s" }}
+                className="flex-1 h-28 rounded-none text-base font-semibold btn-metallic-blue btn-shimmer disabled:opacity-60"
+              >
+                Combine ({combineSelection.size})
+              </Button>
+            </div>
+          ) : reorderMode ? (
             <Button
               onClick={() => setReorderMode(false)}
               style={{ ["--shimmer-delay" as any]: "0s" }}
