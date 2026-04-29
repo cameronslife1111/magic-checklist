@@ -615,17 +615,10 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     const attachedChecklistIds: string[] = Array.isArray(ctx.checklists)
       ? ctx.checklists.filter((x: any) => typeof x === "string")
       : [];
-    // Global linked checklists from the Run Sequence dialog.
+    // Global linked checklists from the Run Sequence dialog. This is the ONLY
+    // text context the agent will ever see — we no longer auto-load per-line
+    // linked lists, prior outputs as text, or the input checklist itself.
     state.linked_lists = await loadAttachedLists(supabase, attachedChecklistIds);
-    // Per-line linked checklists (one row each line may have its own).
-    const perLineIds = Array.from(new Set(
-      state.input_lines.map((l: any) => l.linked_checklist_id).filter((x: any) => typeof x === "string"),
-    )) as string[];
-    const perLineLoaded = await loadAttachedLists(supabase, perLineIds);
-    state.line_linked_lists = {};
-    for (const ll of perLineLoaded) {
-      state.line_linked_lists[ll.list_id] = ll;
-    }
     state.gallery = [];
 
     state.attached_media = Array.isArray(ctx.media)
