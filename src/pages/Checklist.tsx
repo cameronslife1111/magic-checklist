@@ -563,7 +563,10 @@ const ChecklistPage = () => {
         break;
       }
       case "combine-checked": {
-        await combineCheckedItems();
+        setActionsOpen(false);
+        setCombineSelection(new Set());
+        setCombineMode(true);
+        toast.message("Select boxes to combine, then tap Combine.");
         break;
       }
       case "export-text": {
