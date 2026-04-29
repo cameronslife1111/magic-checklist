@@ -1338,20 +1338,23 @@ const ChecklistPage = () => {
                     homeLongPressTimerRef.current = null;
                   }
                   if (homeLongPressFiredRef.current) return;
-                  // Short tap: drop the keepalive focus, then open the top
-                  // checklist (or drill into the linked one).
                   keepaliveRef.current?.blur();
+
+                  // Drill-first: if the highlighted (highest unchecked) item
+                  // links to another checklist, open it — regardless of which
+                  // checklist we're currently on. This lets the user keep
+                  // tapping Home to descend through linked checklists.
+                  if (highestUnchecked?.linked_checklist_id) {
+                    await openChecklist(highestUnchecked.linked_checklist_id);
+                    return;
+                  }
+
+                  // Otherwise, go back to the alphabetically-top checklist.
                   const { data } = await supabase.from("checklists").select("id,title");
                   const sorted = sortChecklistsByTitle(data ?? []);
                   const top = sorted[0];
-                  if (!top) return;
-                  if (top.id !== checklist.id) {
-                    await openChecklist(top.id);
-                    return;
-                  }
-                  if (highestUnchecked?.linked_checklist_id) {
-                    await openChecklist(highestUnchecked.linked_checklist_id);
-                  }
+                  if (!top || top.id === checklist.id) return;
+                  await openChecklist(top.id);
                 }}
                 onPointerCancel={() => {
                   if (homeLongPressTimerRef.current) {
