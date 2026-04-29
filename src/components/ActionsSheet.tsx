@@ -32,6 +32,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   // Most-used quick utilities
   { key: "copy-sentence",    label: "Copy sentence",            icon: ClipboardCopy },
   { key: "copy-checklist",   label: "Copy full checklist",      icon: ClipboardList },
+  { key: "delete-current",   label: "Delete current sentence",  icon: Trash2 },
   { key: "insert-link",      label: "Insert checklist link",    icon: Link2 },
   { key: "insert-new-link",  label: "Insert new checklist link from text", icon: FilePlus },
   { key: "add",              label: "Add new checkbox",         icon: Plus },
