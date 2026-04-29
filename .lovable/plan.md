@@ -1,49 +1,36 @@
-# Home button: always drill into linked checklists
+## Add "Delete current sentence" button to Actions sheet
 
-## Current behavior
+A new red entry in the Actions sheet that instantly deletes the currently highlighted (yellow) checkbox — same as tapping the X next to it on the row. No confirmation prompt.
 
-A short tap on the 🏠 Home button does this (in `src/pages/Checklist.tsx`, lines 1334–1355):
+### Behavior
+- Label: **Delete current sentence**
+- Icon: `Trash2` (red, like the AI items are blue)
+- Position: directly under **Copy full checklist**
+- On tap: closes the sheet and deletes `highestUnchecked` via the existing `handleDelete(item)` flow (which also cleans up owned generated media and re-focuses the next unchecked item).
+- If there is no unchecked item, show a toast: "No checkbox to delete."
+- No confirmation dialog.
 
-1. Look up the alphabetically-top checklist.
-2. If you are **not** already on it → navigate to the top checklist.
-3. If you **are** on the top checklist → if the highest unchecked item links to another checklist, drill into it; otherwise do nothing.
+### Technical changes
 
-Result: from a deep checklist with a linked-checklist item highlighted yellow, the Home button takes you all the way back to the top checklist, even though the more useful action is to drill one level deeper into the link you're already pointed at.
+**1. `src/components/ActionsSheet.tsx`**
+- Add `"delete-current"` to the `ActionKey` union.
+- Insert a new entry in `STATIC_ITEMS` immediately after `copy-checklist`:
+  ```ts
+  { key: "delete-current", label: "Delete current sentence", icon: Trash2 },
+  ```
+- Add a `RED_KEYS` set (mirroring `AI_KEYS`) containing `"delete-current"`, and apply red text/icon classes (`text-red-500 hover:text-red-500`) when the key is in that set — keeping the existing blue styling for AI items untouched.
 
-## New behavior
+**2. `src/pages/Checklist.tsx`**
+- In the `onPick` switch (around line 500), add:
+  ```ts
+  case "delete-current": {
+    if (!highestUnchecked) {
+      toast.error("No checkbox to delete.");
+      break;
+    }
+    await handleDelete(highestUnchecked);
+    break;
+  }
+  ```
 
-Priority becomes: **drill in if you can, otherwise go home.**
-
-On a short tap of the Home button:
-
-1. If the current checklist's highest unchecked item has a `linked_checklist_id` → open that linked checklist. (Works on every checklist, including the top one. Lets you keep tapping Home to go deeper and deeper.)
-2. Otherwise → navigate to the alphabetically-top checklist (unless you're already on it, in which case do nothing).
-
-Plain text items, external links, and items with media but no internal link all fall through to step 2 — same "go home" behavior as a regular checkbox today.
-
-Long-press behavior (insert new item) is unchanged.
-
-## Technical change
-
-Single edit in `src/pages/Checklist.tsx` inside the Home button's `onPointerUp` handler (around lines 1340–1355). Replace the current "find top checklist first, then maybe drill" logic with:
-
-```ts
-if (homeLongPressFiredRef.current) return;
-keepaliveRef.current?.blur();
-
-// Drill-first: if the highlighted item links to another checklist,
-// open it — regardless of which checklist we're currently on.
-if (highestUnchecked?.linked_checklist_id) {
-  await openChecklist(highestUnchecked.linked_checklist_id);
-  return;
-}
-
-// Otherwise, go back to the alphabetically-top checklist.
-const { data } = await supabase.from("checklists").select("id,title");
-const sorted = sortChecklistsByTitle(data ?? []);
-const top = sorted[0];
-if (!top || top.id === checklist.id) return;
-await openChecklist(top.id);
-```
-
-No other files, no schema changes, no new state.
+No schema changes, no new dialogs, no other files touched.
