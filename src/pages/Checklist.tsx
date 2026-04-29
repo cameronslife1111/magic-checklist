@@ -1248,12 +1248,13 @@ const ChecklistPage = () => {
           <ul className="flex flex-col gap-2 max-w-2xl mx-auto w-full">
             {topLevelItems.map((it) => {
               const kids = childrenByParent.get(it.id) ?? [];
+              const itDisplay = combineMode ? { ...it, checked: combineSelection.has(it.id) } : it;
               return (
                 <div key={it.id} className="flex flex-col gap-2">
                   <ItemRow
-                    item={it}
+                    item={itDisplay}
                     autoFocus={focusItemId === it.id}
-                    isActive={highestUnchecked?.id === it.id}
+                    isActive={!combineMode && highestUnchecked?.id === it.id}
                     isRunning={activeLineItemId === it.id}
                     onToggle={handleToggle}
                     onTextChange={handleTextChange}
@@ -1264,20 +1265,23 @@ const ChecklistPage = () => {
                   />
                   {kids.length > 0 && (
                     <ul className="flex flex-col gap-2 ml-6 border-l-2 border-primary/30 pl-3">
-                      {kids.map((kid, idx) => (
-                        <ItemRow
-                          key={kid.id}
-                          item={kid}
-                          isChild
-                          childLabel={`↳ from step ${idx + 1}`}
-                          onToggle={handleToggle}
-                          onTextChange={handleTextChange}
-                          onOpenLinkedChecklist={openChecklist}
-                          onOpenMedia={(url, type) => setViewer({ url, type })}
-                          onDelete={handleDelete}
-                          registerRef={registerRef}
-                        />
-                      ))}
+                      {kids.map((kid, idx) => {
+                        const kidDisplay = combineMode ? { ...kid, checked: combineSelection.has(kid.id) } : kid;
+                        return (
+                          <ItemRow
+                            key={kid.id}
+                            item={kidDisplay}
+                            isChild
+                            childLabel={`↳ from step ${idx + 1}`}
+                            onToggle={handleToggle}
+                            onTextChange={handleTextChange}
+                            onOpenLinkedChecklist={openChecklist}
+                            onOpenMedia={(url, type) => setViewer({ url, type })}
+                            onDelete={handleDelete}
+                            registerRef={registerRef}
+                          />
+                        );
+                      })}
                     </ul>
                   )}
                 </div>
