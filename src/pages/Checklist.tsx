@@ -69,6 +69,8 @@ const ChecklistPage = () => {
   const [focusItemId, setFocusItemId] = useState<string | null>(null);
   const [reorderMode, setReorderMode] = useState(false);
   const [sequenceOpen, setSequenceOpen] = useState(false);
+  const [combineMode, setCombineMode] = useState(false);
+  const [combineSelection, setCombineSelection] = useState<Set<string>>(new Set());
   const [muted, setMutedState] = useState<boolean>(() => isMuted());
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
@@ -278,6 +280,15 @@ const ChecklistPage = () => {
   };
 
   const handleToggle = async (item: ChecklistItem, next: boolean) => {
+    if (combineMode) {
+      setCombineSelection((prev) => {
+        const n = new Set(prev);
+        if (n.has(item.id)) n.delete(item.id);
+        else n.add(item.id);
+        return n;
+      });
+      return;
+    }
     primeSpeech();
     const targetIdx = items.findIndex((i) => i.id === item.id);
     if (targetIdx < 0) return;
@@ -552,7 +563,10 @@ const ChecklistPage = () => {
         break;
       }
       case "combine-checked": {
-        await combineCheckedItems();
+        setActionsOpen(false);
+        setCombineSelection(new Set());
+        setCombineMode(true);
+        toast.message("Select boxes to combine, then tap Combine.");
         break;
       }
       case "export-text": {
@@ -825,10 +839,18 @@ const ChecklistPage = () => {
     }
   };
 
-  const combineCheckedItems = async () => {
+  const exitCombineMode = () => {
+    setCombineMode(false);
+    setCombineSelection(new Set());
+  };
+
+  const combineCheckedItems = async (selectedIds?: string[]) => {
     setActionsOpen(false);
     if (!checklist || !user) return;
-    const checkedItems = items.filter((i) => i.checked);
+    const idSet = selectedIds ? new Set(selectedIds) : null;
+    const checkedItems = idSet
+      ? items.filter((i) => idSet.has(i.id))
+      : items.filter((i) => i.checked);
     if (checkedItems.length === 0) {
       toast.error("No checked checkboxes to combine.");
       return;
@@ -1226,12 +1248,13 @@ const ChecklistPage = () => {
           <ul className="flex flex-col gap-2 max-w-2xl mx-auto w-full">
             {topLevelItems.map((it) => {
               const kids = childrenByParent.get(it.id) ?? [];
+              const itDisplay = combineMode ? { ...it, checked: combineSelection.has(it.id) } : it;
               return (
                 <div key={it.id} className="flex flex-col gap-2">
                   <ItemRow
-                    item={it}
+                    item={itDisplay}
                     autoFocus={focusItemId === it.id}
-                    isActive={highestUnchecked?.id === it.id}
+                    isActive={!combineMode && highestUnchecked?.id === it.id}
                     isRunning={activeLineItemId === it.id}
                     onToggle={handleToggle}
                     onTextChange={handleTextChange}
@@ -1242,20 +1265,23 @@ const ChecklistPage = () => {
                   />
                   {kids.length > 0 && (
                     <ul className="flex flex-col gap-2 ml-6 border-l-2 border-primary/30 pl-3">
-                      {kids.map((kid, idx) => (
-                        <ItemRow
-                          key={kid.id}
-                          item={kid}
-                          isChild
-                          childLabel={`↳ from step ${idx + 1}`}
-                          onToggle={handleToggle}
-                          onTextChange={handleTextChange}
-                          onOpenLinkedChecklist={openChecklist}
-                          onOpenMedia={(url, type) => setViewer({ url, type })}
-                          onDelete={handleDelete}
-                          registerRef={registerRef}
-                        />
-                      ))}
+                      {kids.map((kid, idx) => {
+                        const kidDisplay = combineMode ? { ...kid, checked: combineSelection.has(kid.id) } : kid;
+                        return (
+                          <ItemRow
+                            key={kid.id}
+                            item={kidDisplay}
+                            isChild
+                            childLabel={`↳ from step ${idx + 1}`}
+                            onToggle={handleToggle}
+                            onTextChange={handleTextChange}
+                            onOpenLinkedChecklist={openChecklist}
+                            onOpenMedia={(url, type) => setViewer({ url, type })}
+                            onDelete={handleDelete}
+                            registerRef={registerRef}
+                          />
+                        );
+                      })}
                     </ul>
                   )}
                 </div>
@@ -1270,7 +1296,29 @@ const ChecklistPage = () => {
 
       <div className="fixed bottom-0 left-0 right-0 pb-[max(0px,env(safe-area-inset-bottom))] pointer-events-none">
         <div className="pointer-events-auto">
-          {reorderMode ? (
+          {combineMode ? (
+            <div className="flex gap-0">
+              <Button
+                onClick={exitCombineMode}
+                style={{ ["--shimmer-delay" as any]: "0s" }}
+                className="flex-1 h-28 rounded-none text-base font-semibold btn-metallic-orange btn-shimmer"
+              >
+                Cancel
+              </Button>
+              <Button
+                disabled={combineSelection.size < 2}
+                onClick={async () => {
+                  const ids = items.filter((i) => combineSelection.has(i.id)).map((i) => i.id);
+                  await combineCheckedItems(ids);
+                  exitCombineMode();
+                }}
+                style={{ ["--shimmer-delay" as any]: "0s" }}
+                className="flex-1 h-28 rounded-none text-base font-semibold btn-metallic-blue btn-shimmer disabled:opacity-60"
+              >
+                Combine ({combineSelection.size})
+              </Button>
+            </div>
+          ) : reorderMode ? (
             <Button
               onClick={() => setReorderMode(false)}
               style={{ ["--shimmer-delay" as any]: "0s" }}
