@@ -1617,7 +1617,7 @@ const ChecklistPage = () => {
                   max_images: args.max_images,
                   max_videos: args.max_videos,
                   max_runtime_minutes: args.max_runtime_minutes,
-                  max_images_per_step: args.max_images_per_step,
+                  default_aspect_ratio: args.default_aspect_ratio,
                   allowed_actions: args.allowed_actions,
                   context: {
                     checklists: args.context.checklists.map((c) => c.id),
