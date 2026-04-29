@@ -251,7 +251,7 @@ const ChecklistPage = () => {
       : highestUnchecked.text;
     requestAnimationFrame(() => {
       const el = itemRefs.current[id];
-      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
       if (text) speak(text);
     });
   }, [checklist, highestUnchecked]);
@@ -259,7 +259,7 @@ const ChecklistPage = () => {
   const scrollItemToCenter = (id: string) => {
     requestAnimationFrame(() => {
       const el = itemRefs.current[id];
-      if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+      if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
     });
   };
 
