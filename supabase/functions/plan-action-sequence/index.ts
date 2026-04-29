@@ -1,7 +1,13 @@
 // Per-line planner for the Action Sequence agent.
-// Given ONE checklist line plus a rich media catalog (handles + names + types),
-// returns exactly one decision: tool_call | compound (<=3 sub-steps) | no_action.
-// Uses tool-calling for structured output to avoid JSON parse failures.
+// ONE checklist line in → ONE tool call (or no_action) out. No compound steps.
+// The planner sees only:
+//   - the current line text
+//   - the user-attached text context (concatenated checklists)
+//   - the user-attached media catalog (handle + name + type)
+//   - prior step outputs ONLY when this line clearly back-references them
+//   - the allowed tool list and a default aspect ratio
+// It does NOT see the rest of the input checklist, upcoming lines, or
+// auto-discovered linked checklists. This keeps each decision focused.
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -33,59 +39,44 @@ type PlanStep = {
   note?: string;
 };
 
-const SYSTEM = `You are an EXECUTOR for a multi-step AI agent. The user has a checklist; you receive ONE line at a time and must DECIDE THE NEXT TOOL CALL. You never talk to the user. You never ask the user for anything. You never reply with "please provide context", "I need more information", or any conversational message — those are forbidden and will break the system.
+const SYSTEM = `You are an EXECUTOR for a multi-step AI agent. The user has a checklist; you receive ONE line at a time and must DECIDE THE SINGLE NEXT TOOL CALL for that one line. You never talk to the user. You never ask questions. You never reply with "please provide context" or "I need more information" — those are forbidden.
 
-You also receive a CATALOG of media that has ALREADY BEEN FILTERED to what is legitimately available for THIS line, and a "linked_context_text" block that contains TEXT context the user has ALREADY ATTACHED for this run (one or more attached checklists, plus the line's own linked checklist). Treat linked_context_text as APPROVED, READY-TO-USE working context — it is the user's answer, not a request. Use it to inform the prompt you generate. The downstream executor for text/web tools also receives the same attached checklist text automatically, so you do not need to copy that text into your prompt.
+Hard rules:
+- ALWAYS return exactly one tool call ("tool_call") OR "no_action". NEVER return multiple steps. Do NOT split a line into sub-steps. The user already broke their work into lines; one line = one tool call.
+- If the line says something like "first write a prompt, then make the image", just do the IMAGE tool with a clean visual prompt. The user will write a separate prompt line if they want a separate text step.
+- "no_action" is ONLY for: blank/heading/narration lines, OR when the line strictly requires a media reference that does not exist in the catalog. NEVER use it because text context is missing — the attached_text_context block IS the context. NEVER use it to ask the user a question.
 
-The catalog may include:
-- The line's own attached media ("line:image" / "line:video" / "line:audio").
-- Media inside the line's own linked checklist ("linked-line:I").
-- Global media the user attached in the Run Sequence dialog ("attached:N").
-- Prior step outputs ("step:N") — INCLUDED ONLY IF this line's text clearly back-references a prior result.
+Inputs you receive:
+- current_line: the single instruction to act on.
+- attached_text_context: text the user attached in the Run Sequence dialog. APPROVED, READY-TO-USE working context. The downstream text/web tools also receive this automatically — you do NOT need to copy it into your prompt.
+- catalog: the ONLY media you may reference. Each entry has a "handle" string (e.g. "line:image:0", "attached:0", "step:N"). You MUST use exact handles in input_refs — never names, never made-up handles. If a needed reference isn't in the catalog, return no_action.
+- allowed_actions: which tools you may pick from.
+- default_aspect_ratio: use this UNLESS current_line clearly says otherwise (vertical/portrait → 9:16, landscape/horizontal → 16:9, square → 1:1).
 
-Your job: decide the SINGLE next action for this one line. You return exactly one decision via the "decide" tool.
+Tool reference rules:
+- text-image: image refs optional.
+- image-image: REQUIRES >=1 image ref.
+- remix: REQUIRES >=1 image ref (>=2 preferred).
+- image-video: REQUIRES exactly 1 image ref.
+- video-video: REQUIRES 1 video ref.
+- audio-image-video: REQUIRES 1 image AND 1 audio ref.
+- analyze-image: REQUIRES 1 image ref.
+- text-text, web-search: no refs needed.
 
-Decision kinds:
-- "tool_call": this line maps to one tool invocation. Provide the step.
-- "compound": this line legitimately needs 2 chained tool calls (e.g. "make an image of X then turn it into a video"). Max 2 sub-steps. Use sparingly.
-- "no_action": ONLY for these cases:
-    (a) the line is a heading, blank, narration, or comment with no actionable verb,
-    (b) the line strictly requires a reference image/video/audio that does NOT exist in the catalog AND the line is unambiguously about that missing media.
-  NEVER return no_action because text context is missing — the linked_context_text block is the context. NEVER return no_action because you want to ask the user a question — pick the closest reasonable tool instead.
-
-Available tools (use ONLY those listed in allowed_actions):
-- text-text: text from prompt.
-- web-search: search the web; returns a summary.
-- text-image: generate an image from a prompt.
-- image-image: edit ONE image with a prompt. REQUIRES >=1 image ref.
-- remix: combine MULTIPLE images. REQUIRES >=1 image ref (>=2 strongly preferred).
-- image-video: turn an image into a short video. REQUIRES exactly 1 image ref.
-- video-video: edit a video. REQUIRES 1 video ref.
-- audio-image-video: lip-sync a talking-head from 1 image + 1 audio. REQUIRES both.
-- analyze-image: describe/answer about 1 image. REQUIRES 1 image ref.
-
-Reference rules — CRITICAL for media tools:
-1. Every entry in input_refs MUST be the EXACT "handle" string of a CATALOG entry (e.g. "line:image:0", "linked-line:2", "attached:0", "step:3"). Name-only refs are REJECTED for media tools.
-2. NEVER invent handles. NEVER guess. NEVER substitute unrelated media.
-3. If the line clearly needs a reference image/video/audio but no suitable handle exists in the catalog, return "no_action" with a brief reason naming what was missing.
-4. For text-text / web-search / analyze-image of a *general* topic, you do NOT need any refs.
-
-Other rules:
-- Each step prompt must be self-contained, concrete, and IMAGE/VIDEO PROMPTS MUST DESCRIBE THE VISUAL ONLY — do not paste the surrounding checklist context, narration, or instructions into the prompt. The image/video tool sees only the prompt + refs.
-- For text tools, you may incorporate context naturally; for media tools, write a clean visual prompt.
-- For aspect ratio cues ("vertical"/"portrait" -> "9:16", "landscape"/"horizontal" -> "16:9", "square" -> "1:1"), set aspect_ratio.
-- count: only set when the line explicitly asks for N copies of the SAME thing (max 5).
-- Do NOT include the literal line text in the prompt — rewrite it as a clean instruction for the tool.`;
+Prompt rules:
+- For media tools (text-image / image-image / remix / image-video / video-video / audio-image-video): write a CLEAN VISUAL PROMPT only. Do NOT paste the line verbatim. Do NOT include checklist text, narration, or instructions. The image/video tool sees ONLY your prompt + refs + aspect_ratio.
+- For text-text / web-search / analyze-image: you may phrase the instruction naturally; the attached_text_context is appended automatically by the executor for text/web tools.
+- count: only > 1 when the line explicitly asks for multiple identical outputs (max 5).`;
 
 const TOOL_SCHEMA = {
   type: "function",
   function: {
     name: "decide",
-    description: "Decide the next action for this checklist line.",
+    description: "Decide the single next action for this checklist line.",
     parameters: {
       type: "object",
       properties: {
-        kind: { type: "string", enum: ["tool_call", "compound", "no_action"] },
+        kind: { type: "string", enum: ["tool_call", "no_action"] },
         reason: { type: "string", description: "Required when kind=no_action; brief." },
         step: {
           type: "object",
@@ -109,32 +100,6 @@ const TOOL_SCHEMA = {
           },
           required: ["action_type", "prompt"],
         },
-        steps: {
-          type: "array",
-          description: "Required when kind=compound; 2 or 3 steps.",
-          minItems: 2,
-          maxItems: 2,
-          items: {
-            type: "object",
-            properties: {
-              action_type: { type: "string", enum: [...ALL_ACTIONS] as any },
-              prompt: { type: "string" },
-              input_refs: {
-                type: "object",
-                properties: {
-                  images: { type: "array", items: { type: "string" } },
-                  videos: { type: "array", items: { type: "string" } },
-                  audios: { type: "array", items: { type: "string" } },
-                },
-              },
-              aspect_ratio: { type: "string", enum: ["1:1", "16:9", "9:16", "4:3", "3:4"] },
-              quality: { type: "string", enum: ["auto", "standard", "hd"] },
-              count: { type: "integer", minimum: 1, maximum: 5 },
-              note: { type: "string" },
-            },
-            required: ["action_type", "prompt"],
-          },
-        },
       },
       required: ["kind"],
     },
@@ -147,7 +112,7 @@ function bad(msg: string, status = 400) {
   });
 }
 
-function clampStep(s: any, allowed: Set<string>, maxImagesPerStep: number): PlanStep | null {
+function clampStep(s: any, allowed: Set<string>, maxImagesPerStep: number, defaultAspect: string): PlanStep | null {
   if (!s || typeof s !== "object") return null;
   if (typeof s.action_type !== "string" || !allowed.has(s.action_type)) return null;
   if (typeof s.prompt !== "string" || !s.prompt.trim()) return null;
@@ -167,7 +132,9 @@ function clampStep(s: any, allowed: Set<string>, maxImagesPerStep: number): Plan
     }
     if (Object.keys(refs).length) out.input_refs = refs;
   }
-  if (typeof s.aspect_ratio === "string") out.aspect_ratio = s.aspect_ratio.slice(0, 10);
+  out.aspect_ratio = typeof s.aspect_ratio === "string" && s.aspect_ratio.trim()
+    ? s.aspect_ratio.slice(0, 10)
+    : defaultAspect;
   if (typeof s.quality === "string") out.quality = s.quality.slice(0, 16);
   if (typeof s.count === "number" && s.count > 0) {
     out.count = Math.min(Math.floor(s.count), maxImagesPerStep);
@@ -181,14 +148,17 @@ Deno.serve(async (req) => {
   try {
     const body = await req.json();
     const currentLine: string = typeof body.current_line === "string" ? body.current_line : "";
-    const priorOutputs: any[] = Array.isArray(body.prior_outputs_summary) ? body.prior_outputs_summary.slice(-20) : [];
-    const upcoming: string[] = Array.isArray(body.upcoming_lines_preview) ? body.upcoming_lines_preview.slice(0, 5) : [];
-    const catalog: CatalogEntry[] = Array.isArray(body.catalog) ? body.catalog.slice(0, 300) : [];
-    const linkedContextText: string = typeof body.linked_context_text === "string" ? body.linked_context_text.slice(0, 6000) : "";
+    const catalog: CatalogEntry[] = Array.isArray(body.catalog) ? body.catalog.slice(0, 200) : [];
+    const attachedTextContext: string = typeof body.attached_text_context === "string"
+      ? body.attached_text_context.slice(0, 8000)
+      : "";
     const allowedActions: string[] = Array.isArray(body.allowed_actions) && body.allowed_actions.length
       ? body.allowed_actions.filter((x: any) => (ALL_ACTIONS as readonly string[]).includes(x))
       : [...ALL_ACTIONS];
-    const maxImagesPerStep = Math.max(1, Math.min(5, Number(body.max_images_per_step) || 2));
+    const defaultAspect: string = typeof body.default_aspect_ratio === "string" && body.default_aspect_ratio.trim()
+      ? body.default_aspect_ratio
+      : "1:1";
+    const maxImagesPerStep = Math.max(1, Math.min(5, Number(body.max_images_per_step) || 1));
 
     if (!currentLine.trim()) {
       return new Response(JSON.stringify({ kind: "no_action", reason: "blank line" }), {
@@ -201,12 +171,10 @@ Deno.serve(async (req) => {
 
     const userMsg = JSON.stringify({
       current_line: currentLine,
-      prior_outputs_summary: priorOutputs,
-      upcoming_lines_preview: upcoming,
+      attached_text_context: attachedTextContext || null,
       catalog: catalog.map((c) => ({ handle: c.handle, name: c.name, type: c.type, source: c.source })),
-      linked_context_text: linkedContextText || null,
       allowed_actions: allowedActions,
-      max_images_per_step: maxImagesPerStep,
+      default_aspect_ratio: defaultAspect,
     });
 
     const r = await fetch("https://api.openai.com/v1/chat/completions", {
@@ -233,7 +201,6 @@ Deno.serve(async (req) => {
     const data = await r.json();
     const call = data.choices?.[0]?.message?.tool_calls?.[0];
     if (!call?.function?.arguments) {
-      // Fallback: model declined to call the tool — treat as no_action.
       return new Response(JSON.stringify({ kind: "no_action", reason: "planner returned no decision" }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
@@ -252,25 +219,13 @@ Deno.serve(async (req) => {
       });
     }
     if (kind === "tool_call") {
-      const step = clampStep(parsed.step, allowed, maxImagesPerStep);
+      const step = clampStep(parsed.step, allowed, maxImagesPerStep, defaultAspect);
       if (!step) {
         return new Response(JSON.stringify({ kind: "no_action", reason: "planner produced unusable step" }), {
           headers: { ...corsHeaders, "Content-Type": "application/json" },
         });
       }
       return new Response(JSON.stringify({ kind: "tool_call", step }), {
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-    if (kind === "compound") {
-      const raw = Array.isArray(parsed.steps) ? parsed.steps : [];
-      const steps = raw.map((s: any) => clampStep(s, allowed, maxImagesPerStep)).filter(Boolean).slice(0, 2) as PlanStep[];
-      if (steps.length === 0) {
-        return new Response(JSON.stringify({ kind: "no_action", reason: "compound had no usable steps" }), {
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        });
-      }
-      return new Response(JSON.stringify({ kind: "compound", steps }), {
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }

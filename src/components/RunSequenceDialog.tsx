@@ -19,6 +19,8 @@ const ALL_TOOLS: { key: string; label: string }[] = [
   { key: "analyze-image", label: "Analyze image" },
 ];
 
+const ASPECT_OPTIONS = ["1:1", "16:9", "9:16", "4:3", "3:4"] as const;
+
 type Props = {
   open: boolean;
   userId: string;
@@ -30,7 +32,7 @@ type Props = {
     max_images: number;
     max_videos: number;
     max_runtime_minutes: number;
-    max_images_per_step: number;
+    default_aspect_ratio: string;
     allowed_actions: string[];
     context: AttachedContext;
   }) => Promise<void>;
@@ -42,7 +44,7 @@ export const RunSequenceDialog = ({ open, userId, currentChecklist, onClose, onS
   const [maxSteps, setMaxSteps] = useState(12);
   const [maxImages, setMaxImages] = useState(12);
   const [maxVideos, setMaxVideos] = useState(4);
-  const [maxImagesPerStep, setMaxImagesPerStep] = useState(2);
+  const [defaultAspect, setDefaultAspect] = useState<string>("1:1");
   const [allowed, setAllowed] = useState<Set<string>>(new Set(ALL_TOOLS.map((t) => t.key)));
   const [context, setContext] = useState<AttachedContext>({ checklists: [], media: [] });
   const [busy, setBusy] = useState(false);
@@ -71,7 +73,7 @@ export const RunSequenceDialog = ({ open, userId, currentChecklist, onClose, onS
         max_images: maxImages,
         max_videos: maxVideos,
         max_runtime_minutes: 30,
-        max_images_per_step: maxImagesPerStep,
+        default_aspect_ratio: defaultAspect,
         allowed_actions: Array.from(allowed),
         context,
       });
@@ -89,7 +91,7 @@ export const RunSequenceDialog = ({ open, userId, currentChecklist, onClose, onS
           </DialogHeader>
           <div className="space-y-4 text-sm">
             <p className="text-muted-foreground text-xs">
-              The agent works through your checklist <span className="font-semibold">one line at a time</span>. The current line turns green and any output is attached directly under it. Each line can also have its own attached media or linked checklist (added on the line itself) — that's its private context. Anything you attach below is shared across the whole run.
+              The agent works through your checklist <span className="font-semibold">one line at a time</span>. For each line it picks a single tool, runs it, and adds the output as a new checkbox at the bottom of the output checklist. Attached text context is shared with text-based steps; image and video steps only get the prompt the agent writes for that line.
             </p>
 
             <div>
@@ -116,9 +118,25 @@ export const RunSequenceDialog = ({ open, userId, currentChecklist, onClose, onS
               <Label className="text-xs">Max videos total: <span className="font-semibold">{maxVideos}</span></Label>
               <Slider min={0} max={8} step={1} value={[maxVideos]} onValueChange={(v) => setMaxVideos(v[0])} className="mt-2" />
             </div>
+
             <div>
-              <Label className="text-xs">Per-step image count cap: <span className="font-semibold">{maxImagesPerStep}</span></Label>
-              <Slider min={1} max={5} step={1} value={[maxImagesPerStep]} onValueChange={(v) => setMaxImagesPerStep(v[0])} className="mt-2" />
+              <Label className="text-xs">Default aspect ratio</Label>
+              <div className="flex gap-2 mt-1 flex-wrap">
+                {ASPECT_OPTIONS.map((a) => (
+                  <Button
+                    key={a}
+                    type="button"
+                    size="sm"
+                    variant={defaultAspect === a ? "default" : "outline"}
+                    onClick={() => setDefaultAspect(a)}
+                  >
+                    {a}
+                  </Button>
+                ))}
+              </div>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Used when a line doesn't say vertical / horizontal / square.
+              </p>
             </div>
 
             <div>
