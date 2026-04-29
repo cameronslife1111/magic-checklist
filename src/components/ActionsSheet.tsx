@@ -97,6 +97,7 @@ export const ActionsSheet = ({ open, onOpenChange, onPick, currentTheme, muted }
             {items.map((it) => {
               const Icon = it.icon;
               const isAI = AI_KEYS.has(it.key as ActionKey);
+              const isRed = RED_KEYS.has(it.key as ActionKey);
               return (
                 <li key={it.key}>
                   <Button
@@ -105,9 +106,10 @@ export const ActionsSheet = ({ open, onOpenChange, onPick, currentTheme, muted }
                     className={cn(
                       "w-full h-12 justify-start gap-3 text-base font-medium",
                       isAI && "text-blue-500 hover:text-blue-500",
+                      isRed && "text-red-500 hover:text-red-500",
                     )}
                   >
-                    <Icon className={cn("h-5 w-5", isAI ? "text-blue-500" : "text-muted-foreground")} />
+                    <Icon className={cn("h-5 w-5", isAI ? "text-blue-500" : isRed ? "text-red-500" : "text-muted-foreground")} />
                     {it.label}
                   </Button>
                 </li>
