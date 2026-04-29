@@ -252,7 +252,7 @@ const ChecklistPage = () => {
     requestAnimationFrame(() => {
       const el = itemRefs.current[id];
       if (el) {
-        el.style.scrollMarginTop = "120px";
+        el.style.scrollMarginTop = "180px";
         el.scrollIntoView({ behavior: "smooth", block: "start" });
       }
       if (text) speak(text);
@@ -263,7 +263,7 @@ const ChecklistPage = () => {
     requestAnimationFrame(() => {
       const el = itemRefs.current[id];
       if (el) {
-        el.style.scrollMarginTop = "120px";
+        el.style.scrollMarginTop = "180px";
         el.scrollIntoView({ behavior: "smooth", block: "start" });
       }
     });
