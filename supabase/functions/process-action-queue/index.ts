@@ -431,17 +431,14 @@ function lineBackReferences(text: string, priorOutputs: any[]): boolean {
   return false;
 }
 
-// Build the per-LINE catalog for the planner. Scope is intentionally narrow:
-//  - The current line's own attached media (line:image/video/audio).
-//  - Media inside the line's own linked checklist (linked-line:I).
+// Build the per-LINE media catalog. Intentionally narrow:
+//  - The line's own attached media (line:image/video/audio).
 //  - Global media attached in the Run Sequence dialog (attached:N).
-//  - Prior step outputs (step:N) — ONLY if this line clearly back-references
-//    a prior result, otherwise hidden.
-//  - Global linked checklists from the Run Sequence dialog: their TEXT goes
-//    into linked_context_text only; their MEDIA is intentionally NOT in the
-//    catalog for media tools (that's how the planner used to grab the wrong
-//    video). If the user wants a specific media file used, they attach it
-//    via the gallery picker (attached:N).
+//  - Prior step outputs (step:N) ONLY if this line clearly back-references
+//    a prior result; otherwise hidden so the planner can't grab a stale
+//    asset for an unrelated line.
+// Linked-checklist media is NOT included — if the user wants a specific
+// file used, they attach it via the gallery picker.
 function buildLineCatalog(state: any, lineIdx: number): { catalog: CatalogEntry[] } {
   const out: CatalogEntry[] = [];
   const line = (state.input_lines ?? [])[lineIdx];
@@ -461,24 +458,7 @@ function buildLineCatalog(state: any, lineIdx: number): { catalog: CatalogEntry[
     }
   }
 
-  // 2) Media inside the line's own linked checklist.
-  const lineLinked = state.line_linked_lists?.[line.linked_checklist_id];
-  if (lineLinked && Array.isArray(lineLinked.items)) {
-    lineLinked.items.forEach((it: any, iIdx: number) => {
-      if (!it?.media_url) return;
-      const k = detectKind(it.media_type, it.media_url);
-      if (!k) return;
-      out.push({
-        handle: `linked-line:${iIdx}`,
-        name: `${lineLinked.title} – ${snip(it.text || `Line ${iIdx + 1}`, 40)}`,
-        url: it.media_url,
-        type: k,
-        source: "line-linked",
-      });
-    });
-  }
-
-  // 3) Global attached media (from Run Sequence dialog).
+  // 2) Global attached media (from Run Sequence dialog).
   const attached: any[] = state.attached_media ?? [];
   attached.forEach((m, i) => {
     if (!m?.url) return;
@@ -493,7 +473,7 @@ function buildLineCatalog(state: any, lineIdx: number): { catalog: CatalogEntry[
     });
   });
 
-  // 4) Prior step outputs — gated by back-reference detection.
+  // 3) Prior step outputs — gated by back-reference detection.
   const outputs: any[] = state.outputs ?? [];
   if (lineBackReferences(line.text, outputs)) {
     outputs.forEach((o, i) => {
