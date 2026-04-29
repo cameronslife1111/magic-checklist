@@ -653,33 +653,25 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
     }
 
     const { catalog } = buildLineCatalog(state, lineIdx);
-    const linkedText = buildLinkedContextText(state, lineIdx);
-    const upcoming = (state.input_lines ?? []).slice(lineIdx + 1, lineIdx + 4).map((l: any) => l.text).filter(Boolean);
-    // Prior outputs summary: text-only metadata. URLs are intentionally NOT
-    // included; the planner picks media via catalog handles only.
-    const priorOutputsSummary = (state.outputs ?? []).map((o: any, i: number) => {
-      if (!o) return null;
-      if (o.no_action) return null;
-      if (o.skipped) return { step: i, kind: "skipped" };
-      if (o.failed) return { step: i, kind: "failed" };
-      const k = detectKind(o.media_type, o.media_url);
-      return { step: i, kind: k ?? (o.text ? "text" : "unknown"), name: o.name ?? `Step ${i + 1} output` };
-    }).filter(Boolean).slice(-12);
+    const attachedTextContext = buildAttachedTextContext(state);
 
     const allowed = Array.isArray(payload.allowed_actions) && payload.allowed_actions.length
       ? payload.allowed_actions
       : ["text-text","text-image","image-image","remix","image-video","video-video","audio-image-video","analyze-image","web-search"];
 
+    const defaultAspect: string = typeof payload.default_aspect_ratio === "string" && payload.default_aspect_ratio.trim()
+      ? payload.default_aspect_ratio
+      : "1:1";
+
     let decision: any;
     try {
       decision = await callFn("plan-action-sequence", {
         current_line: line.text,
-        prior_outputs_summary: priorOutputsSummary,
-        upcoming_lines_preview: upcoming,
         catalog,
-        linked_context_text: linkedText,
+        attached_text_context: attachedTextContext,
         allowed_actions: allowed,
-        max_images_per_step: Number(payload.max_images_per_step ?? 2),
+        default_aspect_ratio: defaultAspect,
+        max_images_per_step: Number(payload.max_images_per_step ?? 1),
       });
     } catch (e) {
       state.outputs.push({ failed: true, line_idx: lineIdx, reason: `planner error: ${(e as Error).message.slice(0, 200)}` });
@@ -702,8 +694,9 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
       await persist();
       return { done: false };
     }
-    const steps: any[] = decision.kind === "compound" ? (decision.steps ?? []) : [decision.step];
-    state.pending_steps = steps.filter(Boolean).map((s: any) => ({ ...s, line_idx: lineIdx }));
+    // One line = one tool call. Compound is no longer supported by the planner.
+    const onlyStep = decision.step;
+    state.pending_steps = onlyStep ? [{ ...onlyStep, line_idx: lineIdx }] : [];
     state.current_step_in_line = 0;
     state.phase = "dispatching";
     await persist();
