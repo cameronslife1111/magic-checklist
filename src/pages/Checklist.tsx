@@ -839,10 +839,18 @@ const ChecklistPage = () => {
     }
   };
 
-  const combineCheckedItems = async () => {
+  const exitCombineMode = () => {
+    setCombineMode(false);
+    setCombineSelection(new Set());
+  };
+
+  const combineCheckedItems = async (selectedIds?: string[]) => {
     setActionsOpen(false);
     if (!checklist || !user) return;
-    const checkedItems = items.filter((i) => i.checked);
+    const idSet = selectedIds ? new Set(selectedIds) : null;
+    const checkedItems = idSet
+      ? items.filter((i) => idSet.has(i.id))
+      : items.filter((i) => i.checked);
     if (checkedItems.length === 0) {
       toast.error("No checked checkboxes to combine.");
       return;
