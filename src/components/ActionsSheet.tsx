@@ -4,6 +4,7 @@ import {
   Plus, FilePlus, FilePlus2, Copy, CopyPlus, Pencil, Scissors, Type, Image as ImageIcon, Images, Wand2,
   Film, Video, Mic2, Link2, Eye, Search, Palette, LogOut, Moon, Sun, ArrowUpDown,
   ClipboardCopy, ClipboardList, Send, Volume2, VolumeX, ListChecks, Trash2, Library, Square, Smile, Combine, FileDown, Workflow,
+  ArrowUpToLine, ArrowDownToLine,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -12,7 +13,7 @@ export type ActionKey =
   | "add" | "duplicate-item" | "new" | "duplicate" | "delete-checklist" | "edit-title" | "split" | "split-emoji"
   | "text-text" | "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "audio-image-video"
   | "insert-link" | "insert-new-link" | "analyze-image" | "web-search" | "bg" | "rearrange"
-  | "copy-sentence" | "copy-checklist" | "delete-current" | "send-to" | "send-to-blank" | "uncheck-all" | "combine-checked" | "media-gallery" | "export-text" | "run-sequence" | "theme" | "sign-out";
+  | "copy-sentence" | "copy-checklist" | "delete-current" | "send-to" | "send-to-blank" | "send-to-top" | "send-to-bottom" | "uncheck-all" | "combine-checked" | "media-gallery" | "export-text" | "run-sequence" | "theme" | "sign-out";
 
 const AI_KEYS = new Set<ActionKey>([
   "text-text", "text-image", "image-image", "remix",
@@ -34,6 +35,8 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "copy-checklist",   label: "Copy full checklist",      icon: ClipboardList },
   { key: "delete-current",   label: "Delete current sentence",  icon: Trash2 },
   { key: "insert-link",      label: "Insert checklist link",    icon: Link2 },
+  { key: "send-to-top",      label: "Send to top",              icon: ArrowUpToLine },
+  { key: "send-to-bottom",   label: "Send to bottom",           icon: ArrowDownToLine },
   { key: "insert-new-link",  label: "Insert new checklist link from text", icon: FilePlus },
   { key: "add",              label: "Add new checkbox",         icon: Plus },
   { key: "duplicate-item",   label: "Duplicate checkbox",       icon: CopyPlus },
