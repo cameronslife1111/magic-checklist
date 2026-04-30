@@ -1260,7 +1260,6 @@ const ChecklistPage = () => {
                     onTextChange={handleTextChange}
                     onOpenLinkedChecklist={openChecklist}
                     onOpenMedia={(url, type) => setViewer({ url, type })}
-                    onDelete={handleDelete}
                     registerRef={registerRef}
                   />
                   {kids.length > 0 && (
@@ -1277,7 +1276,6 @@ const ChecklistPage = () => {
                             onTextChange={handleTextChange}
                             onOpenLinkedChecklist={openChecklist}
                             onOpenMedia={(url, type) => setViewer({ url, type })}
-                            onDelete={handleDelete}
                             registerRef={registerRef}
                           />
                         );

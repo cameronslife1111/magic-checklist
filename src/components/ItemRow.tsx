@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ChecklistItem } from "@/lib/types";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
-import { ExternalLink, Link2, X } from "lucide-react";
+import { ExternalLink, Link2 } from "lucide-react";
 import { notifyDictationDetected, notifyDictationEnd } from "@/lib/speech";
 
 type Props = {
@@ -11,7 +11,6 @@ type Props = {
   onTextChange: (item: ChecklistItem, text: string) => void;
   onOpenLinkedChecklist: (id: string) => void;
   onOpenMedia: (url: string, type: string) => void;
-  onDelete: (item: ChecklistItem) => void;
   registerRef: (id: string, el: HTMLLIElement | null) => void;
   autoFocus?: boolean;
   isActive?: boolean;
@@ -21,7 +20,7 @@ type Props = {
 };
 
 export const ItemRow = ({
-  item, onToggle, onTextChange, onOpenLinkedChecklist, onOpenMedia, onDelete, registerRef, autoFocus,
+  item, onToggle, onTextChange, onOpenLinkedChecklist, onOpenMedia, registerRef, autoFocus,
   isActive, isRunning, isChild, childLabel,
 }: Props) => {
   const [text, setText] = useState(item.text);
@@ -177,14 +176,6 @@ export const ItemRow = ({
           </button>
         )}
       </div>
-      <button
-        type="button"
-        onClick={() => onDelete(item)}
-        aria-label="Delete item"
-        className="shrink-0 self-start mt-0.5 h-8 w-8 inline-flex items-center justify-center rounded-md text-muted-foreground hover:text-destructive hover:bg-destructive/10 transition-colors"
-      >
-        <X className="h-4 w-4" />
-      </button>
     </li>
   );
 };
