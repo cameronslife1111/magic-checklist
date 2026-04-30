@@ -16,13 +16,13 @@ type Props = {
 export const SendToChecklistDialog = ({ open, excludeId, onClose, onSend }: Props) => {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<{ id: string; title: string }[]>([]);
-  const [position, setPosition] = useState<SendPosition>("current");
+  const [position, setPosition] = useState<SendPosition>("top");
   const [sending, setSending] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setQ("");
-    setPosition("current");
+    setPosition("top");
     setSending(false);
   }, [open]);
 
