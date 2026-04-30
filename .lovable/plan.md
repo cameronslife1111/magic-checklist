@@ -1,38 +1,50 @@
-## Goal
+## Problem
 
-When you **long-press the Actions button**, in addition to reading the current highlighted sentence aloud (which already works), the app should also **scroll that sentence into view** — exactly the same way it does when you tap the green Check button or first open a checklist.
+Attaching a facial element image (`@element1`) to the Kling V3 Motion Control (video-to-video) action returns `fal response fetch 422`. Without the element image, it works fine.
 
-The yellow glow itself is already on the sentence (it's tied to "highest unchecked" in the list), so no styling change is needed — but right now if that sentence is off-screen, the long-press doesn't bring it into view. After this change, it will.
+## Root cause (verified against Fal's OpenAPI schema)
 
-## What changes
-
-**File:** `src/pages/Checklist.tsx` — only the long-press handler on the Actions button (around line 1382, inside `onPointerDown`).
-
-Inside the 500ms long-press timer, right next to the existing `speak(text)` call, also call the existing helper `scrollItemToCenter(highestUnchecked.id)`. That helper already:
-
-- Looks up the row's DOM element from `itemRefs`.
-- Sets `scrollMarginTop = "180px"` so the row clears the top toolbar.
-- Calls `scrollIntoView({ behavior: "smooth", block: "start" })`.
-
-This is the same helper used by `focusAndSpeakHighestUnchecked` after a check-toggle, so the scroll behavior will match exactly.
-
-## Behavior summary
-
-- **Tap Actions button** → opens Actions sheet (unchanged).
-- **Long-press Actions button (500ms)** → speaks the current sentence **and now also scrolls to it**. The yellow highlight is already on it.
-- No other actions, no other buttons, and no styles are touched.
-
-### Technical detail
+Our edge function `supabase/functions/fal-video/index.ts` currently sends:
 
 ```ts
-actionsLongPressTimerRef.current = window.setTimeout(() => {
-  actionsLongPressFiredRef.current = true;
-  if (highestUnchecked) {
-    scrollItemToCenter(highestUnchecked.id); // NEW
-    const text = highestUnchecked.linked_checklist_id
-      ? (highestUnchecked.text || "Open checklist")
-      : highestUnchecked.text;
-    if (text) speak(text);
-  }
-}, 500);
+body.elements = [{ image_url: hostedElement }];
 ```
+
+But Fal's `KlingV3ImageElementInput` schema for motion-control does **not** accept `image_url`. It requires:
+
+```json
+{
+  "frontal_image_url": "https://…",
+  "reference_image_urls": ["https://…"]
+}
+```
+
+(`reference_image_urls` description: "1-3 images supported. At least one image is required.")
+
+Our `image_url` field is silently ignored, both required-ish fields are missing → Fal returns 422, surfaced as the generic "video input not accepted" message.
+
+## Fix
+
+In `supabase/functions/fal-video/index.ts`, in the motion-control branch where the element is attached, change the element payload to use Fal's actual field names. Send the same uploaded image as both the frontal image and the single reference image (the user only attaches one):
+
+```ts
+if (elementImageUrl && body.character_orientation === "video") {
+  const hostedElement = await hostOnFal(falKey, elementImageUrl);
+  body.elements = [{
+    frontal_image_url: hostedElement,
+    reference_image_urls: [hostedElement],
+  }];
+}
+```
+
+No frontend or queue-worker changes needed — `elementImageUrl` is already gated to `characterOrientation === "video"` in `Checklist.tsx` and `MediaActionDialog.tsx`, which matches Fal's "Element binding is only supported when character_orientation is 'video'" rule.
+
+## Why this resolves it
+
+- Matches the exact JSON shape Fal's validator expects for `KlingV3ImageElementInput`.
+- Uses the same image for `frontal_image_url` and the one allowed `reference_image_urls` entry, which is the documented minimum (1 reference image required) and the most faithful interpretation of "attach one facial reference."
+- All existing guardrails (orientation = video, hosting on Fal storage) stay in place.
+
+## Files touched
+
+- `supabase/functions/fal-video/index.ts` — single block, ~3 lines changed.
