@@ -1,50 +1,29 @@
-## Problem
+## Goal
 
-Attaching a facial element image (`@element1`) to the Kling V3 Motion Control (video-to-video) action returns `fal response fetch 422`. Without the element image, it works fine.
+When the user clicks/taps the checkbox text area to start typing or editing, immediately stop any in-progress speech. Speech still works normally afterwards (next check, next item, etc.).
 
-## Root cause (verified against Fal's OpenAPI schema)
+## Change
 
-Our edge function `supabase/functions/fal-video/index.ts` currently sends:
+Single file: `src/components/ItemRow.tsx`.
 
-```ts
-body.elements = [{ image_url: hostedElement }];
-```
+1. Import `stopSpeech` (already exported by `@/lib/speech`):
+   ```ts
+   import { notifyDictationDetected, notifyDictationEnd, stopSpeech } from "@/lib/speech";
+   ```
 
-But Fal's `KlingV3ImageElementInput` schema for motion-control does **not** accept `image_url`. It requires:
+2. On the editable `<textarea>`, call `stopSpeech()` on both `onPointerDown` and `onFocus`:
+   - `onPointerDown` fires on tap (mobile) and mouse-down (desktop) before focus, so speech cuts the instant the user touches the field.
+   - `onFocus` is the fallback for keyboard navigation (Tab) and any case where pointerdown didn't fire.
 
-```json
-{
-  "frontal_image_url": "https://…",
-  "reference_image_urls": ["https://…"]
-}
-```
+   ```tsx
+   onPointerDown={() => { stopSpeech(); }}
+   onFocus={() => { dictatingRef.current = false; stopSpeech(); }}
+   ```
 
-(`reference_image_urls` description: "1-3 images supported. At least one image is required.")
+That's it — no other files change. The link/internal-link variants of the row aren't editable, so they're left alone.
 
-Our `image_url` field is silently ignored, both required-ish fields are missing → Fal returns 422, surfaced as the generic "video input not accepted" message.
+## Why this is safe
 
-## Fix
-
-In `supabase/functions/fal-video/index.ts`, in the motion-control branch where the element is attached, change the element payload to use Fal's actual field names. Send the same uploaded image as both the frontal image and the single reference image (the user only attaches one):
-
-```ts
-if (elementImageUrl && body.character_orientation === "video") {
-  const hostedElement = await hostOnFal(falKey, elementImageUrl);
-  body.elements = [{
-    frontal_image_url: hostedElement,
-    reference_image_urls: [hostedElement],
-  }];
-}
-```
-
-No frontend or queue-worker changes needed — `elementImageUrl` is already gated to `characterOrientation === "video"` in `Checklist.tsx` and `MediaActionDialog.tsx`, which matches Fal's "Element binding is only supported when character_orientation is 'video'" rule.
-
-## Why this resolves it
-
-- Matches the exact JSON shape Fal's validator expects for `KlingV3ImageElementInput`.
-- Uses the same image for `frontal_image_url` and the one allowed `reference_image_urls` entry, which is the documented minimum (1 reference image required) and the most faithful interpretation of "attach one facial reference."
-- All existing guardrails (orientation = video, hosting on Fal storage) stay in place.
-
-## Files touched
-
-- `supabase/functions/fal-video/index.ts` — single block, ~3 lines changed.
+- `stopSpeech()` already exists and just calls `synth.cancel()` — it doesn't disable speech, so subsequent `speak()` calls (auto-scroll, check next item, long-press read) all work as before.
+- We don't touch the `Checkbox` toggle path, so checking an item still triggers its scroll + speak as today.
+- Works identically on mobile and desktop because `pointerdown` is a unified event.

@@ -3,7 +3,7 @@ import { ChecklistItem } from "@/lib/types";
 import { Checkbox } from "@/components/ui/checkbox";
 import { cn } from "@/lib/utils";
 import { ExternalLink, Link2 } from "lucide-react";
-import { notifyDictationDetected, notifyDictationEnd } from "@/lib/speech";
+import { notifyDictationDetected, notifyDictationEnd, stopSpeech } from "@/lib/speech";
 
 type Props = {
   item: ChecklistItem;
@@ -117,7 +117,8 @@ export const ItemRow = ({
             ref={taRef}
             value={text}
             onChange={(e) => setText(e.target.value)}
-            onFocus={() => { dictatingRef.current = false; }}
+            onPointerDown={() => { stopSpeech(); }}
+            onFocus={() => { dictatingRef.current = false; stopSpeech(); }}
             onInput={(e) => {
               const ne = e.nativeEvent as InputEvent;
               const it = ne.inputType || "";
