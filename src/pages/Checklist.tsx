@@ -1382,6 +1382,7 @@ const ChecklistPage = () => {
                   actionsLongPressTimerRef.current = window.setTimeout(() => {
                     actionsLongPressFiredRef.current = true;
                     if (highestUnchecked) {
+                      scrollItemToCenter(highestUnchecked.id);
                       const text = highestUnchecked.linked_checklist_id
                         ? (highestUnchecked.text || "Open checklist")
                         : highestUnchecked.text;
