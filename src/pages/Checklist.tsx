@@ -691,6 +691,46 @@ const ChecklistPage = () => {
         }
         setDialog({ kind: "send-to-blank" });
         break;
+      case "send-to-top": {
+        if (!highestUnchecked) {
+          toast.error("No unchecked checkbox found.");
+          break;
+        }
+        const first = items[0];
+        const newPos = first && first.id !== highestUnchecked.id
+          ? (first.position ?? POS_STEP) - POS_STEP
+          : (highestUnchecked.position ?? 0);
+        if (first && first.id === highestUnchecked.id) break;
+        const updated = items
+          .map((i) => (i.id === highestUnchecked.id ? { ...i, position: newPos } : i))
+          .sort((a, b) => a.position - b.position);
+        setItems(updated);
+        const { error } = await supabase
+          .from("checklist_items")
+          .update({ position: newPos })
+          .eq("id", highestUnchecked.id);
+        if (error) toast.error("Could not move sentence. Try again.");
+        break;
+      }
+      case "send-to-bottom": {
+        if (!highestUnchecked) {
+          toast.error("No unchecked checkbox found.");
+          break;
+        }
+        const last = items[items.length - 1];
+        if (last && last.id === highestUnchecked.id) break;
+        const newPos = (last?.position ?? 0) + POS_STEP;
+        const updated = items
+          .map((i) => (i.id === highestUnchecked.id ? { ...i, position: newPos } : i))
+          .sort((a, b) => a.position - b.position);
+        setItems(updated);
+        const { error } = await supabase
+          .from("checklist_items")
+          .update({ position: newPos })
+          .eq("id", highestUnchecked.id);
+        if (error) toast.error("Could not move sentence. Try again.");
+        break;
+      }
       case "web-search":
         await runWebSearch();
         break;
