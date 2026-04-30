@@ -31,9 +31,9 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "rearrange",        label: "Rearrange checkboxes",     icon: ArrowUpDown },
 
   // Most-used quick utilities
-  { key: "copy-sentence",    label: "Copy sentence",            icon: ClipboardCopy },
+  { key: "copy-sentence",    label: "Copy checkbox",            icon: ClipboardCopy },
   { key: "copy-checklist",   label: "Copy full checklist",      icon: ClipboardList },
-  { key: "delete-current",   label: "Delete current sentence",  icon: Trash2 },
+  { key: "delete-current",   label: "Delete current checkbox",  icon: Trash2 },
   { key: "insert-link",      label: "Insert checklist link",    icon: Link2 },
   { key: "send-to-top",      label: "Send to top",              icon: ArrowUpToLine },
   { key: "send-to-bottom",   label: "Send to bottom",           icon: ArrowDownToLine },
