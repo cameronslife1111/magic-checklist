@@ -37,6 +37,13 @@ import { SortableItemRow } from "@/components/SortableItemRow";
 
 const POS_STEP = 1024;
 
+// If text contains URL-encoded sequences (e.g. %20, %3A), decode it back to
+// readable text for clipboard output. Falls back to original on malformed input.
+const decodeIfEncoded = (s: string): string => {
+  if (!s || !/%[0-9A-Fa-f]{2}/.test(s)) return s;
+  try { return decodeURIComponent(s); } catch { return s; }
+};
+
 type DialogState =
   | { kind: "none" }
   | { kind: "new" }
@@ -747,7 +754,7 @@ const ChecklistPage = () => {
           return;
         }
         try {
-          await navigator.clipboard.writeText(text);
+          await navigator.clipboard.writeText(decodeIfEncoded(text));
           toast.success("Sentence copied.");
         } catch {
           toast.error("Could not copy. Try again.");
@@ -755,7 +762,7 @@ const ChecklistPage = () => {
         break;
       }
       case "copy-checklist": {
-        const text = items.map((i) => i.text ?? "").filter((t) => t.trim().length > 0).join("\n");
+        const text = items.map((i) => decodeIfEncoded(i.text ?? "")).filter((t) => t.trim().length > 0).join("\n");
         if (!text) {
           toast.error("Checklist is empty.");
           return;

@@ -1,31 +1,48 @@
-## Add "Send to top" and "Send to bottom" quick actions
+## Problem
 
-Add two new buttons in the Actions sheet — "Send to top" and "Send to bottom" — placed directly under "Insert checklist link". Each takes the currently focused (yellow-highlighted) sentence and moves it to the very top or very bottom of the same checklist. No dialog, no extra prompts.
+When you press **Copy sentence** and paste, the result looks like:
 
-### UX
+```
+caption:%20POV%3A%20your%20coworker%20tries%20you...
+```
 
-- Both items appear under "Insert checklist link" in the Actions sheet.
-- Tapping either one immediately moves the current sentence to the top (or bottom) of the current checklist's order, then closes the sheet.
-- The moved item stays focused/highlighted after the move.
-- If there is no current sentence, do nothing (consistent with other current-sentence actions).
+instead of:
 
-### Technical changes
+```
+caption: POV: your coworker tries you...
+```
 
-**`src/components/ActionsSheet.tsx`**
-- Extend `ActionKey` with `"send-to-top"` and `"send-to-bottom"`.
-- Add two entries to `STATIC_ITEMS` immediately after the `insert-link` entry:
-  - `{ key: "send-to-top", label: "Send to top", icon: ArrowUpToLine }`
-  - `{ key: "send-to-bottom", label: "Send to bottom", icon: ArrowDownToLine }`
-- Import the two new icons from `lucide-react`.
+The `%20`, `%3A`, `%E2%80%99` etc. are URL-encoded characters (space, colon, curly apostrophe). The copy button itself works — it's faithfully copying what's stored on that checkbox. The stored text for that sentence is in URL-encoded form (likely from a share/paste path that encoded it once).
 
-**`src/pages/Checklist.tsx`**
-- In the Actions-pick switch (around line 680), add two new cases:
-  - `"send-to-top"`: compute new position as `(firstItem.position ?? POS_STEP) - POS_STEP` and update the current item's `position` in Supabase, then refresh local state so it renders at the top.
-  - `"send-to-bottom"`: compute new position as `(lastItem.position ?? 0) + POS_STEP` and update similarly so it renders at the bottom.
-- Both close the Actions sheet and keep the current item as the focused one.
-- Reuse the existing pattern used by the rearrange logic (`supabase.from("checklist_items").update({ position }).eq("id", currentId)`).
+The fix is to make **Copy sentence** smart: if the text it's about to copy looks URL-encoded, decode it back into normal readable text before putting it on the clipboard.
 
-### Out of scope
+## What will change
 
-- No changes to the existing "Send to checklist" dialog or its default position.
-- No changes to database schema.
+Only one place — the `copy-sentence` handler in `src/pages/Checklist.tsx`.
+
+Behavior:
+1. Take the sentence text as it is today.
+2. Detect if it contains URL-encoded sequences (any `%` followed by two hex digits, e.g. `%20`, `%3A`, `%E2%80%99`).
+3. If yes, run it through `decodeURIComponent` to convert it back to readable text. If decoding fails (malformed `%` sequences in normal text), fall back to the original text — no crash, no change in behavior.
+4. Write the cleaned text to the clipboard.
+5. **Copy full checklist** will get the same treatment per-line, so the same fix applies if other rows are encoded too.
+
+Nothing else changes — the database is left alone, the displayed text in the checkbox is left alone, and other actions (Send to top/bottom, Delete, Send to checklist, etc.) are untouched.
+
+### Technical detail
+
+Helper added near the top of `Checklist.tsx`:
+
+```ts
+const decodeIfEncoded = (s: string) => {
+  if (!/%[0-9A-Fa-f]{2}/.test(s)) return s;
+  try { return decodeURIComponent(s); } catch { return s; }
+};
+```
+
+Then in the `copy-sentence` case: `await navigator.clipboard.writeText(decodeIfEncoded(text));`
+And in the `copy-checklist` case, map each line through `decodeIfEncoded` before joining.
+
+## Note on the stored data
+
+This fixes the **paste experience**, which is what you actually care about. The underlying checkbox text in the database stays URL-encoded for now — if you also want the on-screen text in the checklist to read normally (no `%20`), that's a separate one-time cleanup we can do as a follow-up. Just say the word.
