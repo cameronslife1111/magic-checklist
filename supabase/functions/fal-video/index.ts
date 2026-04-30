@@ -123,7 +123,10 @@ async function handleSubmit(req: any, falKey: string) {
     if (typeof keepOriginalSound === "boolean") body.keep_original_sound = keepOriginalSound;
     if (elementImageUrl && body.character_orientation === "video") {
       const hostedElement = await hostOnFal(falKey, elementImageUrl);
-      body.elements = [{ image_url: hostedElement }];
+      body.elements = [{
+        frontal_image_url: hostedElement,
+        reference_image_urls: [hostedElement],
+      }];
     }
   } else {
     body.start_image_url = hostedSourceUrl;
