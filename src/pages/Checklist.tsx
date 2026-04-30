@@ -754,7 +754,7 @@ const ChecklistPage = () => {
           return;
         }
         try {
-          await navigator.clipboard.writeText(text);
+          await navigator.clipboard.writeText(decodeIfEncoded(text));
           toast.success("Sentence copied.");
         } catch {
           toast.error("Could not copy. Try again.");
@@ -762,7 +762,7 @@ const ChecklistPage = () => {
         break;
       }
       case "copy-checklist": {
-        const text = items.map((i) => i.text ?? "").filter((t) => t.trim().length > 0).join("\n");
+        const text = items.map((i) => decodeIfEncoded(i.text ?? "")).filter((t) => t.trim().length > 0).join("\n");
         if (!text) {
           toast.error("Checklist is empty.");
           return;
