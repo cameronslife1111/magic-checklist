@@ -27,7 +27,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   // Top: moved-up quick actions (right under Mute)
   { key: "split",            label: "Split current checkbox",   icon: Scissors },
   { key: "split-emoji",      label: "Split by emoji",           icon: Smile },
-  { key: "send-to-blank",    label: "Send to blank checklist",  icon: FilePlus2 },
+  { key: "uncheck-all",      label: "Uncheck all checkboxes",   icon: Square },
   { key: "rearrange",        label: "Rearrange checkboxes",     icon: ArrowUpDown },
 
   // Most-used quick utilities
@@ -40,7 +40,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "insert-new-link",  label: "Insert new checklist link from text", icon: FilePlus },
   { key: "add",              label: "Add new checkbox",         icon: Plus },
   { key: "duplicate-item",   label: "Duplicate checkbox",       icon: CopyPlus },
-  { key: "uncheck-all",      label: "Uncheck all checkboxes",   icon: Square },
+  { key: "send-to-blank",    label: "Send to blank checklist",  icon: FilePlus2 },
   { key: "combine-checked",  label: "Combine checked checkboxes", icon: Combine },
   { key: "media-gallery",    label: "Media Gallery",            icon: Library },
   { key: "export-text",      label: "Export text file",         icon: FileDown },
