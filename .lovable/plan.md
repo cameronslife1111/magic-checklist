@@ -1,12 +1,12 @@
 ## Swap "Send to blank checklist" and "Uncheck all checkboxes" positions
 
-In `src/components/ActionsSheet.tsx`, the `STATIC_ITEMS` array defines the order of buttons in the Actions sheet. Swap the positions of these two entries:
+In `src/components/ActionsSheet.tsx`, swap these two entries in the `STATIC_ITEMS` array:
 
-- `uncheck-all` ("Uncheck all checkboxes") — currently near the top, third item after Split actions
-- `send-to-blank` ("Send to blank checklist") — currently lower down, after "Duplicate checkbox"
+- `send-to-blank` ("Send to blank checklist") — currently 3rd item (top group)
+- `uncheck-all` ("Uncheck all checkboxes") — currently lower down in the quick utilities group
 
 ### Change
 
-Move `send-to-blank` up to where `uncheck-all` currently sits (3rd in the static list), and move `uncheck-all` down to where `send-to-blank` currently sits.
+Move `uncheck-all` up to the 3rd position where `send-to-blank` currently sits, and move `send-to-blank` down to where `uncheck-all` currently sits.
 
-No other files or logic affected — purely a reorder of two array entries.
+No other files or logic affected.
