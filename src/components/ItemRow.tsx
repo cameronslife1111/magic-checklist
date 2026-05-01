@@ -97,7 +97,7 @@ export const ItemRow = ({
             )}
           >
             <Link2 className="h-4 w-4 shrink-0" />
-            <span className="break-words">{item.text || "Open checklist"}</span>
+            <span className="break-words text-lg md:text-base">{item.text || "Open checklist"}</span>
           </button>
         ) : isExternalLink ? (
           <a
@@ -110,7 +110,7 @@ export const ItemRow = ({
             )}
           >
             <ExternalLink className="h-4 w-4 mt-1 shrink-0" />
-            <span>{item.text || item.external_link}</span>
+            <span className="text-lg md:text-base">{item.text || item.external_link}</span>
           </a>
         ) : (
           <textarea
@@ -143,7 +143,7 @@ export const ItemRow = ({
             }}
             rows={1}
             className={cn(
-              "w-full resize-none bg-transparent outline-none text-base md:text-[15px] leading-snug",
+              "w-full resize-none bg-transparent outline-none text-lg md:text-base leading-snug",
               item.checked && "line-through text-[hsl(var(--checked))]"
             )}
             placeholder="Item…"
@@ -158,7 +158,7 @@ export const ItemRow = ({
           aria-hidden="true"
           readOnly
           rows={1}
-          className="resize-none bg-transparent text-base md:text-[15px] leading-snug absolute -left-[9999px] top-0 invisible pointer-events-none"
+          className="resize-none bg-transparent text-lg md:text-base leading-snug absolute -left-[9999px] top-0 invisible pointer-events-none"
           style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}
         />
 
