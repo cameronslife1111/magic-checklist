@@ -1,20 +1,27 @@
-## Make checkbox item text larger
+## Reduce default checkboxes on new checklist from 3 to 1
 
-Increase the font size of checklist item text so it's visually closer to (but still smaller than) the checklist title at the top.
+When the "New Checklist" button is pressed, the app currently inserts 3 empty checkbox rows into the freshly created checklist. Change this so only 1 empty row is inserted.
 
-### Reference sizes
-- Title (`src/pages/Checklist.tsx` line 1263): `text-xl` → 20px
-- Current item text: `text-base md:text-[15px]` → 16px mobile / 15px desktop
-- New item text: `text-lg md:text-base` → 18px mobile / 16px desktop
+### File to change
 
-This keeps a clear hierarchy (title 20px > item ~18px) while making items noticeably easier to read.
+**`src/pages/Checklist.tsx`** (lines 1542–1546, inside the `onSave` handler of the `dialog.kind === "new"` `TextPromptDialog`):
 
-### Files to change
+Replace the 3-row insert:
+```ts
+await supabase.from("checklist_items").insert([
+  { checklist_id: data.id, user_id: user.id, text: "", position: 1024 },
+  { checklist_id: data.id, user_id: user.id, text: "", position: 2048 },
+  { checklist_id: data.id, user_id: user.id, text: "", position: 3072 },
+]);
+```
 
-**`src/components/ItemRow.tsx`** — update three places that render item text:
-1. Internal-link button label `<span>` — add `text-lg md:text-base`.
-2. External-link `<a>` text — add `text-lg md:text-base`.
-3. Editable `<textarea>` — replace `text-base md:text-[15px]` with `text-lg md:text-base`.
-4. Hidden mirror `<textarea>` (used to measure height) — match the same size so auto-height stays accurate.
+With a single-row insert:
+```ts
+await supabase.from("checklist_items").insert([
+  { checklist_id: data.id, user_id: user.id, text: "", position: 1024 },
+]);
+```
 
-No other components need changes; the sortable/reorder view (`SortableItemRow.tsx`) already uses its own `text-[15px]` — leave it alone unless you also want reorder mode bumped (not part of this request).
+### Not changing
+- "Create & link new checklist" (line ~1626) — separate flow, not the New Checklist button.
+- "Send to new checklist" — uses items from the source checklist, unaffected.
