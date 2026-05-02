@@ -114,6 +114,7 @@ export const ContextAttacher = ({ userId, excludeChecklistId, currentChecklist, 
   };
 
   const removeChecklist = (id: string) => {
+    setGroupAppliedIds((cur) => cur.filter((x) => x !== id));
     onChange({ ...value, checklists: value.checklists.filter((c) => c.id !== id) });
   };
 
