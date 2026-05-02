@@ -233,7 +233,7 @@ type PickerProps = {
   onConfirm: (picks: { id: string; title: string }[]) => void;
 };
 
-const ChecklistMultiPicker = ({ open, excludeId, selected, onClose, onConfirm }: PickerProps) => {
+export const ChecklistMultiPicker = ({ open, excludeId, selected, onClose, onConfirm }: PickerProps) => {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<{ id: string; title: string }[]>([]);
   const [picks, setPicks] = useState<{ id: string; title: string }[]>(selected);
