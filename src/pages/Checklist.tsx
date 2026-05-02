@@ -78,6 +78,7 @@ const ChecklistPage = () => {
   const [focusItemId, setFocusItemId] = useState<string | null>(null);
   const [reorderMode, setReorderMode] = useState(false);
   const [sequenceOpen, setSequenceOpen] = useState(false);
+  const [contextGroupsOpen, setContextGroupsOpen] = useState(false);
   const [combineMode, setCombineMode] = useState(false);
   const [combineSelection, setCombineSelection] = useState<Set<string>>(new Set());
   const [muted, setMutedState] = useState<boolean>(() => isMuted());
