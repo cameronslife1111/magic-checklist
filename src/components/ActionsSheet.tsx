@@ -41,6 +41,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "add",              label: "Add new checkbox",         icon: Plus },
   { key: "duplicate-item",   label: "Duplicate checkbox",       icon: CopyPlus },
   { key: "send-to-blank",    label: "Send to blank checklist",  icon: FilePlus2 },
+  { key: "send-to-gdrive",   label: "Send to Google Drive",     icon: HardDrive },
   { key: "combine-checked",  label: "Combine checked checkboxes", icon: Combine },
   { key: "media-gallery",    label: "Media Gallery",            icon: Library },
   { key: "export-text",      label: "Export text file",         icon: FileDown },
