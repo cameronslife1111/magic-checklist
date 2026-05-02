@@ -536,6 +536,7 @@ const ChecklistPage = () => {
         setContextGroupsOpen(true);
         break;
       }
+      case "add": {
         await addNewAfterCurrent();
         break;
       }
