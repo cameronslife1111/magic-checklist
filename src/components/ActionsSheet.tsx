@@ -4,7 +4,7 @@ import {
   Plus, FilePlus, FilePlus2, Copy, CopyPlus, Pencil, Scissors, Type, Image as ImageIcon, Images, Wand2,
   Film, Video, Mic2, Link2, Eye, Search, Palette, LogOut, Moon, Sun, ArrowUpDown,
   ClipboardCopy, ClipboardList, Send, Volume2, VolumeX, ListChecks, Trash2, Library, Square, Smile, Combine, FileDown, Workflow,
-  ArrowUpToLine, ArrowDownToLine,
+  ArrowUpToLine, ArrowDownToLine, HardDrive,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -13,7 +13,7 @@ export type ActionKey =
   | "add" | "duplicate-item" | "new" | "duplicate" | "delete-checklist" | "edit-title" | "split" | "split-emoji"
   | "text-text" | "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "audio-image-video"
   | "insert-link" | "insert-new-link" | "analyze-image" | "web-search" | "bg" | "rearrange"
-  | "copy-sentence" | "copy-checklist" | "delete-current" | "send-to" | "send-to-blank" | "send-to-top" | "send-to-bottom" | "uncheck-all" | "combine-checked" | "media-gallery" | "export-text" | "run-sequence" | "theme" | "sign-out";
+  | "copy-sentence" | "copy-checklist" | "delete-current" | "send-to" | "send-to-blank" | "send-to-gdrive" | "send-to-top" | "send-to-bottom" | "uncheck-all" | "combine-checked" | "media-gallery" | "export-text" | "run-sequence" | "theme" | "sign-out";
 
 const AI_KEYS = new Set<ActionKey>([
   "text-text", "text-image", "image-image", "remix",
@@ -41,6 +41,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "add",              label: "Add new checkbox",         icon: Plus },
   { key: "duplicate-item",   label: "Duplicate checkbox",       icon: CopyPlus },
   { key: "send-to-blank",    label: "Send to blank checklist",  icon: FilePlus2 },
+  { key: "send-to-gdrive",   label: "Send to Google Drive",     icon: HardDrive },
   { key: "combine-checked",  label: "Combine checked checkboxes", icon: Combine },
   { key: "media-gallery",    label: "Media Gallery",            icon: Library },
   { key: "export-text",      label: "Export text file",         icon: FileDown },

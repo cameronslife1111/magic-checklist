@@ -52,6 +52,7 @@ type DialogState =
   | { kind: "insert-new-link" }
   | { kind: "send-to" }
   | { kind: "send-to-blank" }
+  | { kind: "send-to-gdrive" }
   | { kind: "bg" }
   | { kind: "duplicate-title" }
   | { kind: "delete-checklist" }
@@ -698,6 +699,25 @@ const ChecklistPage = () => {
         }
         setDialog({ kind: "send-to-blank" });
         break;
+      case "send-to-gdrive": {
+        if (!highestUnchecked) {
+          toast.error("No unchecked checkbox found.");
+          return;
+        }
+        const saved = localStorage.getItem("gdrive-folder-url");
+        if (!saved) {
+          setDialog({ kind: "send-to-gdrive" });
+          break;
+        }
+        const text = decodeIfEncoded(highestUnchecked.text || "");
+        const media = highestUnchecked.media_url ? `\n${highestUnchecked.media_url}` : "";
+        try {
+          await navigator.clipboard.writeText(`${text}${media}`);
+        } catch { /* ignore clipboard errors */ }
+        window.open(saved, "_blank", "noopener,noreferrer");
+        toast.success("Copied — paste into your Drive folder.");
+        break;
+      }
       case "send-to-top": {
         if (!highestUnchecked) {
           toast.error("No unchecked checkbox found.");
@@ -1656,6 +1676,25 @@ const ChecklistPage = () => {
         saveLabel="Create & send"
         onClose={() => setDialog({ kind: "none" })}
         onSave={handleSendToBlank}
+      />
+
+      <TextPromptDialog
+        open={dialog.kind === "send-to-gdrive"}
+        title="Save Google Drive folder"
+        label="Paste a Google Drive folder link"
+        initial={localStorage.getItem("gdrive-folder-url") ?? ""}
+        saveLabel="Save folder"
+        onClose={() => setDialog({ kind: "none" })}
+        onSave={async (value) => {
+          const url = value.trim();
+          if (!/^https:\/\/(drive|docs)\.google\.com\//.test(url) || !url.includes("/folders/")) {
+            toast.error("Please paste a Google Drive folder link (it should contain /folders/).");
+            return;
+          }
+          localStorage.setItem("gdrive-folder-url", url);
+          setDialog({ kind: "none" });
+          toast.success("Folder saved. Tap 'Send to Google Drive' again to send.");
+        }}
       />
 
       <BackgroundPickerDialog
