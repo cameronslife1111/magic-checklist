@@ -699,6 +699,25 @@ const ChecklistPage = () => {
         }
         setDialog({ kind: "send-to-blank" });
         break;
+      case "send-to-gdrive": {
+        if (!highestUnchecked) {
+          toast.error("No unchecked checkbox found.");
+          return;
+        }
+        const saved = localStorage.getItem("gdrive-folder-url");
+        if (!saved) {
+          setDialog({ kind: "send-to-gdrive" });
+          break;
+        }
+        const text = decodeIfEncoded(highestUnchecked.text || "");
+        const media = highestUnchecked.media_url ? `\n${highestUnchecked.media_url}` : "";
+        try {
+          await navigator.clipboard.writeText(`${text}${media}`);
+        } catch { /* ignore clipboard errors */ }
+        window.open(saved, "_blank", "noopener,noreferrer");
+        toast.success("Copied — paste into your Drive folder.");
+        break;
+      }
       case "send-to-top": {
         if (!highestUnchecked) {
           toast.error("No unchecked checkbox found.");
