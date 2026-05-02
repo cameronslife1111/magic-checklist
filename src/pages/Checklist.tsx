@@ -21,6 +21,7 @@ import { MediaViewer } from "@/components/MediaViewer";
 import { ScheduleActionDialog, SchedulePick } from "@/components/ScheduleActionDialog";
 import { AttachedContext } from "@/components/ContextAttacher";
 import { RunSequenceDialog } from "@/components/RunSequenceDialog";
+import { ContextGroupsManager } from "@/components/ContextGroupsManager";
 import { toast } from "sonner";
 import { primeSpeech, speak, stopSpeech, isMuted, setMuted } from "@/lib/speech";
 import { wasPickJustNow } from "@/lib/clickGuard";
