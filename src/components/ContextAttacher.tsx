@@ -4,11 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { FileText, Image as ImageIcon, Video, Music, X } from "lucide-react";
+import { FileText, Image as ImageIcon, Video, Music, X, Layers } from "lucide-react";
 import { toast } from "sonner";
 import { sortChecklistsByTitle } from "@/lib/sortChecklists";
 import { MediaGalleryPicker } from "@/components/MediaGalleryPicker";
 import { MediaAsset, MediaKind } from "@/lib/mediaAssets";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { listGroups, getGroupChecklists, type ContextGroup } from "@/lib/contextGroups";
 
 export type AttachedMedia = { url: string; path: string; type: "image" | "video" | "audio"; name: string };
 export type AttachedContext = {
@@ -44,10 +46,49 @@ export const ContextAttacher = ({ userId, excludeChecklistId, currentChecklist, 
   };
   const [pickerOpen, setPickerOpen] = useState(false);
   const [galleryKind, setGalleryKind] = useState<MediaKind | null>(null);
+  const [groups, setGroups] = useState<ContextGroup[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState<string>("__none__");
+  // Track which checklist ids were added by the currently-applied group, so
+  // switching/clearing the group only removes those — manual chips stay.
+  const [groupAppliedIds, setGroupAppliedIds] = useState<string[]>([]);
 
   useEffect(() => {
     onUploadingChange?.(false);
   }, [onUploadingChange]);
+
+  useEffect(() => {
+    let cancelled = false;
+    listGroups()
+      .then((gs) => { if (!cancelled) setGroups(gs); })
+      .catch(() => { /* ignore */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleGroupChange = async (nextId: string) => {
+    // Remove previously applied group chips first.
+    let nextChecklists = value.checklists.filter((c) => !groupAppliedIds.includes(c.id));
+    let nextAppliedIds: string[] = [];
+    if (nextId !== "__none__") {
+      try {
+        const groupChecklists = await getGroupChecklists(nextId);
+        const existingIds = new Set(nextChecklists.map((c) => c.id));
+        const toAdd = groupChecklists.filter((c) => !existingIds.has(c.id));
+        const remaining = MAX_PER_KIND - nextChecklists.length;
+        const accepted = toAdd.slice(0, Math.max(0, remaining));
+        if (toAdd.length > accepted.length) {
+          toast.error(`Group has more checklists than the ${MAX_PER_KIND} limit. Some were skipped.`);
+        }
+        nextChecklists = [...nextChecklists, ...accepted];
+        nextAppliedIds = accepted.map((c) => c.id);
+      } catch {
+        toast.error("Could not load context group.");
+      }
+    }
+    setSelectedGroupId(nextId);
+    setGroupAppliedIds(nextAppliedIds);
+    onChange({ ...value, checklists: nextChecklists });
+  };
+
 
   const countByType = (t: AttachedMedia["type"]) => value.media.filter((m) => m.type === t).length;
 
@@ -73,6 +114,7 @@ export const ContextAttacher = ({ userId, excludeChecklistId, currentChecklist, 
   };
 
   const removeChecklist = (id: string) => {
+    setGroupAppliedIds((cur) => cur.filter((x) => x !== id));
     onChange({ ...value, checklists: value.checklists.filter((c) => c.id !== id) });
   };
 
@@ -95,6 +137,23 @@ export const ContextAttacher = ({ userId, excludeChecklistId, currentChecklist, 
           <span className="font-medium">Include this checklist as context</span>
         </label>
       )}
+      <div className="flex items-center gap-2 pb-1">
+        <Layers className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+        <span className="text-xs font-medium text-muted-foreground shrink-0">Context group:</span>
+        <Select value={selectedGroupId} onValueChange={handleGroupChange}>
+          <SelectTrigger className="h-8 text-xs flex-1">
+            <SelectValue placeholder="None" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">None</SelectItem>
+            {groups.map((g) => (
+              <SelectItem key={g.id} value={g.id}>
+                {g.title} ({g.checklist_count})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium text-muted-foreground">Attach context (optional)</p>
         {totalCount > 0 && (
@@ -174,7 +233,7 @@ type PickerProps = {
   onConfirm: (picks: { id: string; title: string }[]) => void;
 };
 
-const ChecklistMultiPicker = ({ open, excludeId, selected, onClose, onConfirm }: PickerProps) => {
+export const ChecklistMultiPicker = ({ open, excludeId, selected, onClose, onConfirm }: PickerProps) => {
   const [q, setQ] = useState("");
   const [results, setResults] = useState<{ id: string; title: string }[]>([]);
   const [picks, setPicks] = useState<{ id: string; title: string }[]>(selected);

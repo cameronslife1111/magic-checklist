@@ -21,6 +21,7 @@ import { MediaViewer } from "@/components/MediaViewer";
 import { ScheduleActionDialog, SchedulePick } from "@/components/ScheduleActionDialog";
 import { AttachedContext } from "@/components/ContextAttacher";
 import { RunSequenceDialog } from "@/components/RunSequenceDialog";
+import { ContextGroupsManager } from "@/components/ContextGroupsManager";
 import { toast } from "sonner";
 import { primeSpeech, speak, stopSpeech, isMuted, setMuted } from "@/lib/speech";
 import { wasPickJustNow } from "@/lib/clickGuard";
@@ -77,6 +78,7 @@ const ChecklistPage = () => {
   const [focusItemId, setFocusItemId] = useState<string | null>(null);
   const [reorderMode, setReorderMode] = useState(false);
   const [sequenceOpen, setSequenceOpen] = useState(false);
+  const [contextGroupsOpen, setContextGroupsOpen] = useState(false);
   const [combineMode, setCombineMode] = useState(false);
   const [combineSelection, setCombineSelection] = useState<Set<string>>(new Set());
   const [muted, setMutedState] = useState<boolean>(() => isMuted());
@@ -528,6 +530,10 @@ const ChecklistPage = () => {
         setMuted(next);
         setMutedState(next);
         toast.success(next ? "Speech muted" : "Speech unmuted");
+        break;
+      }
+      case "manage-context-groups": {
+        setContextGroupsOpen(true);
         break;
       }
       case "add": {
@@ -1547,6 +1553,9 @@ const ChecklistPage = () => {
       />
 
       <ActionsSheet open={actionsOpen} onOpenChange={(o) => { if (o) stopSpeech(); setActionsOpen(o); }} onPick={onPick} currentTheme={theme} muted={muted} />
+      {user && (
+        <ContextGroupsManager open={contextGroupsOpen} userId={user.id} onOpenChange={setContextGroupsOpen} />
+      )}
 
       <TextPromptDialog
         open={dialog.kind === "new"}
