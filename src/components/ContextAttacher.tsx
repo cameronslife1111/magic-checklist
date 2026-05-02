@@ -137,6 +137,23 @@ export const ContextAttacher = ({ userId, excludeChecklistId, currentChecklist, 
           <span className="font-medium">Include this checklist as context</span>
         </label>
       )}
+      <div className="flex items-center gap-2 pb-1">
+        <Layers className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+        <span className="text-xs font-medium text-muted-foreground shrink-0">Context group:</span>
+        <Select value={selectedGroupId} onValueChange={handleGroupChange}>
+          <SelectTrigger className="h-8 text-xs flex-1">
+            <SelectValue placeholder="None" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__none__">None</SelectItem>
+            {groups.map((g) => (
+              <SelectItem key={g.id} value={g.id}>
+                {g.title} ({g.checklist_count})
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
       <div className="flex items-center justify-between">
         <p className="text-xs font-medium text-muted-foreground">Attach context (optional)</p>
         {totalCount > 0 && (
