@@ -52,6 +52,7 @@ type DialogState =
   | { kind: "insert-new-link" }
   | { kind: "send-to" }
   | { kind: "send-to-blank" }
+  | { kind: "send-to-gdrive" }
   | { kind: "bg" }
   | { kind: "duplicate-title" }
   | { kind: "delete-checklist" }
