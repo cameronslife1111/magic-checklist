@@ -1553,6 +1553,9 @@ const ChecklistPage = () => {
       />
 
       <ActionsSheet open={actionsOpen} onOpenChange={(o) => { if (o) stopSpeech(); setActionsOpen(o); }} onPick={onPick} currentTheme={theme} muted={muted} />
+      {user && (
+        <ContextGroupsManager open={contextGroupsOpen} userId={user.id} onOpenChange={setContextGroupsOpen} />
+      )}
 
       <TextPromptDialog
         open={dialog.kind === "new"}
