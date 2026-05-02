@@ -1678,6 +1678,25 @@ const ChecklistPage = () => {
         onSave={handleSendToBlank}
       />
 
+      <TextPromptDialog
+        open={dialog.kind === "send-to-gdrive"}
+        title="Save Google Drive folder"
+        label="Paste a Google Drive folder link"
+        initial={localStorage.getItem("gdrive-folder-url") ?? ""}
+        saveLabel="Save folder"
+        onClose={() => setDialog({ kind: "none" })}
+        onSave={async (value) => {
+          const url = value.trim();
+          if (!/^https:\/\/(drive|docs)\.google\.com\//.test(url) || !url.includes("/folders/")) {
+            toast.error("Please paste a Google Drive folder link (it should contain /folders/).");
+            return;
+          }
+          localStorage.setItem("gdrive-folder-url", url);
+          setDialog({ kind: "none" });
+          toast.success("Folder saved. Tap 'Send to Google Drive' again to send.");
+        }}
+      />
+
       <BackgroundPickerDialog
         open={dialog.kind === "bg"}
         current={checklist.background_color}
