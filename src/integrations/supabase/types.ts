@@ -207,6 +207,57 @@ export type Database = {
         }
         Relationships: []
       }
+      context_group_checklists: {
+        Row: {
+          checklist_id: string
+          created_at: string
+          group_id: string
+          id: string
+          position: number
+          user_id: string
+        }
+        Insert: {
+          checklist_id: string
+          created_at?: string
+          group_id: string
+          id?: string
+          position?: number
+          user_id: string
+        }
+        Update: {
+          checklist_id?: string
+          created_at?: string
+          group_id?: string
+          id?: string
+          position?: number
+          user_id?: string
+        }
+        Relationships: []
+      }
+      context_groups: {
+        Row: {
+          created_at: string
+          id: string
+          title: string
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          title?: string
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          title?: string
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       media_assets: {
         Row: {
           created_at: string
