@@ -48,6 +48,9 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "bg",               label: "Change checklist background", icon: Palette },
 
   // Middle: AI actions (rendered in blue)
+  { key: "manage-context-groups", label: "Manage Context Groups", icon: Layers },
+
+  // Middle: AI actions (rendered in blue)
   { key: "run-sequence",     label: "Run as Action Sequence",   icon: Workflow },
   { key: "text-text",        label: "Text to text",             icon: Type },
   { key: "text-image",       label: "Text to image",            icon: ImageIcon },
