@@ -532,7 +532,10 @@ const ChecklistPage = () => {
         toast.success(next ? "Speech muted" : "Speech unmuted");
         break;
       }
-      case "add": {
+      case "manage-context-groups": {
+        setContextGroupsOpen(true);
+        break;
+      }
         await addNewAfterCurrent();
         break;
       }
