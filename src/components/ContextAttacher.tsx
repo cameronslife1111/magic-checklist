@@ -4,11 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Checkbox } from "@/components/ui/checkbox";
-import { FileText, Image as ImageIcon, Video, Music, X } from "lucide-react";
+import { FileText, Image as ImageIcon, Video, Music, X, Layers } from "lucide-react";
 import { toast } from "sonner";
 import { sortChecklistsByTitle } from "@/lib/sortChecklists";
 import { MediaGalleryPicker } from "@/components/MediaGalleryPicker";
 import { MediaAsset, MediaKind } from "@/lib/mediaAssets";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { listGroups, getGroupChecklists, type ContextGroup } from "@/lib/contextGroups";
 
 export type AttachedMedia = { url: string; path: string; type: "image" | "video" | "audio"; name: string };
 export type AttachedContext = {
