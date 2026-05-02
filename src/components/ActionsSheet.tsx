@@ -32,7 +32,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
 
   // Most-used quick utilities
   { key: "copy-sentence",    label: "Copy checkbox",            icon: ClipboardCopy },
-  { key: "copy-checklist",   label: "Copy full checklist",      icon: ClipboardList },
+  { key: "combine-checked",  label: "Combine checked checkboxes", icon: Combine },
   { key: "delete-current",   label: "Delete current checkbox",  icon: Trash2 },
   { key: "insert-link",      label: "Insert checklist link",    icon: Link2 },
   { key: "send-to-top",      label: "Send to top",              icon: ArrowUpToLine },
@@ -42,7 +42,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "duplicate-item",   label: "Duplicate checkbox",       icon: CopyPlus },
   { key: "send-to-blank",    label: "Send to blank checklist",  icon: FilePlus2 },
   { key: "send-to-gdrive",   label: "Send to Google Drive",     icon: HardDrive },
-  { key: "combine-checked",  label: "Combine checked checkboxes", icon: Combine },
+  { key: "copy-checklist",   label: "Copy full checklist",      icon: ClipboardList },
   { key: "media-gallery",    label: "Media Gallery",            icon: Library },
   { key: "export-text",      label: "Export text file",         icon: FileDown },
   { key: "bg",               label: "Change checklist background", icon: Palette },
