@@ -46,10 +46,49 @@ export const ContextAttacher = ({ userId, excludeChecklistId, currentChecklist, 
   };
   const [pickerOpen, setPickerOpen] = useState(false);
   const [galleryKind, setGalleryKind] = useState<MediaKind | null>(null);
+  const [groups, setGroups] = useState<ContextGroup[]>([]);
+  const [selectedGroupId, setSelectedGroupId] = useState<string>("__none__");
+  // Track which checklist ids were added by the currently-applied group, so
+  // switching/clearing the group only removes those — manual chips stay.
+  const [groupAppliedIds, setGroupAppliedIds] = useState<string[]>([]);
 
   useEffect(() => {
     onUploadingChange?.(false);
   }, [onUploadingChange]);
+
+  useEffect(() => {
+    let cancelled = false;
+    listGroups()
+      .then((gs) => { if (!cancelled) setGroups(gs); })
+      .catch(() => { /* ignore */ });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleGroupChange = async (nextId: string) => {
+    // Remove previously applied group chips first.
+    let nextChecklists = value.checklists.filter((c) => !groupAppliedIds.includes(c.id));
+    let nextAppliedIds: string[] = [];
+    if (nextId !== "__none__") {
+      try {
+        const groupChecklists = await getGroupChecklists(nextId);
+        const existingIds = new Set(nextChecklists.map((c) => c.id));
+        const toAdd = groupChecklists.filter((c) => !existingIds.has(c.id));
+        const remaining = MAX_PER_KIND - nextChecklists.length;
+        const accepted = toAdd.slice(0, Math.max(0, remaining));
+        if (toAdd.length > accepted.length) {
+          toast.error(`Group has more checklists than the ${MAX_PER_KIND} limit. Some were skipped.`);
+        }
+        nextChecklists = [...nextChecklists, ...accepted];
+        nextAppliedIds = accepted.map((c) => c.id);
+      } catch {
+        toast.error("Could not load context group.");
+      }
+    }
+    setSelectedGroupId(nextId);
+    setGroupAppliedIds(nextAppliedIds);
+    onChange({ ...value, checklists: nextChecklists });
+  };
+
 
   const countByType = (t: AttachedMedia["type"]) => value.media.filter((m) => m.type === t).length;
 
