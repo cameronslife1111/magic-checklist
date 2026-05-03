@@ -1667,6 +1667,26 @@ const ChecklistPage = () => {
         </AlertDialogContent>
       </AlertDialog>
 
+      <AlertDialog open={dialog.kind === "delete-all-checkboxes"} onOpenChange={(o) => { if (!o) setDialog({ kind: "none" }); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete all checkboxes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              All checkboxes on "{checklist?.title}" will be permanently deleted and replaced with one blank checkbox. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); deleteAllCheckboxes(); }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete all
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
       <ChecklistPickerDialog
         open={dialog.kind === "insert-link"}
         excludeId={checklist.id}
