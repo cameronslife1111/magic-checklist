@@ -1521,7 +1521,7 @@ const ChecklistPage = () => {
                     // Re-focus right before the async insert to keep the
                     // keyboard session alive across the await.
                     keepaliveRef.current?.focus({ preventScroll: true });
-                    await addNewBeforeCurrent();
+                    await addNewAfterCurrent();
                   }, 600);
                 }}
                 onPointerUp={async (e) => {
