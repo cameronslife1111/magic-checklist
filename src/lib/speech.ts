@@ -32,6 +32,52 @@ function synth(): SpeechSynthesis | null {
   return window.speechSynthesis ?? null;
 }
 
+// ---- Voice selection ----
+//
+// The Web Speech API does not expose "the OS default voice" directly, but
+// `SpeechSynthesisVoice.default === true` flags the voice the engine
+// considers default. On iOS this tracks the system voice already; on
+// Windows, Chrome/Edge default to their own pick unless we explicitly set
+// `utterance.voice`. So we pick the best available voice and assign it.
+let cachedVoice: SpeechSynthesisVoice | null = null;
+let voicesBound = false;
+
+function pickVoice(): SpeechSynthesisVoice | null {
+  const s = synth();
+  if (!s) return null;
+  const voices = s.getVoices();
+  if (!voices || voices.length === 0) return null;
+  const navLang = (typeof navigator !== "undefined" && navigator.language) || "en-US";
+  const prefix = navLang.split("-")[0].toLowerCase();
+  const langMatch = (v: SpeechSynthesisVoice) => v.lang?.toLowerCase().startsWith(prefix);
+  return (
+    voices.find((v) => v.default && langMatch(v)) ||
+    voices.find((v) => v.default) ||
+    voices.find((v) => v.localService && v.lang?.toLowerCase() === navLang.toLowerCase()) ||
+    voices.find((v) => v.localService && langMatch(v)) ||
+    voices.find(langMatch) ||
+    voices[0] ||
+    null
+  );
+}
+
+function refreshVoice() {
+  cachedVoice = pickVoice();
+}
+
+function bindVoicesOnce() {
+  if (voicesBound) return;
+  const s = synth();
+  if (!s) return;
+  voicesBound = true;
+  refreshVoice();
+  if ("onvoiceschanged" in s) {
+    s.addEventListener?.("voiceschanged", refreshVoice);
+    // Some browsers only support the property assignment.
+    try { (s as any).onvoiceschanged = refreshVoice; } catch {}
+  }
+}
+
 function markDirty() {
   engineDirty = true;
   primed = false;
