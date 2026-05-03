@@ -553,6 +553,11 @@ const ChecklistPage = () => {
         await handleDelete(highestUnchecked);
         break;
       }
+      case "delete-all-checkboxes": {
+        setActionsOpen(false);
+        setDialog({ kind: "delete-all-checkboxes" });
+        break;
+      }
       case "uncheck-all": {
         setActionsOpen(false);
         const checkedIds = items.filter((i) => i.checked).map((i) => i.id);
