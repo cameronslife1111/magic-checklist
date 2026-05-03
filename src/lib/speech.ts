@@ -32,52 +32,6 @@ function synth(): SpeechSynthesis | null {
   return window.speechSynthesis ?? null;
 }
 
-// ---- Voice selection ----
-//
-// The Web Speech API does not expose "the OS default voice" directly, but
-// `SpeechSynthesisVoice.default === true` flags the voice the engine
-// considers default. On iOS this tracks the system voice already; on
-// Windows, Chrome/Edge default to their own pick unless we explicitly set
-// `utterance.voice`. So we pick the best available voice and assign it.
-let cachedVoice: SpeechSynthesisVoice | null = null;
-let voicesBound = false;
-
-function pickVoice(): SpeechSynthesisVoice | null {
-  const s = synth();
-  if (!s) return null;
-  const voices = s.getVoices();
-  if (!voices || voices.length === 0) return null;
-  const navLang = (typeof navigator !== "undefined" && navigator.language) || "en-US";
-  const prefix = navLang.split("-")[0].toLowerCase();
-  const langMatch = (v: SpeechSynthesisVoice) => v.lang?.toLowerCase().startsWith(prefix);
-  return (
-    voices.find((v) => v.default && langMatch(v)) ||
-    voices.find((v) => v.default) ||
-    voices.find((v) => v.localService && v.lang?.toLowerCase() === navLang.toLowerCase()) ||
-    voices.find((v) => v.localService && langMatch(v)) ||
-    voices.find(langMatch) ||
-    voices[0] ||
-    null
-  );
-}
-
-function refreshVoice() {
-  cachedVoice = pickVoice();
-}
-
-function bindVoicesOnce() {
-  if (voicesBound) return;
-  const s = synth();
-  if (!s) return;
-  voicesBound = true;
-  refreshVoice();
-  if ("onvoiceschanged" in s) {
-    s.addEventListener?.("voiceschanged", refreshVoice);
-    // Some browsers only support the property assignment.
-    try { (s as any).onvoiceschanged = refreshVoice; } catch {}
-  }
-}
-
 function markDirty() {
   engineDirty = true;
   primed = false;
@@ -220,7 +174,7 @@ export function installGestureRearm() {
   if (gestureInstalled) return;
   if (typeof window === "undefined") return;
   gestureInstalled = true;
-  bindLifecycleOnce(); bindVoicesOnce();
+  bindLifecycleOnce();
   const handler = () => notifyUserGesture();
   window.addEventListener("pointerup", handler, { capture: true, passive: true });
   window.addEventListener("touchend", handler, { capture: true, passive: true });
@@ -265,7 +219,7 @@ function chunkText(text: string, max = 180): string[] {
 function speakChunks(chunks: string[]) {
   const s = synth();
   if (!s) return;
-  bindLifecycleOnce(); bindVoicesOnce();
+  bindLifecycleOnce();
 
   let watchdog: number | null = null;
   const armWatchdog = () => {
@@ -289,11 +243,6 @@ function speakChunks(chunks: string[]) {
     const u = new SpeechSynthesisUtterance(c);
     u.rate = 1;
     u.pitch = 1;
-    if (!cachedVoice) refreshVoice();
-    if (cachedVoice) {
-      u.voice = cachedVoice;
-      if (cachedVoice.lang) u.lang = cachedVoice.lang;
-    }
     u.onstart = () => { clearWatchdog(); startHeartbeat(); };
     u.onend = () => {
       lastSuccessAt = Date.now();
@@ -342,7 +291,7 @@ export function primeSpeech() {
     primed = true;
     lastSuccessAt = Date.now();
   } catch {}
-  bindLifecycleOnce(); bindVoicesOnce();
+  bindLifecycleOnce();
 }
 
 export function speak(text: string) {
@@ -350,7 +299,7 @@ export function speak(text: string) {
   const s = synth();
   if (!s) return;
 
-  bindLifecycleOnce(); bindVoicesOnce();
+  bindLifecycleOnce();
 
   const cleaned = stripEmojis(text);
   if (!cleaned) return;

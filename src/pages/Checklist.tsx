@@ -477,24 +477,9 @@ const ChecklistPage = () => {
   };
 
   const addNewAfterCurrent = async () => {
-    const current = highestUnchecked;
-    const sourceId = current?.id ?? (items[items.length - 1]?.id ?? null);
+    const sourceId = highestUnchecked?.id ?? (items[items.length - 1]?.id ?? null);
     const created = await insertItemAfter(sourceId, { text: "" });
-    if (!created) return null;
-    // Mark the previous active step as checked so the newly inserted blank
-    // checkbox becomes the active (yellow-highlighted) step.
-    if (current && !current.checked) {
-      setItems((prev) => prev.map((i) => (i.id === current.id ? { ...i, checked: true } : i)));
-      const { error } = await supabase
-        .from("checklist_items")
-        .update({ checked: true })
-        .eq("id", current.id);
-      if (error) {
-        // Roll back local change if persistence failed
-        setItems((prev) => prev.map((i) => (i.id === current.id ? { ...i, checked: false } : i)));
-      }
-    }
-    setFocusItemId(created.id);
+    if (created) setFocusItemId(created.id);
     return created;
   };
 
@@ -1521,7 +1506,7 @@ const ChecklistPage = () => {
                     // Re-focus right before the async insert to keep the
                     // keyboard session alive across the await.
                     keepaliveRef.current?.focus({ preventScroll: true });
-                    await addNewAfterCurrent();
+                    await addNewBeforeCurrent();
                   }, 600);
                 }}
                 onPointerUp={async (e) => {
