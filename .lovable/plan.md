@@ -1,16 +1,16 @@
-## Move "Delete all checkboxes" to the bottom of the actions sheet
+## Problem
 
-Relocate the action so it sits next to the other destructive checklist-level actions, away from the frequently-tapped quick utilities, to prevent accidental presses.
+When the user taps "Delete current checkbox", the next unchecked item gets the yellow highlight and is spoken, but the page does not scroll to it. Toggling a checkbox scrolls correctly because the item already exists in the DOM. After deletion, the newly-highlighted item may need a fresh DOM lookup, and the current code calls the scroll helper *inside* the `setItems` updater function — before React has committed the new render — so the `itemRefs` lookup can race or use stale layout.
 
-### Change
+## Fix
 
-**`src/components/ActionsSheet.tsx`** — `STATIC_ITEMS` array only:
-- Remove the `delete-all-checkboxes` entry from its current position (right after `delete-current` in the quick utilities section).
-- Re-insert it in the bottom "rare / destructive" group, directly above `delete-checklist`, so the tail of the list becomes:
-  - Edit checklist title
-  - New checklist
-  - Duplicate checklist
-  - **Delete all checkboxes** ← new position
-  - Delete checklist
+In `src/pages/Checklist.tsx`, update `handleDelete` (around lines 380–392) so the focus + scroll + speak step runs *after* the state update commits, the same way it reliably works for toggling.
 
-No other files, styling, behavior, or logic change. The red styling (via `RED_KEYS`) and confirmation dialog in `Checklist.tsx` stay exactly as they are.
+### Changes
+
+1. Compute `nextList` outside the `setItems` updater (or capture it), then call `setItems(nextList)`.
+2. Defer `focusAndSpeakHighestUnchecked(nextList)` until after the DOM updates by wrapping it in a double `requestAnimationFrame` (or `setTimeout(..., 0)`). This ensures the highlighted item's ref is mounted/positioned before `scrollIntoView` runs.
+
+Result: after deleting the current checkbox, the page smoothly scrolls to the newly highlighted next checkbox, matching the behavior when toggling a box.
+
+No other files or behavior change.

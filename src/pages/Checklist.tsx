@@ -384,10 +384,12 @@ const ChecklistPage = () => {
       toast.error("Could not delete. Try again.");
       return;
     }
-    setItems((prev) => {
-      const nextList = prev.filter((i) => i.id !== item.id);
-      focusAndSpeakHighestUnchecked(nextList);
-      return nextList;
+    const nextList = items.filter((i) => i.id !== item.id);
+    setItems(nextList);
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        focusAndSpeakHighestUnchecked(nextList);
+      });
     });
   };
 
