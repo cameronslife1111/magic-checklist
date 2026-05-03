@@ -4,7 +4,7 @@ import {
   Plus, FilePlus, FilePlus2, Copy, CopyPlus, Pencil, Scissors, Type, Image as ImageIcon, Images, Wand2,
   Film, Video, Mic2, Link2, Eye, Search, Palette, LogOut, Moon, Sun, ArrowUpDown,
   ClipboardCopy, ClipboardList, Send, Volume2, VolumeX, ListChecks, Trash2, Library, Square, Smile, Combine, FileDown, Workflow,
-  ArrowUpToLine, ArrowDownToLine, HardDrive, Layers,
+  ArrowUpToLine, ArrowDownToLine, HardDrive, Layers, ListX,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -13,7 +13,7 @@ export type ActionKey =
   | "add" | "duplicate-item" | "new" | "duplicate" | "delete-checklist" | "edit-title" | "split" | "split-emoji"
   | "text-text" | "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "audio-image-video"
   | "insert-link" | "insert-new-link" | "analyze-image" | "web-search" | "bg" | "rearrange"
-  | "copy-sentence" | "copy-checklist" | "delete-current" | "send-to" | "send-to-blank" | "send-to-gdrive" | "send-to-top" | "send-to-bottom" | "uncheck-all" | "combine-checked" | "media-gallery" | "export-text" | "run-sequence" | "manage-context-groups" | "theme" | "sign-out";
+  | "copy-sentence" | "copy-checklist" | "delete-current" | "delete-all-checkboxes" | "send-to" | "send-to-blank" | "send-to-gdrive" | "send-to-top" | "send-to-bottom" | "uncheck-all" | "combine-checked" | "media-gallery" | "export-text" | "run-sequence" | "manage-context-groups" | "theme" | "sign-out";
 
 const AI_KEYS = new Set<ActionKey>([
   "text-text", "text-image", "image-image", "remix",
@@ -21,7 +21,7 @@ const AI_KEYS = new Set<ActionKey>([
   "analyze-image", "web-search", "run-sequence",
 ]);
 
-const RED_KEYS = new Set<ActionKey>(["delete-current"]);
+const RED_KEYS = new Set<ActionKey>(["delete-current", "delete-all-checkboxes"]);
 
 const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   // Top: moved-up quick actions (right under Mute)
@@ -34,6 +34,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "copy-sentence",    label: "Copy checkbox",            icon: ClipboardCopy },
   { key: "combine-checked",  label: "Combine checked checkboxes", icon: Combine },
   { key: "delete-current",   label: "Delete current checkbox",  icon: Trash2 },
+  { key: "delete-all-checkboxes", label: "Delete all checkboxes", icon: ListX },
   { key: "insert-link",      label: "Insert checklist link",    icon: Link2 },
   { key: "send-to-top",      label: "Send to top",              icon: ArrowUpToLine },
   { key: "send-to-bottom",   label: "Send to bottom",           icon: ArrowDownToLine },

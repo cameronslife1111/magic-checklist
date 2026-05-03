@@ -57,6 +57,7 @@ type DialogState =
   | { kind: "bg" }
   | { kind: "duplicate-title" }
   | { kind: "delete-checklist" }
+  | { kind: "delete-all-checkboxes" }
   | { kind: "media"; action: "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "audio-image-video" | "analyze-image"; sourceItem: ChecklistItem };
 
 const ChecklistPage = () => {
@@ -552,6 +553,11 @@ const ChecklistPage = () => {
         await handleDelete(highestUnchecked);
         break;
       }
+      case "delete-all-checkboxes": {
+        setActionsOpen(false);
+        setDialog({ kind: "delete-all-checkboxes" });
+        break;
+      }
       case "uncheck-all": {
         setActionsOpen(false);
         const checkedIds = items.filter((i) => i.checked).map((i) => i.id);
@@ -910,6 +916,44 @@ const ChecklistPage = () => {
       ]);
       await openChecklist((created as Checklist).id);
     }
+  };
+
+  const deleteAllCheckboxes = async () => {
+    if (!checklist || !user) return;
+    const prev = items;
+    setDialog({ kind: "none" });
+    setCombineMode(false);
+    setCombineSelection(new Set());
+
+    const mediaUrls = prev.map((i) => i.media_url).filter((u): u is string => !!u);
+    if (mediaUrls.length > 0) {
+      try { await deleteOwnedGeneratedMedia(mediaUrls); } catch {}
+    }
+
+    const { error: delErr } = await supabase
+      .from("checklist_items")
+      .delete()
+      .eq("checklist_id", checklist.id)
+      .eq("user_id", user.id);
+    if (delErr) {
+      toast.error("Could not delete checkboxes. Try again.");
+      return;
+    }
+    const { data: created, error: insErr } = await supabase
+      .from("checklist_items")
+      .insert({ checklist_id: checklist.id, user_id: user.id, text: "", position: 1024 })
+      .select()
+      .single();
+    if (insErr || !created) {
+      toast.error("Could not reset checklist. Try again.");
+      setItems(prev);
+      return;
+    }
+    const next = [created as ChecklistItem];
+    setItems(next);
+    primeSpeech();
+    focusAndSpeakHighestUnchecked(next);
+    toast.success("All checkboxes deleted.");
   };
 
   const exitCombineMode = () => {
@@ -1618,6 +1662,26 @@ const ChecklistPage = () => {
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={dialog.kind === "delete-all-checkboxes"} onOpenChange={(o) => { if (!o) setDialog({ kind: "none" }); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete all checkboxes?</AlertDialogTitle>
+            <AlertDialogDescription>
+              All checkboxes on "{checklist?.title}" will be permanently deleted and replaced with one blank checkbox. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); deleteAllCheckboxes(); }}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              Delete all
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
