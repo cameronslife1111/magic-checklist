@@ -34,6 +34,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "copy-sentence",    label: "Copy checkbox",            icon: ClipboardCopy },
   { key: "combine-checked",  label: "Combine checked checkboxes", icon: Combine },
   { key: "delete-current",   label: "Delete current checkbox",  icon: Trash2 },
+  { key: "delete-all-checkboxes", label: "Delete all checkboxes", icon: ListX },
   { key: "insert-link",      label: "Insert checklist link",    icon: Link2 },
   { key: "send-to-top",      label: "Send to top",              icon: ArrowUpToLine },
   { key: "send-to-bottom",   label: "Send to bottom",           icon: ArrowDownToLine },
