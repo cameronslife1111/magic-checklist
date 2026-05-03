@@ -918,6 +918,44 @@ const ChecklistPage = () => {
     }
   };
 
+  const deleteAllCheckboxes = async () => {
+    if (!checklist || !user) return;
+    const prev = items;
+    setDialog({ kind: "none" });
+    setCombineMode(false);
+    setCombineSelection(new Set());
+
+    const mediaUrls = prev.map((i) => i.media_url).filter((u): u is string => !!u);
+    if (mediaUrls.length > 0) {
+      try { await deleteOwnedGeneratedMedia(mediaUrls); } catch {}
+    }
+
+    const { error: delErr } = await supabase
+      .from("checklist_items")
+      .delete()
+      .eq("checklist_id", checklist.id)
+      .eq("user_id", user.id);
+    if (delErr) {
+      toast.error("Could not delete checkboxes. Try again.");
+      return;
+    }
+    const { data: created, error: insErr } = await supabase
+      .from("checklist_items")
+      .insert({ checklist_id: checklist.id, user_id: user.id, text: "", position: 1024 })
+      .select()
+      .single();
+    if (insErr || !created) {
+      toast.error("Could not reset checklist. Try again.");
+      setItems(prev);
+      return;
+    }
+    const next = [created as ChecklistItem];
+    setItems(next);
+    primeSpeech();
+    focusAndSpeakHighestUnchecked(next);
+    toast.success("All checkboxes deleted.");
+  };
+
   const exitCombineMode = () => {
     setCombineMode(false);
     setCombineSelection(new Set());
