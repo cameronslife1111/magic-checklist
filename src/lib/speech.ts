@@ -220,7 +220,7 @@ export function installGestureRearm() {
   if (gestureInstalled) return;
   if (typeof window === "undefined") return;
   gestureInstalled = true;
-  bindLifecycleOnce();
+  bindLifecycleOnce(); bindVoicesOnce();
   const handler = () => notifyUserGesture();
   window.addEventListener("pointerup", handler, { capture: true, passive: true });
   window.addEventListener("touchend", handler, { capture: true, passive: true });
@@ -265,7 +265,7 @@ function chunkText(text: string, max = 180): string[] {
 function speakChunks(chunks: string[]) {
   const s = synth();
   if (!s) return;
-  bindLifecycleOnce();
+  bindLifecycleOnce(); bindVoicesOnce();
 
   let watchdog: number | null = null;
   const armWatchdog = () => {
@@ -342,7 +342,7 @@ export function primeSpeech() {
     primed = true;
     lastSuccessAt = Date.now();
   } catch {}
-  bindLifecycleOnce();
+  bindLifecycleOnce(); bindVoicesOnce();
 }
 
 export function speak(text: string) {
@@ -350,7 +350,7 @@ export function speak(text: string) {
   const s = synth();
   if (!s) return;
 
-  bindLifecycleOnce();
+  bindLifecycleOnce(); bindVoicesOnce();
 
   const cleaned = stripEmojis(text);
   if (!cleaned) return;
