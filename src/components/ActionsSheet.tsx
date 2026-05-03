@@ -66,6 +66,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "edit-title",       label: "Edit checklist title",     icon: Pencil },
   { key: "new",              label: "New checklist",            icon: FilePlus },
   { key: "duplicate",        label: "Duplicate checklist",      icon: Copy },
+  { key: "delete-all-checkboxes", label: "Delete all checkboxes", icon: ListX },
   { key: "delete-checklist", label: "Delete checklist",         icon: Trash2 },
 ];
 
