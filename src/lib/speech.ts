@@ -289,6 +289,11 @@ function speakChunks(chunks: string[]) {
     const u = new SpeechSynthesisUtterance(c);
     u.rate = 1;
     u.pitch = 1;
+    if (!cachedVoice) refreshVoice();
+    if (cachedVoice) {
+      u.voice = cachedVoice;
+      if (cachedVoice.lang) u.lang = cachedVoice.lang;
+    }
     u.onstart = () => { clearWatchdog(); startHeartbeat(); };
     u.onend = () => {
       lastSuccessAt = Date.now();
