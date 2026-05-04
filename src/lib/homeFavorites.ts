@@ -46,6 +46,8 @@ export const nextFavoriteAfter = (currentChecklistId: string | null): string | n
   const slots = loadFavorites();
   const filled = slots.filter((s): s is string => !!s);
   if (filled.length === 0) return null;
+  // If only one favorite is set, always return it (even if it equals current).
+  if (filled.length === 1) return filled[0];
 
   const currentIdx = currentChecklistId ? slots.indexOf(currentChecklistId) : -1;
   const start = currentIdx >= 0 ? currentIdx + 1 : 0;
@@ -54,6 +56,5 @@ export const nextFavoriteAfter = (currentChecklistId: string | null): string | n
     const v = slots[i];
     if (v && v !== currentChecklistId) return v;
   }
-  // Only one favorite and it equals current → no-op
   return null;
 };
