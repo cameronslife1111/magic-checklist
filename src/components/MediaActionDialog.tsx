@@ -75,9 +75,9 @@ export const MediaActionDialog = ({ open, title, prompt, mode, userId, onClose, 
 
   // Kling V3 pro image-to-video state
   const [duration, setDuration] = useState<string>("5");
-  const [generateAudio, setGenerateAudio] = useState<boolean>(true);
+  const [generateAudio, setGenerateAudio] = useState<boolean>(false);
   const [negativePrompt, setNegativePrompt] = useState<string>(DEFAULT_NEGATIVE);
-  const [cfgScale, setCfgScale] = useState<number>(0.5);
+  const [cfgScale, setCfgScale] = useState<number>(1);
   const [endImage, setEndImage] = useState<MediaAsset | null>(null);
   const [endPickerOpen, setEndPickerOpen] = useState(false);
 
