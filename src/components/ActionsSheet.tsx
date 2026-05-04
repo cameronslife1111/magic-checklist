@@ -35,6 +35,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "combine-checked",  label: "Combine checked checkboxes", icon: Combine },
   { key: "delete-current",   label: "Delete current checkbox",  icon: Trash2 },
   { key: "insert-link",      label: "Insert checklist link",    icon: Link2 },
+  { key: "manage-home-favorites", label: "Manage Home Favorites", icon: Home },
   { key: "send-to-top",      label: "Send to top",              icon: ArrowUpToLine },
   { key: "send-to-bottom",   label: "Send to bottom",           icon: ArrowDownToLine },
   { key: "insert-new-link",  label: "Insert new checklist link from text", icon: FilePlus },
