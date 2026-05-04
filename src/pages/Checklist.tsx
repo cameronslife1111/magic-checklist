@@ -22,6 +22,8 @@ import { ScheduleActionDialog, SchedulePick } from "@/components/ScheduleActionD
 import { AttachedContext } from "@/components/ContextAttacher";
 import { RunSequenceDialog } from "@/components/RunSequenceDialog";
 import { ContextGroupsManager } from "@/components/ContextGroupsManager";
+import { HomeFavoritesDialog } from "@/components/HomeFavoritesDialog";
+import { nextFavoriteAfter } from "@/lib/homeFavorites";
 import { toast } from "sonner";
 import { primeSpeech, speak, stopSpeech, isMuted, setMuted } from "@/lib/speech";
 import { wasPickJustNow } from "@/lib/clickGuard";
@@ -80,6 +82,7 @@ const ChecklistPage = () => {
   const [reorderMode, setReorderMode] = useState(false);
   const [sequenceOpen, setSequenceOpen] = useState(false);
   const [contextGroupsOpen, setContextGroupsOpen] = useState(false);
+  const [homeFavoritesOpen, setHomeFavoritesOpen] = useState(false);
   const [combineMode, setCombineMode] = useState(false);
   const [combineSelection, setCombineSelection] = useState<Set<string>>(new Set());
   const [muted, setMutedState] = useState<boolean>(() => isMuted());
@@ -537,6 +540,10 @@ const ChecklistPage = () => {
       }
       case "manage-context-groups": {
         setContextGroupsOpen(true);
+        break;
+      }
+      case "manage-home-favorites": {
+        setHomeFavoritesOpen(true);
         break;
       }
       case "add": {
@@ -1520,21 +1527,15 @@ const ChecklistPage = () => {
                   if (homeLongPressFiredRef.current) return;
                   keepaliveRef.current?.blur();
 
-                  // Drill-first: if the highlighted (highest unchecked) item
-                  // links to another checklist, open it — regardless of which
-                  // checklist we're currently on. This lets the user keep
-                  // tapping Home to descend through linked checklists.
-                  if (highestUnchecked?.linked_checklist_id) {
-                    await openChecklist(highestUnchecked.linked_checklist_id);
+                  // Cycle through Home Favorites (up to 5 user-chosen slots).
+                  const targetId = nextFavoriteAfter(checklist.id);
+                  if (!targetId) {
+                    toast.message("No Home Favorites set", {
+                      description: "Open Actions → Manage Home Favorites to add some.",
+                    });
                     return;
                   }
-
-                  // Otherwise, go back to the alphabetically-top checklist.
-                  const { data } = await supabase.from("checklists").select("id,title");
-                  const sorted = sortChecklistsByTitle(data ?? []);
-                  const top = sorted[0];
-                  if (!top || top.id === checklist.id) return;
-                  await openChecklist(top.id);
+                  await openChecklist(targetId);
                 }}
                 onPointerCancel={() => {
                   if (homeLongPressTimerRef.current) {
@@ -1602,6 +1603,7 @@ const ChecklistPage = () => {
       {user && (
         <ContextGroupsManager open={contextGroupsOpen} userId={user.id} onOpenChange={setContextGroupsOpen} />
       )}
+      <HomeFavoritesDialog open={homeFavoritesOpen} onClose={() => setHomeFavoritesOpen(false)} />
 
       <TextPromptDialog
         open={dialog.kind === "new"}
