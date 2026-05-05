@@ -118,32 +118,38 @@ async function retry424(): Promise<number> {
   return data.length;
 }
 
+function stripDanteSaidPrefix(s: string): string {
+  return s.replace(/^\s*🤖\s*Dante\s*said\s*:\s*/i, "").trimStart();
+}
+
 async function processItem(item: any): Promise<{ ok: boolean }> {
   const preview = (item.text ?? "").slice(0, 60);
   console.log(`[dante-watcher] claimed item ${item.id} "${preview}"`);
 
   if (!OPENAI_API_KEY) {
     await setItem(item.id, { status: "error", checked: false, result: "OPENAI_API_KEY not configured" });
-    console.log(`[dante-watcher] item ${item.id} -> error`);
     return { ok: false };
   }
   if (!MAGIC_CHECKLIST_MCP_URL) {
     await setItem(item.id, { status: "error", checked: false, result: "MAGIC_CHECKLIST_MCP_URL not configured" });
-    console.log(`[dante-watcher] item ${item.id} -> error`);
     return { ok: false };
   }
   if (!CLAUDE_BRIDGE_KEY) {
     await setItem(item.id, { status: "error", checked: false, result: "CLAUDE_BRIDGE_KEY not configured" });
-    console.log(`[dante-watcher] item ${item.id} -> error`);
     return { ok: false };
   }
 
+  // Auto-prepend 👑: on first turn if missing
+  let currentText = item.text ?? "";
+  if (!currentText.includes("👑:") && !currentText.includes("🤖 Dante said:")) {
+    currentText = `👑: ${currentText}`.trimEnd();
+    await setItem(item.id, { text: currentText });
+  }
+
   const userInput =
-    `TASK:\n${item.text ?? ""}\n\nCONTEXT:\n` +
-    `item_id=${item.id}\n` +
-    `user_id=${item.user_id}\n` +
-    `checklist_id=${item.checklist_id}\n` +
-    `created_at=${item.created_at}`;
+    `${currentText}\n\n---\nThe above is the full conversation thread for this checklist item.\n` +
+    `Respond ONLY to the most recent 👑 turn. Output ONLY your reply text — do NOT include "🤖 Dante said:" prefix; the system adds it automatically.\n\n` +
+    `CONTEXT:\nitem_id=${item.id}\nuser_id=${item.user_id}\nchecklist_id=${item.checklist_id}\ncreated_at=${item.created_at}`;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), ITEM_TIMEOUT_MS);
