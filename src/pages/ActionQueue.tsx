@@ -32,9 +32,12 @@ type Job = {
   attempts: number;
   max_attempts: number;
   created_at: string;
+  started_at: string | null;
   completed_at: string | null;
   parent_job_id: string | null;
   sequence_step: number | null;
+  provider: string | null;
+  provider_polled_at: string | null;
   attachments: Attachments;
 };
 
