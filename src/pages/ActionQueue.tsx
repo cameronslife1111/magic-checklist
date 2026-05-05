@@ -93,17 +93,29 @@ const fmt = (iso: string | null) => {
   try { return new Date(iso).toLocaleString(); } catch { return iso; }
 };
 
+const STATUS_LABELS: Record<Job["status"], string> = {
+  pending: "pending",
+  scheduled: "scheduled",
+  running: "running",
+  awaiting_provider: "awaiting provider",
+  completed: "completed",
+  failed: "failed",
+  paused: "paused",
+  cancelled: "cancelled",
+};
+
 const StatusBadge = ({ s }: { s: Job["status"] }) => {
   const map: Record<Job["status"], string> = {
     pending: "bg-muted text-foreground",
     scheduled: "bg-blue-500/15 text-blue-700 dark:text-blue-300",
     running: "bg-amber-500/15 text-amber-700 dark:text-amber-300 animate-pulse",
+    awaiting_provider: "bg-purple-500/15 text-purple-700 dark:text-purple-300 animate-pulse",
     completed: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
     failed: "bg-destructive/15 text-destructive",
     paused: "bg-muted text-muted-foreground",
     cancelled: "bg-muted text-muted-foreground line-through",
   };
-  return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${map[s]}`}>{s}</span>;
+  return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${map[s]}`}>{STATUS_LABELS[s]}</span>;
 };
 
 type Thumb = { url: string; type: "image" | "video" | "audio"; name?: string; label: string };
