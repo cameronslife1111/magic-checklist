@@ -122,6 +122,8 @@ export type Database = {
           media_url: string | null
           parent_item_id: string | null
           position: number
+          result: string | null
+          status: string | null
           text: string
           updated_at: string
           user_id: string
@@ -137,6 +139,8 @@ export type Database = {
           media_url?: string | null
           parent_item_id?: string | null
           position?: number
+          result?: string | null
+          status?: string | null
           text?: string
           updated_at?: string
           user_id: string
@@ -152,6 +156,8 @@ export type Database = {
           media_url?: string | null
           parent_item_id?: string | null
           position?: number
+          result?: string | null
+          status?: string | null
           text?: string
           updated_at?: string
           user_id?: string

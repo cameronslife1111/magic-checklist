@@ -137,6 +137,8 @@ mcp.tool("updateItem", {
       position: { type: "number" },
       linked_checklist_id: { type: "string", description: "Empty string clears the link" },
       external_link: { type: "string", description: "Empty string clears the link" },
+      status: { type: "string", enum: ["pending", "in_progress", "done", "error"], description: "Agent task state. Null/absent = ordinary item." },
+      result: { type: "string", description: "Agent output / notes / error explanation. Empty string clears it." },
     },
     required: ["item_id", "user_id"],
   },
@@ -150,6 +152,16 @@ mcp.tool("updateItem", {
     }
     if (typeof args.external_link === "string") {
       patch.external_link = args.external_link === "" ? null : args.external_link;
+    }
+    if (typeof args.status === "string") {
+      const allowed = ["pending", "in_progress", "done", "error"];
+      if (!allowed.includes(args.status)) {
+        return text({ error: `invalid status. allowed: ${allowed.join(", ")}` });
+      }
+      patch.status = args.status;
+    }
+    if (typeof args.result === "string") {
+      patch.result = args.result === "" ? null : args.result;
     }
     if (Object.keys(patch).length === 0) {
       return text({ error: "no fields to update" });

@@ -35,3 +35,6 @@ verify_jwt = false
 
 [functions.claude-mcp]
 verify_jwt = false
+
+[functions.dante-watcher]
+verify_jwt = false
