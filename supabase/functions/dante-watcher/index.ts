@@ -19,6 +19,7 @@ const DANTE_INBOX_CHECKLIST_ID = Deno.env.get("DANTE_INBOX_CHECKLIST_ID");
 const DANTE_SYSTEM_PROMPT = Deno.env.get("DANTE_SYSTEM_PROMPT") ?? "";
 const MAGIC_CHECKLIST_MCP_URL = Deno.env.get("MAGIC_CHECKLIST_MCP_URL");
 const DANTE_CRON_SECRET = Deno.env.get("DANTE_CRON_SECRET");
+const CLAUDE_BRIDGE_KEY = Deno.env.get("CLAUDE_BRIDGE_KEY");
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
@@ -113,6 +114,11 @@ async function processItem(item: any): Promise<{ ok: boolean }> {
     console.log(`[dante-watcher] item ${item.id} -> error`);
     return { ok: false };
   }
+  if (!CLAUDE_BRIDGE_KEY) {
+    await setItem(item.id, { status: "error", checked: false, result: "CLAUDE_BRIDGE_KEY not configured" });
+    console.log(`[dante-watcher] item ${item.id} -> error`);
+    return { ok: false };
+  }
 
   const userInput =
     `TASK:\n${item.text ?? ""}\n\nCONTEXT:\n` +
@@ -142,6 +148,7 @@ async function processItem(item: any): Promise<{ ok: boolean }> {
             server_label: "magic-checklist",
             server_url: MAGIC_CHECKLIST_MCP_URL,
             require_approval: "never",
+            headers: { "x-claude-key": CLAUDE_BRIDGE_KEY },
           },
         ],
         max_output_tokens: 4096,
