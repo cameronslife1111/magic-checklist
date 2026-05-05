@@ -391,7 +391,7 @@ const ActionQueue = () => {
     };
   }, [user, authLoading, fetchJobs]);
 
-  const inQueue = useMemo(() => jobs.filter((j) => ["pending", "scheduled", "running", "paused"].includes(j.status)), [jobs]);
+  const inQueue = useMemo(() => jobs.filter((j) => ["pending", "scheduled", "running", "awaiting_provider", "paused"].includes(j.status)), [jobs]);
   const completed = useMemo(() => jobs.filter((j) => j.status === "completed"), [jobs]);
   const failed = useMemo(() => jobs.filter((j) => j.status === "failed" || j.status === "cancelled"), [jobs]);
 
