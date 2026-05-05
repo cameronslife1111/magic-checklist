@@ -38,8 +38,7 @@ const mcp = new McpServer({
   version: "1.0.0",
 });
 
-mcp.tool({
-  name: "fetchChecklist",
+mcp.tool("fetchChecklist", {
   description: "Find checklists for a user by (case-insensitive) title match. Returns up to 10 matches.",
   inputSchema: {
     type: "object",
@@ -59,8 +58,7 @@ mcp.tool({
   },
 });
 
-mcp.tool({
-  name: "fetchItems",
+mcp.tool("fetchItems", {
   description: "Fetch all items in a checklist, ordered by position.",
   inputSchema: {
     type: "object",
@@ -77,8 +75,7 @@ mcp.tool({
   },
 });
 
-mcp.tool({
-  name: "addItem",
+mcp.tool("addItem", {
   description: "Add a new item to a checklist.",
   inputSchema: {
     type: "object",
@@ -105,8 +102,7 @@ mcp.tool({
   },
 });
 
-mcp.tool({
-  name: "triggerJob",
+mcp.tool("triggerJob", {
   description: `Enqueue an action job (image/video/text generation, analysis, etc). action_type must be one of: ${VALID_JOB_ACTIONS.join(", ")}.`,
   inputSchema: {
     type: "object",
@@ -158,8 +154,7 @@ mcp.tool({
   },
 });
 
-mcp.tool({
-  name: "pollJob",
+mcp.tool("pollJob", {
   description: "Get the current status and result of a job by id.",
   inputSchema: {
     type: "object",
@@ -177,8 +172,7 @@ mcp.tool({
   },
 });
 
-mcp.tool({
-  name: "getRecentJobs",
+mcp.tool("getRecentJobs", {
   description: "List recent jobs for a user, optionally filtered by status.",
   inputSchema: {
     type: "object",
