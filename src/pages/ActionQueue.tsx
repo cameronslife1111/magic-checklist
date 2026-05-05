@@ -39,7 +39,7 @@ type Job = {
 };
 
 // Payloads are bounded to <=200KB by enqueue-action; safe to fetch for the dashboard.
-const JOB_COLS = "id,user_id,checklist_id,source_item_id,action_type,status,prompt_preview,error_raw,error_friendly,error_fix,scheduled_for,recurrence,attempts,max_attempts,created_at,completed_at,parent_job_id,sequence_step,payload";
+const JOB_COLS = "id,user_id,checklist_id,source_item_id,action_type,status,prompt_preview,error_raw,error_friendly,error_fix,scheduled_for,recurrence,attempts,max_attempts,created_at,started_at,completed_at,parent_job_id,sequence_step,provider,provider_polled_at,payload";
 
 const isHttpUrl = (u: unknown): u is string =>
   typeof u === "string" && (u.startsWith("http://") || u.startsWith("https://"));
