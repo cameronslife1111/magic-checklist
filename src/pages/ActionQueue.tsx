@@ -305,9 +305,12 @@ const ActionQueue = () => {
       attempts: r.attempts ?? 0,
       max_attempts: r.max_attempts ?? 3,
       created_at: r.created_at,
+      started_at: r.started_at ?? null,
       completed_at: r.completed_at ?? null,
       parent_job_id: r.parent_job_id ?? null,
       sequence_step: r.sequence_step ?? null,
+      provider: r.provider ?? null,
+      provider_polled_at: r.provider_polled_at ?? null,
       attachments: deriveAttachments(r.action_type, r.payload),
     }));
     setJobs(mapped);
