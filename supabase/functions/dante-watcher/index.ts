@@ -242,9 +242,13 @@ Deno.serve(async (req) => {
   let processed = 0;
   let errors = 0;
   let recovered = 0;
+  let retried = 0;
   const item_ids: string[] = [];
 
   try {
+    retried = await retry424();
+    if (retried > 0) console.log(`[dante-watcher] retried ${retried} 424/MCP errors`);
+
     recovered = await recoverStale();
     if (recovered > 0) console.log(`[dante-watcher] recovered ${recovered} stale items`);
 
@@ -276,7 +280,7 @@ Deno.serve(async (req) => {
     if (unlockErr) console.error("[dante-watcher] unlock error", unlockErr);
   }
 
-  const summary = { processed, recovered, errors, item_ids };
+  const summary = { processed, recovered, retried, errors, item_ids };
   console.log(`[dante-watcher] tick complete:`, summary);
   return json(200, summary);
 });
