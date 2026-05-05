@@ -19,6 +19,7 @@ const DANTE_INBOX_CHECKLIST_ID = Deno.env.get("DANTE_INBOX_CHECKLIST_ID");
 const DANTE_SYSTEM_PROMPT = Deno.env.get("DANTE_SYSTEM_PROMPT") ?? "";
 const MAGIC_CHECKLIST_MCP_URL = Deno.env.get("MAGIC_CHECKLIST_MCP_URL");
 const DANTE_CRON_SECRET = Deno.env.get("DANTE_CRON_SECRET");
+const CLAUDE_BRIDGE_KEY = Deno.env.get("CLAUDE_BRIDGE_KEY");
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
 
@@ -99,6 +100,24 @@ async function recoverStale(): Promise<number> {
   return data.length;
 }
 
+async function retry424(): Promise<number> {
+  const { data, error } = await admin
+    .from("checklist_items")
+    .select("id")
+    .eq("checklist_id", DANTE_INBOX_CHECKLIST_ID!)
+    .eq("status", "error")
+    .or("result.ilike.%424%MCP server%,result.ilike.%Failed Dependency%");
+  if (error) {
+    console.error("[dante-watcher] retry424 select error", error);
+    return 0;
+  }
+  if (!data || data.length === 0) return 0;
+  for (const row of data) {
+    await setItem(row.id, { status: null });
+  }
+  return data.length;
+}
+
 async function processItem(item: any): Promise<{ ok: boolean }> {
   const preview = (item.text ?? "").slice(0, 60);
   console.log(`[dante-watcher] claimed item ${item.id} "${preview}"`);
@@ -110,6 +129,11 @@ async function processItem(item: any): Promise<{ ok: boolean }> {
   }
   if (!MAGIC_CHECKLIST_MCP_URL) {
     await setItem(item.id, { status: "error", checked: false, result: "MAGIC_CHECKLIST_MCP_URL not configured" });
+    console.log(`[dante-watcher] item ${item.id} -> error`);
+    return { ok: false };
+  }
+  if (!CLAUDE_BRIDGE_KEY) {
+    await setItem(item.id, { status: "error", checked: false, result: "CLAUDE_BRIDGE_KEY not configured" });
     console.log(`[dante-watcher] item ${item.id} -> error`);
     return { ok: false };
   }
@@ -142,6 +166,7 @@ async function processItem(item: any): Promise<{ ok: boolean }> {
             server_label: "magic-checklist",
             server_url: MAGIC_CHECKLIST_MCP_URL,
             require_approval: "never",
+            headers: { "x-claude-key": CLAUDE_BRIDGE_KEY },
           },
         ],
         max_output_tokens: 4096,
@@ -217,9 +242,13 @@ Deno.serve(async (req) => {
   let processed = 0;
   let errors = 0;
   let recovered = 0;
+  let retried = 0;
   const item_ids: string[] = [];
 
   try {
+    retried = await retry424();
+    if (retried > 0) console.log(`[dante-watcher] retried ${retried} 424/MCP errors`);
+
     recovered = await recoverStale();
     if (recovered > 0) console.log(`[dante-watcher] recovered ${recovered} stale items`);
 
@@ -251,7 +280,7 @@ Deno.serve(async (req) => {
     if (unlockErr) console.error("[dante-watcher] unlock error", unlockErr);
   }
 
-  const summary = { processed, recovered, errors, item_ids };
+  const summary = { processed, recovered, retried, errors, item_ids };
   console.log(`[dante-watcher] tick complete:`, summary);
   return json(200, summary);
 });
