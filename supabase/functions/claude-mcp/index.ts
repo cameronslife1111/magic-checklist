@@ -354,7 +354,7 @@ mcp.tool("createItemAndTriggerJob", {
       position: { type: "number" },
       parent_item_id: { type: "string" },
       action_type: { type: "string", enum: VALID_JOB_ACTIONS },
-      payload: { type: "object" },
+      payload: PAYLOAD_SCHEMA,
       scheduled_for: { type: "string" },
       recurrence: { type: "object" },
     },
@@ -364,6 +364,8 @@ mcp.tool("createItemAndTriggerJob", {
     if (!VALID_JOB_ACTIONS.includes(args.action_type)) {
       return text({ error: `invalid action_type. allowed: ${VALID_JOB_ACTIONS.join(", ")}` });
     }
+    const validationErr = validateActionPayload(args.action_type, args.payload);
+    if (validationErr) return text({ error: validationErr });
     const { data: item, error: itemErr } = await admin
       .from("checklist_items").insert({
         checklist_id: args.checklist_id,
