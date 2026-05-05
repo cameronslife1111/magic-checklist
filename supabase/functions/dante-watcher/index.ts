@@ -202,7 +202,7 @@ async function processItem(item: any): Promise<{ ok: boolean }> {
 
     const data = await resp.json();
     const { text, toolSummary, hadToolError } = extractFromOpenAI(data);
-    const replyRaw = stripDanteSaidPrefix(text || "(no text returned)");
+    const replyRaw = sanitizeCrowns(stripDanteSaidPrefix(text || "(no text returned)"));
     const blocked = /^BLOCKER:/i.test(replyRaw.trim()) || (hadToolError && replyRaw.trim().length === 0);
     const newText = `${currentText}\n\n🤖 Dante said: ${replyRaw}`;
     const metaResult =
