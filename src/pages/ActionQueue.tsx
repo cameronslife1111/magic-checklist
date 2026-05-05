@@ -22,7 +22,7 @@ type Job = {
   checklist_id: string;
   source_item_id: string | null;
   action_type: string;
-  status: "pending" | "scheduled" | "running" | "completed" | "failed" | "paused" | "cancelled";
+  status: "pending" | "scheduled" | "running" | "awaiting_provider" | "completed" | "failed" | "paused" | "cancelled";
   prompt_preview: string | null;
   error_raw: string | null;
   error_friendly: string | null;
@@ -32,14 +32,17 @@ type Job = {
   attempts: number;
   max_attempts: number;
   created_at: string;
+  started_at: string | null;
   completed_at: string | null;
   parent_job_id: string | null;
   sequence_step: number | null;
+  provider: string | null;
+  provider_polled_at: string | null;
   attachments: Attachments;
 };
 
 // Payloads are bounded to <=200KB by enqueue-action; safe to fetch for the dashboard.
-const JOB_COLS = "id,user_id,checklist_id,source_item_id,action_type,status,prompt_preview,error_raw,error_friendly,error_fix,scheduled_for,recurrence,attempts,max_attempts,created_at,completed_at,parent_job_id,sequence_step,payload";
+const JOB_COLS = "id,user_id,checklist_id,source_item_id,action_type,status,prompt_preview,error_raw,error_friendly,error_fix,scheduled_for,recurrence,attempts,max_attempts,created_at,started_at,completed_at,parent_job_id,sequence_step,provider,provider_polled_at,payload";
 
 const isHttpUrl = (u: unknown): u is string =>
   typeof u === "string" && (u.startsWith("http://") || u.startsWith("https://"));
@@ -93,17 +96,29 @@ const fmt = (iso: string | null) => {
   try { return new Date(iso).toLocaleString(); } catch { return iso; }
 };
 
+const STATUS_LABELS: Record<Job["status"], string> = {
+  pending: "pending",
+  scheduled: "scheduled",
+  running: "running",
+  awaiting_provider: "awaiting provider",
+  completed: "completed",
+  failed: "failed",
+  paused: "paused",
+  cancelled: "cancelled",
+};
+
 const StatusBadge = ({ s }: { s: Job["status"] }) => {
   const map: Record<Job["status"], string> = {
     pending: "bg-muted text-foreground",
     scheduled: "bg-blue-500/15 text-blue-700 dark:text-blue-300",
     running: "bg-amber-500/15 text-amber-700 dark:text-amber-300 animate-pulse",
+    awaiting_provider: "bg-purple-500/15 text-purple-700 dark:text-purple-300 animate-pulse",
     completed: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
     failed: "bg-destructive/15 text-destructive",
     paused: "bg-muted text-muted-foreground",
     cancelled: "bg-muted text-muted-foreground line-through",
   };
-  return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${map[s]}`}>{s}</span>;
+  return <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${map[s]}`}>{STATUS_LABELS[s]}</span>;
 };
 
 type Thumb = { url: string; type: "image" | "video" | "audio"; name?: string; label: string };
@@ -240,6 +255,41 @@ const GroupedJobList = ({
   );
 };
 
+const ProgressIndicator = ({ job }: { job: Job }) => {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const start = job.started_at ? new Date(job.started_at).getTime() : new Date(job.created_at).getTime();
+  const elapsedMs = Math.max(0, now - start);
+  const s = Math.floor(elapsedMs / 1000);
+  const mm = Math.floor(s / 60);
+  const ss = s % 60;
+  const elapsed = mm > 0 ? `${mm}m ${ss}s` : `${ss}s`;
+  // Heuristic ETA caps so the bar moves visibly: video jobs ~2min, others ~30s.
+  const isVideo = job.action_type.includes("video");
+  const cap = isVideo ? 120_000 : 30_000;
+  const pct = Math.min(95, Math.round((elapsedMs / cap) * 100));
+  const label = job.status === "awaiting_provider"
+    ? `Waiting on ${job.provider ?? "provider"}…`
+    : "Processing…";
+  return (
+    <div className="mt-2">
+      <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+        <span>{label}</span>
+        <span>{elapsed}</span>
+      </div>
+      <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+        <div
+          className="h-full bg-amber-500/70 transition-all duration-1000"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+};
+
 const ActionQueue = () => {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
@@ -290,9 +340,12 @@ const ActionQueue = () => {
       attempts: r.attempts ?? 0,
       max_attempts: r.max_attempts ?? 3,
       created_at: r.created_at,
+      started_at: r.started_at ?? null,
       completed_at: r.completed_at ?? null,
       parent_job_id: r.parent_job_id ?? null,
       sequence_step: r.sequence_step ?? null,
+      provider: r.provider ?? null,
+      provider_polled_at: r.provider_polled_at ?? null,
       attachments: deriveAttachments(r.action_type, r.payload),
     }));
     setJobs(mapped);
@@ -338,9 +391,12 @@ const ActionQueue = () => {
             attempts: raw.attempts ?? 0,
             max_attempts: raw.max_attempts ?? 3,
             created_at: raw.created_at,
+            started_at: raw.started_at ?? null,
             completed_at: raw.completed_at ?? null,
             parent_job_id: raw.parent_job_id ?? null,
             sequence_step: raw.sequence_step ?? null,
+            provider: raw.provider ?? null,
+            provider_polled_at: raw.provider_polled_at ?? null,
             attachments: deriveAttachments(raw.action_type, raw.payload),
           };
           setJobs((prev) => {
@@ -370,7 +426,7 @@ const ActionQueue = () => {
     };
   }, [user, authLoading, fetchJobs]);
 
-  const inQueue = useMemo(() => jobs.filter((j) => ["pending", "scheduled", "running", "paused"].includes(j.status)), [jobs]);
+  const inQueue = useMemo(() => jobs.filter((j) => ["pending", "scheduled", "running", "awaiting_provider", "paused"].includes(j.status)), [jobs]);
   const completed = useMemo(() => jobs.filter((j) => j.status === "completed"), [jobs]);
   const failed = useMemo(() => jobs.filter((j) => j.status === "failed" || j.status === "cancelled"), [jobs]);
 
@@ -480,6 +536,9 @@ const ActionQueue = () => {
               {j.scheduled_for ? `Runs ${fmt(j.scheduled_for)}` : `Created ${fmt(j.created_at)}`}
               {j.completed_at && ` · Done ${fmt(j.completed_at)}`}
             </div>
+            {(j.status === "running" || j.status === "awaiting_provider") && (
+              <ProgressIndicator job={j} />
+            )}
 
             <AttachmentsBlock a={j.attachments} onOpenChecklist={(id) => navigate(`/?c=${id}`)} />
             {isFailed && (
