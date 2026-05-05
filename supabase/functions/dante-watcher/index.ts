@@ -100,6 +100,24 @@ async function recoverStale(): Promise<number> {
   return data.length;
 }
 
+async function retry424(): Promise<number> {
+  const { data, error } = await admin
+    .from("checklist_items")
+    .select("id")
+    .eq("checklist_id", DANTE_INBOX_CHECKLIST_ID!)
+    .eq("status", "error")
+    .or("result.ilike.%424%MCP server%,result.ilike.%Failed Dependency%");
+  if (error) {
+    console.error("[dante-watcher] retry424 select error", error);
+    return 0;
+  }
+  if (!data || data.length === 0) return 0;
+  for (const row of data) {
+    await setItem(row.id, { status: null });
+  }
+  return data.length;
+}
+
 async function processItem(item: any): Promise<{ ok: boolean }> {
   const preview = (item.text ?? "").slice(0, 60);
   console.log(`[dante-watcher] claimed item ${item.id} "${preview}"`);
