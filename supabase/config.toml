@@ -29,3 +29,6 @@ verify_jwt = false
 
 [functions.plan-action-sequence]
 verify_jwt = false
+
+[functions.claude-bridge]
+verify_jwt = false
