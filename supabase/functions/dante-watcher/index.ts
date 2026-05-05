@@ -196,17 +196,21 @@ async function processItem(item: any): Promise<{ ok: boolean }> {
 
     const data = await resp.json();
     const { text, toolSummary, hadToolError } = extractFromOpenAI(data);
-    const blocked = /^BLOCKER:/i.test(text.trim()) || (hadToolError && text.trim().length === 0);
-    const fullResult = (text || "(no text returned)") + toolSummary;
+    const replyRaw = stripDanteSaidPrefix(text || "(no text returned)");
+    const blocked = /^BLOCKER:/i.test(replyRaw.trim()) || (hadToolError && replyRaw.trim().length === 0);
+    const newText = `${currentText}\n\n🤖 Dante said: ${replyRaw}`;
+    const metaResult =
+      `[${new Date().toISOString()}] ${blocked ? "blocked" : "ok"}` +
+      (toolSummary ? toolSummary : "");
 
-    if (blocked) {
-      await setItem(item.id, { status: "error", checked: false, result: fullResult });
-      console.log(`[dante-watcher] item ${item.id} -> error (blocked)`);
-      return { ok: false };
-    }
-    await setItem(item.id, { status: "done", checked: true, result: fullResult });
-    console.log(`[dante-watcher] item ${item.id} -> done`);
-    return { ok: true };
+    await setItem(item.id, {
+      text: newText,
+      status: "awaiting_cj",
+      checked: false,
+      result: metaResult,
+    });
+    console.log(`[dante-watcher] item ${item.id} -> awaiting_cj${blocked ? " (blocker)" : ""}`);
+    return { ok: !blocked };
   } catch (e) {
     const aborted = (e as any)?.name === "AbortError";
     const msg = aborted
