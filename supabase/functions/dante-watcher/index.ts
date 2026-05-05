@@ -122,6 +122,12 @@ function stripDanteSaidPrefix(s: string): string {
   return s.replace(/^\s*🤖\s*Dante\s*said\s*:\s*/i, "").trimStart();
 }
 
+function sanitizeCrowns(s: string): string {
+  // Defense in depth: strip 👑 from Dante's reply so a stray crown can't
+  // re-trigger the awaiting_dante status via the DB trigger.
+  return s.replace(/👑/g, "Crown");
+}
+
 async function processItem(item: any): Promise<{ ok: boolean }> {
   const preview = (item.text ?? "").slice(0, 60);
   console.log(`[dante-watcher] claimed item ${item.id} "${preview}"`);
@@ -196,7 +202,7 @@ async function processItem(item: any): Promise<{ ok: boolean }> {
 
     const data = await resp.json();
     const { text, toolSummary, hadToolError } = extractFromOpenAI(data);
-    const replyRaw = stripDanteSaidPrefix(text || "(no text returned)");
+    const replyRaw = sanitizeCrowns(stripDanteSaidPrefix(text || "(no text returned)"));
     const blocked = /^BLOCKER:/i.test(replyRaw.trim()) || (hadToolError && replyRaw.trim().length === 0);
     const newText = `${currentText}\n\n🤖 Dante said: ${replyRaw}`;
     const metaResult =
