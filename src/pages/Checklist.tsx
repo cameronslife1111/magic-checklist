@@ -1453,21 +1453,21 @@ const ChecklistPage = () => {
           ) : (
             <div className="flex gap-0">
               <Button
+                aria-label="Open Actions (long-press: add new checkbox)"
                 onPointerDown={(e) => {
                   e.preventDefault();
                   actionsLongPressFiredRef.current = false;
                   primeSpeech();
+                  // Focus the hidden keepalive input synchronously inside the
+                  // user gesture so iOS keeps the keyboard available for the
+                  // new textarea after the async insert.
+                  keepaliveRef.current?.focus({ preventScroll: true });
                   if (actionsLongPressTimerRef.current) window.clearTimeout(actionsLongPressTimerRef.current);
-                  actionsLongPressTimerRef.current = window.setTimeout(() => {
+                  actionsLongPressTimerRef.current = window.setTimeout(async () => {
                     actionsLongPressFiredRef.current = true;
-                    if (highestUnchecked) {
-                      scrollItemToCenter(highestUnchecked.id);
-                      const text = highestUnchecked.linked_checklist_id
-                        ? (highestUnchecked.text || "Open checklist")
-                        : highestUnchecked.text;
-                      if (text) speak(text);
-                    }
-                  }, 500);
+                    keepaliveRef.current?.focus({ preventScroll: true });
+                    await addNewBeforeCurrent();
+                  }, 600);
                 }}
                 onPointerUp={() => {
                   if (actionsLongPressTimerRef.current) {
@@ -1475,6 +1475,7 @@ const ChecklistPage = () => {
                     actionsLongPressTimerRef.current = null;
                   }
                   if (!actionsLongPressFiredRef.current) {
+                    keepaliveRef.current?.blur();
                     stopSpeech();
                     setActionsOpen(true);
                   }
@@ -1484,12 +1485,14 @@ const ChecklistPage = () => {
                     window.clearTimeout(actionsLongPressTimerRef.current);
                     actionsLongPressTimerRef.current = null;
                   }
+                  keepaliveRef.current?.blur();
                 }}
                 onPointerCancel={() => {
                   if (actionsLongPressTimerRef.current) {
                     window.clearTimeout(actionsLongPressTimerRef.current);
                     actionsLongPressTimerRef.current = null;
                   }
+                  keepaliveRef.current?.blur();
                 }}
                 onContextMenu={(e) => e.preventDefault()}
                 style={{ ["--shimmer-delay" as any]: "0s" }}
@@ -1498,24 +1501,20 @@ const ChecklistPage = () => {
                 Actions
               </Button>
               <Button
-                aria-label="Open top checklist (long-press: add new item)"
+                aria-label="Open top checklist (long-press: open current item's link)"
                 onPointerDown={(e) => {
                   e.preventDefault();
                   homeLongPressFiredRef.current = false;
-                  // Focus the hidden keepalive input synchronously inside the
-                  // user gesture. On iOS this is required so the keyboard can
-                  // be shown later when we hand focus over to the new textarea.
-                  // The input has inputMode="none" so this focus does NOT raise
-                  // the keyboard on its own — only the eventual textarea focus does.
-                  keepaliveRef.current?.focus({ preventScroll: true });
                   if (homeLongPressTimerRef.current) window.clearTimeout(homeLongPressTimerRef.current);
                   homeLongPressTimerRef.current = window.setTimeout(async () => {
                     homeLongPressFiredRef.current = true;
-                    primeSpeech();
-                    // Re-focus right before the async insert to keep the
-                    // keyboard session alive across the await.
-                    keepaliveRef.current?.focus({ preventScroll: true });
-                    await addNewBeforeCurrent();
+                    if (highestUnchecked?.linked_checklist_id) {
+                      await openChecklist(highestUnchecked.linked_checklist_id);
+                    } else if (highestUnchecked?.external_link) {
+                      window.open(highestUnchecked.external_link, "_blank", "noopener,noreferrer");
+                    } else {
+                      toast.message("No link on current item");
+                    }
                   }, 600);
                 }}
                 onPointerUp={async (e) => {
@@ -1525,7 +1524,6 @@ const ChecklistPage = () => {
                     homeLongPressTimerRef.current = null;
                   }
                   if (homeLongPressFiredRef.current) return;
-                  keepaliveRef.current?.blur();
 
                   // Cycle through Home Favorites (up to 5 user-chosen slots).
                   const targetId = nextFavoriteAfter(checklist.id);
@@ -1542,7 +1540,6 @@ const ChecklistPage = () => {
                     window.clearTimeout(homeLongPressTimerRef.current);
                     homeLongPressTimerRef.current = null;
                   }
-                  keepaliveRef.current?.blur();
                 }}
                 onContextMenu={(e) => e.preventDefault()}
                 style={{ ["--shimmer-delay" as any]: "1.6s" }}
@@ -1550,6 +1547,7 @@ const ChecklistPage = () => {
               >
                 🏠
               </Button>
+
               <Button
                 aria-label="Check current and advance (long-press: go back one)"
                 onPointerDown={(e) => {
