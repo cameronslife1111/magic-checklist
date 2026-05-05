@@ -22,7 +22,7 @@ type Job = {
   checklist_id: string;
   source_item_id: string | null;
   action_type: string;
-  status: "pending" | "scheduled" | "running" | "completed" | "failed" | "paused" | "cancelled";
+  status: "pending" | "scheduled" | "running" | "awaiting_provider" | "completed" | "failed" | "paused" | "cancelled";
   prompt_preview: string | null;
   error_raw: string | null;
   error_friendly: string | null;
