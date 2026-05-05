@@ -58,6 +58,29 @@ mcp.tool("fetchChecklist", {
   },
 });
 
+mcp.tool("createChecklist", {
+  description: "Create a new checklist for the user with a given title and optional background color. Returns the new checklist_id and full row.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      user_id: { type: "string", description: "Owner user UUID" },
+      title: { type: "string", description: "Checklist title" },
+      background_color: { type: "string", description: "Hex color like '#fcfbf8' (optional)" },
+    },
+    required: ["user_id", "title"],
+  },
+  handler: async ({ user_id, title, background_color }: any) => {
+    const insert: any = { user_id, title };
+    if (background_color && typeof background_color === "string") {
+      insert.background_color = background_color;
+    }
+    const { data, error } = await admin
+      .from("checklists").insert(insert).select().single();
+    if (error) return text({ error: error.message });
+    return text({ checklist_id: data.id, checklist: data });
+  },
+});
+
 mcp.tool("fetchItems", {
   description: "Fetch all items in a checklist, ordered by position.",
   inputSchema: {
