@@ -255,6 +255,41 @@ const GroupedJobList = ({
   );
 };
 
+const ProgressIndicator = ({ job }: { job: Job }) => {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
+  const start = job.started_at ? new Date(job.started_at).getTime() : new Date(job.created_at).getTime();
+  const elapsedMs = Math.max(0, now - start);
+  const s = Math.floor(elapsedMs / 1000);
+  const mm = Math.floor(s / 60);
+  const ss = s % 60;
+  const elapsed = mm > 0 ? `${mm}m ${ss}s` : `${ss}s`;
+  // Heuristic ETA caps so the bar moves visibly: video jobs ~2min, others ~30s.
+  const isVideo = job.action_type.includes("video");
+  const cap = isVideo ? 120_000 : 30_000;
+  const pct = Math.min(95, Math.round((elapsedMs / cap) * 100));
+  const label = job.status === "awaiting_provider"
+    ? `Waiting on ${job.provider ?? "provider"}…`
+    : "Processing…";
+  return (
+    <div className="mt-2">
+      <div className="flex items-center justify-between text-xs text-muted-foreground mb-1">
+        <span>{label}</span>
+        <span>{elapsed}</span>
+      </div>
+      <div className="h-1.5 w-full rounded-full bg-muted overflow-hidden">
+        <div
+          className="h-full bg-amber-500/70 transition-all duration-1000"
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+    </div>
+  );
+};
+
 const ActionQueue = () => {
   const { user, loading: authLoading } = useAuth();
   const navigate = useNavigate();
