@@ -297,7 +297,7 @@ mcp.tool("triggerJob", {
       user_id: { type: "string" },
       checklist_id: { type: "string" },
       action_type: { type: "string", enum: VALID_JOB_ACTIONS },
-      payload: { type: "object", description: "Action-specific payload (e.g. { prompt, model, ... })" },
+      payload: PAYLOAD_SCHEMA,
       source_item_id: { type: "string" },
       scheduled_for: { type: "string", description: "ISO timestamp; if set, job is scheduled instead of pending" },
       recurrence: { type: "object" },
@@ -308,6 +308,8 @@ mcp.tool("triggerJob", {
     if (!VALID_JOB_ACTIONS.includes(args.action_type)) {
       return text({ error: `invalid action_type. allowed: ${VALID_JOB_ACTIONS.join(", ")}` });
     }
+    const validationErr = validateActionPayload(args.action_type, args.payload);
+    if (validationErr) return text({ error: validationErr });
     const status = args.scheduled_for ? "scheduled" : "pending";
     const promptPreview = typeof args.payload?.prompt === "string"
       ? String(args.payload.prompt).slice(0, 500) : null;
