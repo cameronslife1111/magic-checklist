@@ -162,6 +162,35 @@ async function insertResultItem(
   const isSequenceChild = !!job.parent_job_id;
   const anchorItemId = isSequenceChild ? null : job.source_item_id;
 
+  // If we have a real source item (non-sequence), update it in place with the
+  // result media instead of inserting a new row. This lets the source checkbox
+  // become the result (e.g. video-to-video replaces the line that triggered it).
+  if (anchorItemId && (fields.media_url || fields.media_type)) {
+    const { data: existing } = await supabase
+      .from("checklist_items")
+      .select("id")
+      .eq("id", anchorItemId)
+      .eq("checklist_id", job.checklist_id)
+      .maybeSingle();
+    if (existing) {
+      const patch: Record<string, unknown> = {
+        media_url: fields.media_url ?? null,
+        media_type: fields.media_type ?? null,
+      };
+      // Only overwrite text if the caller passed something meaningful AND the
+      // current text would become misleading. We keep the user's wording by
+      // default — only set text if it's currently empty.
+      const { data: cur } = await supabase
+        .from("checklist_items").select("text").eq("id", anchorItemId).maybeSingle();
+      if (!cur?.text || !String(cur.text).trim()) patch.text = fields.text;
+      const { error } = await supabase
+        .from("checklist_items").update(patch).eq("id", anchorItemId);
+      if (error) throw new Error(`update item failed: ${error.message}`);
+      return;
+    }
+    // fall through to insert if the source item was deleted
+  }
+
   const { data: list } = await supabase
     .from("checklist_items")
     .select("id,position")

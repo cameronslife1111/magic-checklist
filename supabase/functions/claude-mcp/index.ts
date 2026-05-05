@@ -154,6 +154,75 @@ mcp.tool("triggerJob", {
   },
 });
 
+mcp.tool("createItemAndTriggerJob", {
+  description: `Create a new checklist item with the given text, then immediately enqueue an action job whose source_item_id is that new item. Returns { item_id, job_id }. When the job completes, its result media will be written back into the new item. action_type must be one of: ${VALID_JOB_ACTIONS.join(", ")}.`,
+  inputSchema: {
+    type: "object",
+    properties: {
+      user_id: { type: "string" },
+      checklist_id: { type: "string" },
+      text: { type: "string", description: "Text for the new checklist item" },
+      position: { type: "number" },
+      parent_item_id: { type: "string" },
+      action_type: { type: "string", enum: VALID_JOB_ACTIONS },
+      payload: { type: "object" },
+      scheduled_for: { type: "string" },
+      recurrence: { type: "object" },
+    },
+    required: ["user_id", "checklist_id", "text", "action_type"],
+  },
+  handler: async (args: any) => {
+    if (!VALID_JOB_ACTIONS.includes(args.action_type)) {
+      return text({ error: `invalid action_type. allowed: ${VALID_JOB_ACTIONS.join(", ")}` });
+    }
+    const { data: item, error: itemErr } = await admin
+      .from("checklist_items").insert({
+        checklist_id: args.checklist_id,
+        user_id: args.user_id,
+        text: args.text,
+        position: typeof args.position === "number" ? args.position : Date.now(),
+        parent_item_id: args.parent_item_id ?? null,
+      }).select("id").single();
+    if (itemErr) return text({ error: `create item failed: ${itemErr.message}` });
+
+    const status = args.scheduled_for ? "scheduled" : "pending";
+    const promptPreview = typeof args.payload?.prompt === "string"
+      ? String(args.payload.prompt).slice(0, 500) : null;
+
+    const { data: job, error: jobErr } = await admin
+      .from("action_jobs").insert({
+        user_id: args.user_id,
+        checklist_id: args.checklist_id,
+        source_item_id: item.id,
+        action_type: args.action_type,
+        status,
+        payload: args.payload ?? {},
+        prompt_preview: promptPreview,
+        scheduled_for: args.scheduled_for ?? null,
+        recurrence: args.recurrence ?? null,
+      }).select("id, status").single();
+    if (jobErr) {
+      // Roll back the orphan item so we don't leave dangling rows.
+      await admin.from("checklist_items").delete().eq("id", item.id);
+      return text({ error: `create job failed: ${jobErr.message}` });
+    }
+
+    if (status === "pending") {
+      fetch(`${SUPABASE_URL}/functions/v1/process-action-queue`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${SERVICE_ROLE}`,
+          apikey: SERVICE_ROLE,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ trigger: "claude-mcp", id: job.id }),
+      }).catch((err) => console.error("worker kick failed", err));
+    }
+
+    return text({ item_id: item.id, job_id: job.id, status: job.status });
+  },
+});
+
 mcp.tool("pollJob", {
   description: "Get the current status and result of a job by id.",
   inputSchema: {
