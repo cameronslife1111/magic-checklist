@@ -541,7 +541,7 @@ const ACTION_SCHEMAS: Record<string, any> = {
     payload: {
       prompt: { type: "string", required: true },
       sourceUrl: { type: "string", required: true, note: "Start-frame image URL (or ctx.imageUrls[0] fallback)" },
-      duration: { type: "string", required: false, note: '"5" or "10"' },
+      duration: { type: "string", required: false, note: 'Only "5" or "10" are supported by Kling v3 image-to-video. 12s is NOT supported — chain two clips instead.' },
       generateAudio: { type: "boolean", required: false },
       negativePrompt: { type: "string", required: false },
       cfgScale: { type: "number", required: false, note: "Typically 0–1" },
