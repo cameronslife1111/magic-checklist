@@ -220,7 +220,9 @@ app.all("/*", async (c) => {
       status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
     });
   }
-  const provided = c.req.header("x-claude-key") ?? "";
+  const provided = c.req.header("x-claude-key")
+    ?? c.req.query("key")
+    ?? "";
   if (!timingSafeEqual(BRIDGE_KEY, provided)) {
     return new Response(JSON.stringify({ error: "Unauthorized" }), {
       status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" },
