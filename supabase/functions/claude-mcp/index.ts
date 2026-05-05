@@ -196,6 +196,36 @@ mcp.tool("getRecentJobs", {
   },
 });
 
+mcp.tool("fetchMedia", {
+  description: "Search the user's media gallery (media_assets table). Use this to find images, videos, or audio files by fuzzy title match. If no query is given, returns the most recent items. Always scoped to user_id.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      user_id: { type: "string", description: "Owner user UUID" },
+      query: { type: "string", description: "Fuzzy title search (matches with %query% ilike). Omit to get most recent." },
+      kind: { type: "string", enum: ["image", "video", "audio"], description: "Filter by media type" },
+      limit: { type: "number", description: "Max results (default 10, max 50)" },
+    },
+    required: ["user_id"],
+  },
+  handler: async ({ user_id, query, kind, limit }: any) => {
+    const cap = Math.min(Math.max(Number(limit) || 10, 1), 50);
+    let q = admin
+      .from("media_assets")
+      .select("id, kind, url, title, mime_type, width, height, duration_seconds, size_bytes, created_at, storage_path")
+      .eq("user_id", user_id)
+      .order("created_at", { ascending: false })
+      .limit(cap);
+    if (kind) q = q.eq("kind", kind);
+    if (query && String(query).trim()) {
+      q = q.ilike("title", `%${String(query).trim()}%`);
+    }
+    const { data, error } = await q;
+    if (error) return text({ error: error.message });
+    return text({ media: data ?? [] });
+  },
+});
+
 const transport = new StreamableHttpTransport();
 const httpHandler = transport.bind(mcp);
 const app = new Hono();
