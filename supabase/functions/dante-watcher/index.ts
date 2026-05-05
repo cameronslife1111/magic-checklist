@@ -2,7 +2,8 @@ import { createClient } from "@supabase/supabase-js";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers":
+    "authorization, x-client-info, apikey, content-type, x-dante-cron-secret",
 };
 
 const json = (status: number, body: unknown) =>
@@ -17,8 +18,13 @@ const OPENAI_API_KEY = Deno.env.get("OPENAI_API_KEY");
 const DANTE_INBOX_CHECKLIST_ID = Deno.env.get("DANTE_INBOX_CHECKLIST_ID");
 const DANTE_SYSTEM_PROMPT = Deno.env.get("DANTE_SYSTEM_PROMPT") ?? "";
 const MAGIC_CHECKLIST_MCP_URL = Deno.env.get("MAGIC_CHECKLIST_MCP_URL");
+const DANTE_CRON_SECRET = Deno.env.get("DANTE_CRON_SECRET");
 
 const admin = createClient(SUPABASE_URL, SERVICE_ROLE);
+
+const ITEM_TIMEOUT_MS = 4 * 60 * 1000;
+const STALE_AFTER = "10 minutes";
+const BATCH_SIZE = 3;
 
 async function setItem(item_id: string, patch: Record<string, unknown>) {
   patch.updated_at = new Date().toISOString();
@@ -26,10 +32,14 @@ async function setItem(item_id: string, patch: Record<string, unknown>) {
     .from("checklist_items")
     .update(patch)
     .eq("id", item_id);
-  if (error) console.error("setItem error", item_id, error);
+  if (error) console.error("[dante-watcher] setItem error", item_id, error);
 }
 
-function extractFromOpenAI(data: any): { text: string; toolSummary: string; hadToolError: boolean } {
+function extractFromOpenAI(data: any): {
+  text: string;
+  toolSummary: string;
+  hadToolError: boolean;
+} {
   const parts: string[] = [];
   const tools: string[] = [];
   let hadToolError = false;
@@ -50,7 +60,6 @@ function extractFromOpenAI(data: any): { text: string; toolSummary: string; hadT
       }
     }
   }
-  // Fallback: top-level output_text
   if (parts.length === 0 && typeof data?.output_text === "string") {
     parts.push(data.output_text);
   }
@@ -61,115 +70,188 @@ function extractFromOpenAI(data: any): { text: string; toolSummary: string; hadT
   };
 }
 
+function authorized(req: Request): boolean {
+  const auth = req.headers.get("authorization") ?? "";
+  if (auth === `Bearer ${SERVICE_ROLE}`) return true;
+  const cronSecret = req.headers.get("x-dante-cron-secret");
+  if (DANTE_CRON_SECRET && cronSecret === DANTE_CRON_SECRET) return true;
+  return false;
+}
+
+async function recoverStale(): Promise<number> {
+  const cutoffIso = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+  const { data, error } = await admin
+    .from("checklist_items")
+    .select("id, result")
+    .eq("checklist_id", DANTE_INBOX_CHECKLIST_ID!)
+    .eq("status", "in_progress")
+    .lt("updated_at", cutoffIso);
+  if (error) {
+    console.error("[dante-watcher] recoverStale select error", error);
+    return 0;
+  }
+  if (!data || data.length === 0) return 0;
+  for (const row of data) {
+    const note = `Auto-recovered from stuck in_progress on ${new Date().toISOString()}.`;
+    const newResult = row.result ? `${row.result}\n${note}` : note;
+    await setItem(row.id, { status: null, result: newResult });
+  }
+  return data.length;
+}
+
+async function processItem(item: any): Promise<{ ok: boolean }> {
+  const preview = (item.text ?? "").slice(0, 60);
+  console.log(`[dante-watcher] claimed item ${item.id} "${preview}"`);
+
+  if (!OPENAI_API_KEY) {
+    await setItem(item.id, { status: "error", checked: false, result: "OPENAI_API_KEY not configured" });
+    console.log(`[dante-watcher] item ${item.id} -> error`);
+    return { ok: false };
+  }
+  if (!MAGIC_CHECKLIST_MCP_URL) {
+    await setItem(item.id, { status: "error", checked: false, result: "MAGIC_CHECKLIST_MCP_URL not configured" });
+    console.log(`[dante-watcher] item ${item.id} -> error`);
+    return { ok: false };
+  }
+
+  const userInput =
+    `TASK:\n${item.text ?? ""}\n\nCONTEXT:\n` +
+    `item_id=${item.id}\n` +
+    `user_id=${item.user_id}\n` +
+    `checklist_id=${item.checklist_id}\n` +
+    `created_at=${item.created_at}`;
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ITEM_TIMEOUT_MS);
+
+  try {
+    const resp = await fetch("https://api.openai.com/v1/responses", {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${OPENAI_API_KEY}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "gpt-5.5",
+        instructions: DANTE_SYSTEM_PROMPT,
+        input: userInput,
+        tools: [
+          {
+            type: "mcp",
+            server_label: "magic-checklist",
+            server_url: MAGIC_CHECKLIST_MCP_URL,
+            require_approval: "never",
+          },
+        ],
+        max_output_tokens: 4096,
+      }),
+    });
+
+    if (!resp.ok) {
+      const errBody = await resp.text();
+      const friendly =
+        resp.status === 429 ? "OpenAI rate-limited (429)." :
+        resp.status === 402 ? "OpenAI payment required (402)." :
+        `OpenAI ${resp.status}`;
+      await setItem(item.id, {
+        status: "error",
+        checked: false,
+        result: `${friendly}\n\n${errBody.slice(0, 2000)}`,
+      });
+      console.log(`[dante-watcher] item ${item.id} -> error (${friendly})`);
+      return { ok: false };
+    }
+
+    const data = await resp.json();
+    const { text, toolSummary, hadToolError } = extractFromOpenAI(data);
+    const blocked = /^BLOCKER:/i.test(text.trim()) || (hadToolError && text.trim().length === 0);
+    const fullResult = (text || "(no text returned)") + toolSummary;
+
+    if (blocked) {
+      await setItem(item.id, { status: "error", checked: false, result: fullResult });
+      console.log(`[dante-watcher] item ${item.id} -> error (blocked)`);
+      return { ok: false };
+    }
+    await setItem(item.id, { status: "done", checked: true, result: fullResult });
+    console.log(`[dante-watcher] item ${item.id} -> done`);
+    return { ok: true };
+  } catch (e) {
+    const aborted = (e as any)?.name === "AbortError";
+    const msg = aborted
+      ? `Timed out after ${ITEM_TIMEOUT_MS / 1000}s.`
+      : e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+    await setItem(item.id, { status: "error", checked: false, result: msg });
+    console.log(`[dante-watcher] item ${item.id} -> error (${aborted ? "timeout" : "exception"})`);
+    return { ok: false };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response(null, { headers: corsHeaders });
 
-  let item_id: string | null = null;
+  if (!authorized(req)) {
+    return json(401, { error: "unauthorized" });
+  }
+
+  if (!DANTE_INBOX_CHECKLIST_ID) {
+    return json(200, { error: "DANTE_INBOX_CHECKLIST_ID not configured" });
+  }
+
+  const tickStart = new Date().toISOString();
+  console.log(`[dante-watcher] tick start ${tickStart}`);
+
+  // Concurrency guard
+  const { data: lockData, error: lockErr } = await admin.rpc("dante_try_lock");
+  if (lockErr) {
+    console.error("[dante-watcher] try_lock error", lockErr);
+    return json(200, { error: "lock_error", detail: lockErr.message });
+  }
+  if (lockData !== true) {
+    console.log("[dante-watcher] skipped: lock held");
+    return json(200, { skipped: true, reason: "lock_held" });
+  }
+
+  let processed = 0;
+  let errors = 0;
+  let recovered = 0;
+  const item_ids: string[] = [];
 
   try {
-    const body = await req.json().catch(() => ({}));
-    const record = body?.record ?? body?.new ?? null;
-    if (!record?.id || !record?.checklist_id) {
-      return json(200, { skipped: "no record" });
-    }
-    item_id = record.id;
+    recovered = await recoverStale();
+    if (recovered > 0) console.log(`[dante-watcher] recovered ${recovered} stale items`);
 
-    if (!DANTE_INBOX_CHECKLIST_ID || record.checklist_id !== DANTE_INBOX_CHECKLIST_ID) {
-      return json(200, { skipped: "not dante inbox" });
-    }
-
-    // Re-delivery guard: only process when status is null
-    if (record.status != null) {
-      return json(200, { skipped: `already ${record.status}` });
+    const { data: claimed, error: claimErr } = await admin.rpc("dante_claim_items", {
+      p_checklist_id: DANTE_INBOX_CHECKLIST_ID,
+      p_limit: BATCH_SIZE,
+    });
+    if (claimErr) {
+      console.error("[dante-watcher] claim error", claimErr);
+      return json(200, { error: "claim_error", detail: claimErr.message });
     }
 
-    // Validate config
-    if (!OPENAI_API_KEY) {
-      await setItem(item_id!, { status: "error", result: "OPENAI_API_KEY not configured" });
-      return json(200, { error: "missing OPENAI_API_KEY" });
+    const items = (claimed ?? []) as any[];
+    for (const item of items) {
+      item_ids.push(item.id);
+      try {
+        const { ok } = await processItem(item);
+        processed += 1;
+        if (!ok) errors += 1;
+      } catch (e) {
+        errors += 1;
+        const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+        console.error(`[dante-watcher] item ${item.id} unhandled`, msg);
+        await setItem(item.id, { status: "error", checked: false, result: `Watcher exception: ${msg}` });
+      }
     }
-    if (!MAGIC_CHECKLIST_MCP_URL) {
-      await setItem(item_id!, { status: "error", result: "MAGIC_CHECKLIST_MCP_URL not configured" });
-      return json(200, { error: "missing MAGIC_CHECKLIST_MCP_URL" });
-    }
-
-    // Mark in_progress
-    await setItem(item_id!, { status: "in_progress" });
-
-    const userInput =
-      `TASK:\n${record.text ?? ""}\n\nCONTEXT:\n` +
-      `item_id=${record.id}\n` +
-      `user_id=${record.user_id}\n` +
-      `checklist_id=${record.checklist_id}\n` +
-      `created_at=${record.created_at}`;
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 5 * 60 * 1000);
-
-    let openaiResp: Response;
-    try {
-      openaiResp = await fetch("https://api.openai.com/v1/responses", {
-        method: "POST",
-        signal: controller.signal,
-        headers: {
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          model: "gpt-5.5",
-          instructions: DANTE_SYSTEM_PROMPT,
-          input: userInput,
-          tools: [
-            {
-              type: "mcp",
-              server_label: "magic-checklist",
-              server_url: MAGIC_CHECKLIST_MCP_URL,
-              require_approval: "never",
-            },
-          ],
-          max_output_tokens: 4096,
-        }),
-      });
-    } finally {
-      clearTimeout(timeout);
-    }
-
-    if (!openaiResp.ok) {
-      const errBody = await openaiResp.text();
-      console.error("openai error", openaiResp.status, errBody.slice(0, 1000));
-      const friendly =
-        openaiResp.status === 429 ? "OpenAI rate-limited (429)." :
-        openaiResp.status === 402 ? "OpenAI payment required (402)." :
-        `OpenAI ${openaiResp.status}`;
-      await setItem(item_id!, {
-        status: "error",
-        result: `${friendly}\n\n${errBody.slice(0, 2000)}`,
-      });
-      return json(200, { error: friendly });
-    }
-
-    const data = await openaiResp.json();
-    const { text: finalText, toolSummary, hadToolError } = extractFromOpenAI(data);
-
-    const blocked =
-      /^BLOCKER:/i.test(finalText.trim()) ||
-      (hadToolError && finalText.trim().length === 0);
-
-    const fullResult = (finalText || "(no text returned)") + toolSummary;
-
-    if (blocked) {
-      await setItem(item_id!, { status: "error", checked: false, result: fullResult });
-    } else {
-      await setItem(item_id!, { status: "done", checked: true, result: fullResult });
-    }
-
-    return json(200, { ok: true, blocked });
-  } catch (e) {
-    const msg = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
-    console.error("dante-watcher fatal", msg);
-    if (item_id) {
-      await setItem(item_id, { status: "error", result: `Watcher exception: ${msg}` });
-    }
-    return json(200, { error: msg });
+  } finally {
+    const { error: unlockErr } = await admin.rpc("dante_unlock");
+    if (unlockErr) console.error("[dante-watcher] unlock error", unlockErr);
   }
+
+  const summary = { processed, recovered, errors, item_ids };
+  console.log(`[dante-watcher] tick complete:`, summary);
+  return json(200, summary);
 });
