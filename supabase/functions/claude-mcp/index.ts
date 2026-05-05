@@ -35,8 +35,119 @@ const text = (obj: unknown) => ({
 
 const mcp = new McpServer({
   name: "magic-checklist-bridge",
-  version: "1.0.0",
+  version: "1.1.0",
 });
+
+const PAYLOAD_SCHEMA = {
+  type: "object",
+  additionalProperties: true,
+  description:
+    "Action-specific payload. Call describeAction({ action_type }) for the exact shape. Common fields below — only the ones relevant to your action_type are used.",
+  properties: {
+    prompt: { type: "string", description: "Required for almost every action_type." },
+    model: { type: "string" },
+    aspectRatio: { type: "string", description: "1:1 | 16:9 | 9:16 | 4:3 | 3:4" },
+    quality: { type: "string", description: "low | medium | high" },
+    refImageUrls: { type: "array", items: { type: "string" }, description: "image-image / remix" },
+    sourceUrl: {
+      type: "string",
+      description: "image-video: start-frame image URL. video-video: source video URL.",
+    },
+    sourceKind: {
+      type: "string",
+      enum: ["image", "video"],
+      description: "Usually inferred from action_type; the worker sets this automatically.",
+    },
+    duration: {
+      type: "string",
+      description:
+        'Kling v3 image-to-video: only "5" or "10" are supported. 12s is NOT supported — chain two clips instead.',
+    },
+    generateAudio: { type: "boolean" },
+    negativePrompt: { type: "string" },
+    cfgScale: { type: "number" },
+    endImageUrl: { type: "string" },
+    imageUrl: {
+      type: "string",
+      description: "video-video reference char / audio-image-video portrait / analyze-image",
+    },
+    characterOrientation: { type: "string", enum: ["image", "video"] },
+    keepOriginalSound: { type: "boolean" },
+    elementImageUrl: { type: "string" },
+    audioUrl: { type: "string" },
+    voice: { type: "string" },
+    talkingStyle: { type: "string" },
+    resolution: { type: "string" },
+    caption: { type: "string" },
+    imageDataUrl: { type: "string" },
+    output_checklist_id: { type: "string" },
+    max_steps: { type: "number" },
+    max_images: { type: "number" },
+    max_videos: { type: "number" },
+    max_runtime_minutes: { type: "number" },
+    max_images_per_step: { type: "number" },
+    max_failures: { type: "number" },
+    allowed_actions: { type: "array", items: { type: "string" } },
+    context: {
+      type: "object",
+      additionalProperties: true,
+      properties: {
+        checklists: { type: "array", items: { type: "string" } },
+        media: {
+          type: "array",
+          items: {
+            type: "object",
+            additionalProperties: true,
+            properties: {
+              type: { type: "string", enum: ["image", "video", "audio"] },
+              url: { type: "string" },
+            },
+          },
+        },
+      },
+    },
+  },
+} as const;
+
+const PROMPT_REQUIRED_ACTIONS = new Set([
+  "text-text", "text-image", "image-image", "remix",
+  "image-video", "video-video", "analyze-image", "web-search",
+  "action-sequence",
+]);
+
+function validateActionPayload(action_type: string, payload: any): string | null {
+  const p = payload ?? {};
+  if (PROMPT_REQUIRED_ACTIONS.has(action_type)) {
+    if (typeof p.prompt !== "string" || p.prompt.trim() === "") {
+      return `${action_type} requires payload.prompt (non-empty string). Call describeAction({ action_type: "${action_type}" }) for the full schema.`;
+    }
+  }
+  if (action_type === "image-video" || action_type === "video-video") {
+    if (typeof p.sourceUrl !== "string" || p.sourceUrl.trim() === "") {
+      return `${action_type} requires payload.sourceUrl (use fetchMedia to find one). For image-video pass a start-frame image URL; for video-video pass a source video URL.`;
+    }
+    if (action_type === "video-video" && (typeof p.imageUrl !== "string" || p.imageUrl.trim() === "")) {
+      return `video-video requires payload.imageUrl (reference character image URL).`;
+    }
+    if (action_type === "image-video" && p.duration != null) {
+      const d = String(p.duration);
+      if (d !== "5" && d !== "10") {
+        return `image-video duration must be "5" or "10" (Kling v3 image-to-video does not support ${d}s — chain clips for longer videos).`;
+      }
+    }
+  }
+  if (action_type === "audio-image-video") {
+    if (typeof p.imageUrl !== "string" || p.imageUrl.trim() === "") {
+      return `audio-image-video requires payload.imageUrl (portrait image URL).`;
+    }
+  }
+  if (action_type === "action-sequence") {
+    if (typeof p.output_checklist_id !== "string" || p.output_checklist_id.trim() === "") {
+      return `action-sequence requires payload.output_checklist_id.`;
+    }
+  }
+  return null;
+}
 
 mcp.tool("fetchChecklist", {
   description: "Find checklists for a user by (case-insensitive) title match. Returns up to 10 matches.",
@@ -186,7 +297,7 @@ mcp.tool("triggerJob", {
       user_id: { type: "string" },
       checklist_id: { type: "string" },
       action_type: { type: "string", enum: VALID_JOB_ACTIONS },
-      payload: { type: "object", description: "Action-specific payload (e.g. { prompt, model, ... })" },
+      payload: PAYLOAD_SCHEMA,
       source_item_id: { type: "string" },
       scheduled_for: { type: "string", description: "ISO timestamp; if set, job is scheduled instead of pending" },
       recurrence: { type: "object" },
@@ -197,6 +308,8 @@ mcp.tool("triggerJob", {
     if (!VALID_JOB_ACTIONS.includes(args.action_type)) {
       return text({ error: `invalid action_type. allowed: ${VALID_JOB_ACTIONS.join(", ")}` });
     }
+    const validationErr = validateActionPayload(args.action_type, args.payload);
+    if (validationErr) return text({ error: validationErr });
     const status = args.scheduled_for ? "scheduled" : "pending";
     const promptPreview = typeof args.payload?.prompt === "string"
       ? String(args.payload.prompt).slice(0, 500) : null;
@@ -241,7 +354,7 @@ mcp.tool("createItemAndTriggerJob", {
       position: { type: "number" },
       parent_item_id: { type: "string" },
       action_type: { type: "string", enum: VALID_JOB_ACTIONS },
-      payload: { type: "object" },
+      payload: PAYLOAD_SCHEMA,
       scheduled_for: { type: "string" },
       recurrence: { type: "object" },
     },
@@ -251,6 +364,8 @@ mcp.tool("createItemAndTriggerJob", {
     if (!VALID_JOB_ACTIONS.includes(args.action_type)) {
       return text({ error: `invalid action_type. allowed: ${VALID_JOB_ACTIONS.join(", ")}` });
     }
+    const validationErr = validateActionPayload(args.action_type, args.payload);
+    if (validationErr) return text({ error: validationErr });
     const { data: item, error: itemErr } = await admin
       .from("checklist_items").insert({
         checklist_id: args.checklist_id,
@@ -426,7 +541,7 @@ const ACTION_SCHEMAS: Record<string, any> = {
     payload: {
       prompt: { type: "string", required: true },
       sourceUrl: { type: "string", required: true, note: "Start-frame image URL (or ctx.imageUrls[0] fallback)" },
-      duration: { type: "string", required: false, note: '"5" or "10"' },
+      duration: { type: "string", required: false, note: 'Only "5" or "10" are supported by Kling v3 image-to-video. 12s is NOT supported — chain two clips instead.' },
       generateAudio: { type: "boolean", required: false },
       negativePrompt: { type: "string", required: false },
       cfgScale: { type: "number", required: false, note: "Typically 0–1" },
