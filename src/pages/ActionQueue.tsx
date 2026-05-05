@@ -356,9 +356,12 @@ const ActionQueue = () => {
             attempts: raw.attempts ?? 0,
             max_attempts: raw.max_attempts ?? 3,
             created_at: raw.created_at,
+            started_at: raw.started_at ?? null,
             completed_at: raw.completed_at ?? null,
             parent_job_id: raw.parent_job_id ?? null,
             sequence_step: raw.sequence_step ?? null,
+            provider: raw.provider ?? null,
+            provider_polled_at: raw.provider_polled_at ?? null,
             attachments: deriveAttachments(raw.action_type, raw.payload),
           };
           setJobs((prev) => {
