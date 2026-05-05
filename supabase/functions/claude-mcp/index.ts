@@ -125,6 +125,47 @@ mcp.tool("addItem", {
   },
 });
 
+mcp.tool("updateItem", {
+  description: "Partially update a checklist item by id. Only fields you pass are changed; others are left untouched. Pass an empty string for linked_checklist_id or external_link to clear it. Scoped to user_id for ownership.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      item_id: { type: "string", description: "UUID of the checklist item" },
+      user_id: { type: "string", description: "Owner user UUID (ownership check)" },
+      text: { type: "string" },
+      checked: { type: "boolean" },
+      position: { type: "number" },
+      linked_checklist_id: { type: "string", description: "Empty string clears the link" },
+      external_link: { type: "string", description: "Empty string clears the link" },
+    },
+    required: ["item_id", "user_id"],
+  },
+  handler: async (args: any) => {
+    const patch: Record<string, any> = {};
+    if (typeof args.text === "string") patch.text = args.text;
+    if (typeof args.checked === "boolean") patch.checked = args.checked;
+    if (typeof args.position === "number") patch.position = args.position;
+    if (typeof args.linked_checklist_id === "string") {
+      patch.linked_checklist_id = args.linked_checklist_id === "" ? null : args.linked_checklist_id;
+    }
+    if (typeof args.external_link === "string") {
+      patch.external_link = args.external_link === "" ? null : args.external_link;
+    }
+    if (Object.keys(patch).length === 0) {
+      return text({ error: "no fields to update" });
+    }
+    patch.updated_at = new Date().toISOString();
+
+    const { data, error } = await admin
+      .from("checklist_items").update(patch)
+      .eq("id", args.item_id).eq("user_id", args.user_id)
+      .select().maybeSingle();
+    if (error) return text({ error: error.message });
+    if (!data) return text({ error: "item not found or not owned by user" });
+    return text({ item: data });
+  },
+});
+
 mcp.tool("triggerJob", {
   description: `Enqueue an action job (image/video/text generation, analysis, etc). action_type must be one of: ${VALID_JOB_ACTIONS.join(", ")}.`,
   inputSchema: {
