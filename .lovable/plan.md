@@ -1,70 +1,86 @@
 ## Goal
 
-Turn each Dante Inbox checklist item into an ongoing 👑/🤖 thread. The watcher does all the formatting and appending — Dante just produces a plain-text response.
+Eliminate Dante's self-trigger loop and stop him from spawning new artifacts mid-thread. Three defense layers: trigger logic, server-side sanitizer, system prompt.
 
-## Layer 1 — System Prompt (manual)
+## Layer 1 — DB migration: switch trigger from count-based to last-turn-based
 
-Update the `DANTE_SYSTEM_PROMPT` secret in Lovable Cloud with the new prompt block CJ provided. No code change for this; CJ updates the secret in the Cloud settings UI (or I can use the secrets tool if preferred — confirm).
+New migration replacing `detect_dante_new_turn()`:
 
-## Layer 2 — DB migration: status values + auto-detect new 👑 turns
+```sql
+CREATE OR REPLACE FUNCTION public.detect_dante_new_turn()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path TO 'public'
+AS $$
+DECLARE
+  last_crown int;
+  last_robot int;
+BEGIN
+  IF NEW.text IS NOT DISTINCT FROM OLD.text THEN
+    RETURN NEW;
+  END IF;
 
-New migration:
+  -- Don't override watcher mid-flight
+  IF NEW.status = 'in_progress' THEN
+    RETURN NEW;
+  END IF;
+  -- Watcher self-update path: OLD in_progress -> NEW awaiting_cj
+  IF OLD.status = 'in_progress' AND NEW.status = 'awaiting_cj' THEN
+    RETURN NEW;
+  END IF;
 
-1. Update `validate_checklist_item_status` trigger function to accept the new statuses: `'pending','in_progress','done','error','awaiting_dante','awaiting_cj'`.
+  last_crown := COALESCE(NULLIF(strpos(reverse(NEW.text), reverse('👑:')), 0), 0);
+  last_robot := COALESCE(NULLIF(strpos(reverse(NEW.text), reverse('🤖 Dante said:')), 0), 0);
+  -- Convert reverse-positions to forward positions (smaller reverse-pos = later in text)
+  -- Equivalent test: last 👑: appears AFTER last 🤖 Dante said: iff
+  --   last_crown > 0 AND (last_robot = 0 OR last_crown < last_robot)
 
-2. New function `detect_dante_new_turn()`:
-   - Fires only when `checklist_id = <DANTE_INBOX_CHECKLIST_ID>` AND `text` actually changed.
-   - Counts lines starting with `👑:` vs `🤖 Dante said:` in `NEW.text`.
-   - If `crown_count > robot_count` AND `NEW.status` is not already `in_progress` → set `NEW.status = 'awaiting_dante'`.
-   - Skip when the update is being made by the watcher itself (we'll guard via a row-level marker: if `OLD.status = 'in_progress'` and `NEW.status = 'awaiting_cj'`, do nothing).
+  IF last_crown > 0
+     AND (last_robot = 0 OR last_crown < last_robot)
+     AND COALESCE(NEW.status, '') IN ('', 'awaiting_cj', 'done', 'error')
+  THEN
+    NEW.status := 'awaiting_dante';
+  END IF;
 
-   Implementation note: the inbox UUID is in the `DANTE_INBOX_CHECKLIST_ID` secret. Postgres triggers can't read edge-function secrets, so I'll hardcode the UUID into the trigger after fetching it via `read_query` (`SELECT id FROM checklists WHERE …`) — actually simpler: drop the checklist-id filter and run the counting logic on every `checklist_items` UPDATE where text changed. It's cheap (regex count) and correct everywhere; non-inbox items won't have 👑 emojis so it's a no-op.
+  RETURN NEW;
+END;
+$$;
+```
 
-3. Trigger `dante_thread_status_trg BEFORE UPDATE ON checklist_items FOR EACH ROW WHEN (OLD.text IS DISTINCT FROM NEW.text) EXECUTE FUNCTION detect_dante_new_turn();`
+(Trigger `dante_thread_status_trg` already exists — function replacement is enough.)
 
-4. Update `dante_claim_items` SQL function: change `WHERE status IS NULL` → `WHERE status IS NULL OR status = 'awaiting_dante'`.
+`dante_claim_items` already claims `status IS NULL OR status = 'awaiting_dante'` — no change needed.
 
-## Layer 3 — Watcher rewrite (`supabase/functions/dante-watcher/index.ts`)
+## Layer 2 — Watcher (`supabase/functions/dante-watcher/index.ts`)
 
-In `processItem()`:
+In `processItem()`, after extracting `text` from OpenAI and before building `newText`:
 
-1. **Auto-prepend 👑** — if `item.text` doesn't start with `👑:` (and there's no existing 🤖 line), update `text = "👑: " + text` before sending to OpenAI. Persist via `setItem(item.id, { text: ... })`.
+1. Strip leading `🤖 Dante said:` (already done via `stripDanteSaidPrefix`).
+2. **NEW**: replace every `👑` character in the reply with the literal word `Crown` (server-side sanitizer). Add helper `sanitizeCrowns(s) => s.replace(/👑/g, "Crown")`.
+3. Apply order: `sanitizeCrowns(stripDanteSaidPrefix(text))`.
 
-2. **Build OpenAI input** as the FULL current item text plus a trailing system note:
-   ```
-   <full thread text>
-   
-   ---
-   The above is the full conversation thread. Respond to the most recent 👑 turn. Output only your reply text — do NOT include "🤖 Dante said:" prefix; the system adds it.
-   ```
+Also harden the auto-prepend step: only auto-prepend `👑:` if the text contains neither `👑:` nor `🤖 Dante said:` AND the item was claimed from `status = NULL` (first-ever turn). Current check already covers this — keep as-is.
 
-3. **After OpenAI responds**:
-   - Strip leading `🤖 Dante said:` from `text` (case-insensitive, with optional whitespace) if Dante included it.
-   - Build new item text: `${currentText}\n\n🤖 Dante said: ${strippedReply}`.
-   - Build `result` field with meta only: tool-call summary + timestamp (no Dante prose).
-   - On success: `setItem(id, { text: newText, result: metaSummary, status: 'awaiting_cj', checked: false })`.
-   - On blocker: same as success but `status: 'awaiting_cj'` (BLOCKER text is in the appended thread reply, so CJ sees it).
-   - On error: keep existing behavior — `status: 'error'`, error in `result`, leave text unchanged.
+Keep `retry424()`, `recoverStale()`, auth, MCP headers, timeouts intact.
 
-4. **Keep existing**: `retry424()`, `recoverStale()` (recoverStale should also consider `awaiting_dante` items stuck → already handles `in_progress` only, fine), authorization, OPENAI/MCP/CLAUDE_BRIDGE_KEY guards, `headers: { "x-claude-key": CLAUDE_BRIDGE_KEY }` on the MCP tool.
+## Layer 3 — System prompt (manual)
 
-5. **Status semantics in summary log**: include counts for new vs awaiting_dante claims.
+Update `DANTE_SYSTEM_PROMPT` secret with the full block CJ provided (banning 👑 in output, banning new-artifact spawning mid-thread, banning self-`updateItem`).
 
 ## Files Touched
 
-- New: `supabase/migrations/<ts>_dante_threading.sql` (validate_status update + detect_dante_new_turn + trigger + dante_claim_items replacement).
-- Edited: `supabase/functions/dante-watcher/index.ts`.
-- Manual: update `DANTE_SYSTEM_PROMPT` secret value.
+- New: `supabase/migrations/<ts>_dante_last_turn_trigger.sql` — replaces `detect_dante_new_turn()`.
+- Edited: `supabase/functions/dante-watcher/index.ts` — add `sanitizeCrowns()` and apply to reply.
+- Manual: update `DANTE_SYSTEM_PROMPT` secret.
 
 ## Out of Scope
 
-- No UI changes to render the thread differently (the existing `result` panel + item text display is sufficient for now).
-- No edits to `claude-mcp` (auth is correct).
-- No new secrets.
+- No claim-SQL change (already correct).
+- No UI change.
+- No `claude-mcp` change.
 
-## Verification After Deploy
+## Verification
 
-1. Add a fresh inbox item with text `Hey Dante, list the first 3 items in the Busy Bee Loop.` (no crown).
-2. Within ~60s: item text becomes `👑: Hey Dante…\n\n🤖 Dante said: <reply>`, status = `awaiting_cj`.
-3. Edit the item to append `\n\n👑: Now do the same for the Jackson Fork list.` → trigger flips status to `awaiting_dante` → next tick claims & appends new 🤖 turn.
-4. Verify via `read_query` on `checklist_items`.
+1. Drop an item: `Hey Dante, what's in the 👑 Busy Bee Loop?` (deliberate stray crown). After tick: text becomes `👑: Hey Dante…\n\n🤖 Dante said: …Crown Busy Bee Loop…`, status `awaiting_cj`. Trigger does NOT re-fire because the LAST marker is `🤖 Dante said:`.
+2. Edit item to append `\n\n👑: Now do the Jackson Fork list.` → trigger flips to `awaiting_dante` → next tick processes.
+3. Confirm via `read_query` on `checklist_items` that no item ping-pongs between statuses without a real CJ edit.
