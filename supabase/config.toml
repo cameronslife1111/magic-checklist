@@ -32,3 +32,6 @@ verify_jwt = false
 
 [functions.claude-bridge]
 verify_jwt = false
+
+[functions.claude-mcp]
+verify_jwt = false
