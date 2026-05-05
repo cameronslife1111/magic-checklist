@@ -501,6 +501,9 @@ const ActionQueue = () => {
               {j.scheduled_for ? `Runs ${fmt(j.scheduled_for)}` : `Created ${fmt(j.created_at)}`}
               {j.completed_at && ` · Done ${fmt(j.completed_at)}`}
             </div>
+            {(j.status === "running" || j.status === "awaiting_provider") && (
+              <ProgressIndicator job={j} />
+            )}
 
             <AttachmentsBlock a={j.attachments} onOpenChecklist={(id) => navigate(`/?c=${id}`)} />
             {isFailed && (
