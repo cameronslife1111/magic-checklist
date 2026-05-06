@@ -52,6 +52,7 @@ type DialogState =
   | { kind: "new" }
   | { kind: "edit-title" }
   | { kind: "insert-link" }
+  | { kind: "swap-links-pick" }
   | { kind: "insert-new-link" }
   | { kind: "send-to" }
   | { kind: "send-to-blank" }
@@ -85,6 +86,8 @@ const ChecklistPage = () => {
   const [homeFavoritesOpen, setHomeFavoritesOpen] = useState(false);
   const [combineMode, setCombineMode] = useState(false);
   const [combineSelection, setCombineSelection] = useState<Set<string>>(new Set());
+  const [swapLinksMode, setSwapLinksMode] = useState(false);
+  const [swapLinksSelection, setSwapLinksSelection] = useState<Set<string>>(new Set());
   const [muted, setMutedState] = useState<boolean>(() => isMuted());
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
@@ -296,6 +299,15 @@ const ChecklistPage = () => {
   const handleToggle = async (item: ChecklistItem, next: boolean) => {
     if (combineMode) {
       setCombineSelection((prev) => {
+        const n = new Set(prev);
+        if (n.has(item.id)) n.delete(item.id);
+        else n.add(item.id);
+        return n;
+      });
+      return;
+    }
+    if (swapLinksMode) {
+      setSwapLinksSelection((prev) => {
         const n = new Set(prev);
         if (n.has(item.id)) n.delete(item.id);
         else n.add(item.id);
@@ -699,6 +711,13 @@ const ChecklistPage = () => {
         }
         setDialog({ kind: "insert-link" });
         break;
+      case "swap-links": {
+        setActionsOpen(false);
+        setSwapLinksSelection(new Set());
+        setSwapLinksMode(true);
+        toast.message("Select boxes, then tap Swap.");
+        break;
+      }
       case "insert-new-link":
         if (!highestUnchecked) {
           toast.error("No unchecked checkbox found.");
@@ -968,6 +987,34 @@ const ChecklistPage = () => {
   const exitCombineMode = () => {
     setCombineMode(false);
     setCombineSelection(new Set());
+  };
+
+  const exitSwapLinksMode = () => {
+    setSwapLinksMode(false);
+    setSwapLinksSelection(new Set());
+  };
+
+  const swapSelectedToLink = async (linkedId: string, title: string) => {
+    if (!user || !checklist) return;
+    const ids = Array.from(swapLinksSelection);
+    if (ids.length === 0) return;
+    const prev = items;
+    const idSet = new Set(ids);
+    setItems((cur) => cur.map((i) => idSet.has(i.id)
+      ? { ...i, text: title, linked_checklist_id: linkedId, external_link: null, media_url: null, media_type: null }
+      : i
+    ));
+    const { error } = await supabase
+      .from("checklist_items")
+      .update({ text: title, linked_checklist_id: linkedId, external_link: null, media_url: null, media_type: null })
+      .in("id", ids);
+    if (error) {
+      setItems(prev);
+      toast.error("Could not swap links.");
+      return;
+    }
+    toast.success(`Swapped ${ids.length} item${ids.length === 1 ? "" : "s"}.`);
+    exitSwapLinksMode();
   };
 
   const combineCheckedItems = async (selectedIds?: string[]) => {
