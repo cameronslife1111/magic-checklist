@@ -12,7 +12,7 @@ export type ActionKey =
   | "mute" | "queue"
   | "add" | "duplicate-item" | "new" | "duplicate" | "delete-checklist" | "edit-title" | "split" | "split-emoji"
   | "text-text" | "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "audio-image-video"
-  | "insert-link" | "insert-new-link" | "analyze-image" | "web-search" | "bg" | "rearrange"
+  | "insert-link" | "swap-links" | "insert-new-link" | "analyze-image" | "web-search" | "bg" | "rearrange"
   | "copy-sentence" | "copy-checklist" | "delete-current" | "delete-all-checkboxes" | "send-to" | "send-to-blank" | "send-to-gdrive" | "send-to-top" | "send-to-bottom" | "uncheck-all" | "combine-checked" | "media-gallery" | "export-text" | "run-sequence" | "manage-context-groups" | "manage-home-favorites" | "theme" | "sign-out";
 
 const AI_KEYS = new Set<ActionKey>([
@@ -35,6 +35,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "combine-checked",  label: "Combine checked checkboxes", icon: Combine },
   { key: "delete-current",   label: "Delete current checkbox",  icon: Trash2 },
   { key: "insert-link",      label: "Insert checklist link",    icon: Link2 },
+  { key: "swap-links",       label: "Swap Links",               icon: Link2 },
   { key: "manage-home-favorites", label: "Manage Home Favorites", icon: Home },
   { key: "send-to-top",      label: "Send to top",              icon: ArrowUpToLine },
   { key: "send-to-bottom",   label: "Send to bottom",           icon: ArrowDownToLine },

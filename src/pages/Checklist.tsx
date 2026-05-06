@@ -52,6 +52,7 @@ type DialogState =
   | { kind: "new" }
   | { kind: "edit-title" }
   | { kind: "insert-link" }
+  | { kind: "swap-links-pick" }
   | { kind: "insert-new-link" }
   | { kind: "send-to" }
   | { kind: "send-to-blank" }
@@ -85,6 +86,8 @@ const ChecklistPage = () => {
   const [homeFavoritesOpen, setHomeFavoritesOpen] = useState(false);
   const [combineMode, setCombineMode] = useState(false);
   const [combineSelection, setCombineSelection] = useState<Set<string>>(new Set());
+  const [swapLinksMode, setSwapLinksMode] = useState(false);
+  const [swapLinksSelection, setSwapLinksSelection] = useState<Set<string>>(new Set());
   const [muted, setMutedState] = useState<boolean>(() => isMuted());
   const [theme, setTheme] = useState<"light" | "dark">(() => {
     if (typeof window === "undefined") return "light";
@@ -296,6 +299,15 @@ const ChecklistPage = () => {
   const handleToggle = async (item: ChecklistItem, next: boolean) => {
     if (combineMode) {
       setCombineSelection((prev) => {
+        const n = new Set(prev);
+        if (n.has(item.id)) n.delete(item.id);
+        else n.add(item.id);
+        return n;
+      });
+      return;
+    }
+    if (swapLinksMode) {
+      setSwapLinksSelection((prev) => {
         const n = new Set(prev);
         if (n.has(item.id)) n.delete(item.id);
         else n.add(item.id);
@@ -699,6 +711,13 @@ const ChecklistPage = () => {
         }
         setDialog({ kind: "insert-link" });
         break;
+      case "swap-links": {
+        setActionsOpen(false);
+        setSwapLinksSelection(new Set());
+        setSwapLinksMode(true);
+        toast.message("Select boxes, then tap Swap.");
+        break;
+      }
       case "insert-new-link":
         if (!highestUnchecked) {
           toast.error("No unchecked checkbox found.");
@@ -968,6 +987,34 @@ const ChecklistPage = () => {
   const exitCombineMode = () => {
     setCombineMode(false);
     setCombineSelection(new Set());
+  };
+
+  const exitSwapLinksMode = () => {
+    setSwapLinksMode(false);
+    setSwapLinksSelection(new Set());
+  };
+
+  const swapSelectedToLink = async (linkedId: string, title: string) => {
+    if (!user || !checklist) return;
+    const ids = Array.from(swapLinksSelection);
+    if (ids.length === 0) return;
+    const prev = items;
+    const idSet = new Set(ids);
+    setItems((cur) => cur.map((i) => idSet.has(i.id)
+      ? { ...i, text: title, linked_checklist_id: linkedId, external_link: null, media_url: null, media_type: null }
+      : i
+    ));
+    const { error } = await supabase
+      .from("checklist_items")
+      .update({ text: title, linked_checklist_id: linkedId, external_link: null, media_url: null, media_type: null })
+      .in("id", ids);
+    if (error) {
+      setItems(prev);
+      toast.error("Could not swap links.");
+      return;
+    }
+    toast.success(`Swapped ${ids.length} item${ids.length === 1 ? "" : "s"}.`);
+    exitSwapLinksMode();
   };
 
   const combineCheckedItems = async (selectedIds?: string[]) => {
@@ -1374,13 +1421,17 @@ const ChecklistPage = () => {
           <ul className="flex flex-col gap-2 max-w-2xl mx-auto w-full">
             {topLevelItems.map((it) => {
               const kids = childrenByParent.get(it.id) ?? [];
-              const itDisplay = combineMode ? { ...it, checked: combineSelection.has(it.id) } : it;
+              const itDisplay = combineMode
+                ? { ...it, checked: combineSelection.has(it.id) }
+                : swapLinksMode
+                ? { ...it, checked: swapLinksSelection.has(it.id) }
+                : it;
               return (
                 <div key={it.id} className="flex flex-col gap-2">
                   <ItemRow
                     item={itDisplay}
                     autoFocus={focusItemId === it.id}
-                    isActive={!combineMode && highestUnchecked?.id === it.id}
+                    isActive={!combineMode && !swapLinksMode && highestUnchecked?.id === it.id}
                     isRunning={activeLineItemId === it.id}
                     onToggle={handleToggle}
                     onTextChange={handleTextChange}
@@ -1391,7 +1442,11 @@ const ChecklistPage = () => {
                   {kids.length > 0 && (
                     <ul className="flex flex-col gap-2 ml-6 border-l-2 border-primary/30 pl-3">
                       {kids.map((kid, idx) => {
-                        const kidDisplay = combineMode ? { ...kid, checked: combineSelection.has(kid.id) } : kid;
+                        const kidDisplay = combineMode
+                          ? { ...kid, checked: combineSelection.has(kid.id) }
+                          : swapLinksMode
+                          ? { ...kid, checked: swapLinksSelection.has(kid.id) }
+                          : kid;
                         return (
                           <ItemRow
                             key={kid.id}
@@ -1440,6 +1495,24 @@ const ChecklistPage = () => {
                 className="flex-1 h-28 rounded-none text-base font-semibold btn-metallic-blue btn-shimmer disabled:opacity-60"
               >
                 Combine ({combineSelection.size})
+              </Button>
+            </div>
+          ) : swapLinksMode ? (
+            <div className="flex gap-0">
+              <Button
+                onClick={exitSwapLinksMode}
+                style={{ ["--shimmer-delay" as any]: "0s" }}
+                className="flex-1 h-28 rounded-none text-base font-semibold btn-metallic-orange btn-shimmer"
+              >
+                Cancel
+              </Button>
+              <Button
+                disabled={swapLinksSelection.size < 1}
+                onClick={() => setDialog({ kind: "swap-links-pick" })}
+                style={{ ["--shimmer-delay" as any]: "0s" }}
+                className="flex-1 h-28 rounded-none text-base font-semibold btn-metallic-blue btn-shimmer disabled:opacity-60"
+              >
+                Swap ({swapLinksSelection.size})
               </Button>
             </div>
           ) : reorderMode ? (
@@ -1697,6 +1770,16 @@ const ChecklistPage = () => {
           const src = highestUnchecked;
           await insertItemAfter(src?.id ?? null, { text: title, linked_checklist_id: id });
           setDialog({ kind: "none" });
+        }}
+      />
+
+      <ChecklistPickerDialog
+        open={dialog.kind === "swap-links-pick"}
+        excludeId={checklist.id}
+        onClose={() => setDialog({ kind: "none" })}
+        onPick={async (id, title) => {
+          setDialog({ kind: "none" });
+          await swapSelectedToLink(id, title);
         }}
       />
 
