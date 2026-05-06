@@ -321,19 +321,15 @@ const ChecklistPage = () => {
 
     // Cascade: checking → also check all earlier unchecked items.
     // Unchecking → also uncheck all later checked items.
-    // Also: toggling a checklist-link item toggles all sibling items that
-    // point to the same linked_checklist_id (regardless of position).
-    const linkedId = item.linked_checklist_id;
     const changedIds: string[] = [];
     const updated = items.map((i, idx) => {
-      const isMatchingLink = !!linkedId && i.linked_checklist_id === linkedId;
       if (next) {
-        if ((idx <= targetIdx || isMatchingLink) && !i.checked) {
+        if (idx <= targetIdx && !i.checked) {
           changedIds.push(i.id);
           return { ...i, checked: true };
         }
       } else {
-        if ((idx >= targetIdx || isMatchingLink) && i.checked) {
+        if (idx >= targetIdx && i.checked) {
           changedIds.push(i.id);
           return { ...i, checked: false };
         }
