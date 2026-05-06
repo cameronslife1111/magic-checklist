@@ -1497,6 +1497,24 @@ const ChecklistPage = () => {
                 Combine ({combineSelection.size})
               </Button>
             </div>
+          ) : swapLinksMode ? (
+            <div className="flex gap-0">
+              <Button
+                onClick={exitSwapLinksMode}
+                style={{ ["--shimmer-delay" as any]: "0s" }}
+                className="flex-1 h-28 rounded-none text-base font-semibold btn-metallic-orange btn-shimmer"
+              >
+                Cancel
+              </Button>
+              <Button
+                disabled={swapLinksSelection.size < 1}
+                onClick={() => setDialog({ kind: "swap-links-pick" })}
+                style={{ ["--shimmer-delay" as any]: "0s" }}
+                className="flex-1 h-28 rounded-none text-base font-semibold btn-metallic-blue btn-shimmer disabled:opacity-60"
+              >
+                Swap ({swapLinksSelection.size})
+              </Button>
+            </div>
           ) : reorderMode ? (
             <Button
               onClick={() => setReorderMode(false)}
@@ -1752,6 +1770,16 @@ const ChecklistPage = () => {
           const src = highestUnchecked;
           await insertItemAfter(src?.id ?? null, { text: title, linked_checklist_id: id });
           setDialog({ kind: "none" });
+        }}
+      />
+
+      <ChecklistPickerDialog
+        open={dialog.kind === "swap-links-pick"}
+        excludeId={checklist.id}
+        onClose={() => setDialog({ kind: "none" })}
+        onPick={async (id, title) => {
+          setDialog({ kind: "none" });
+          await swapSelectedToLink(id, title);
         }}
       />
 
