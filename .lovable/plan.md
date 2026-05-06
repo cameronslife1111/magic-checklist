@@ -1,50 +1,57 @@
-# Add "Swap Links" Bulk Action
+# Auto-select matching linked items in Swap Links mode
 
-A new Actions-menu entry "Swap Links" that lets you tap multiple checkboxes (just like Combine mode), then pick a checklist — all selected items become links to that checklist.
+When in Swap Links mode, tapping a checkbox on an item that already has a `linked_checklist_id` should also auto-toggle every other item (including children) in the checklist that links to the same checklist. This lets the user batch-swap groups of identical links in one tap.
 
-## UX Flow
+## Behavior
 
-1. Open Actions sheet → tap **Swap Links** (placed directly under "Insert checklist link").
-2. Bottom bar switches to two buttons: **Cancel** (orange) and **Swap (N)** (blue, disabled until ≥1 selected).
-3. Tapping checkboxes toggles selection without checking/unchecking the underlying item — same visual behavior as Combine mode (the checkbox shows the selection state, not the saved state).
-4. Tap **Swap (N)** → opens the existing `ChecklistPickerDialog`.
-5. Pick a checklist → every selected item is updated to `{ text: <picked title>, linked_checklist_id: <picked id>, external_link: null }`. Selection state and mode clear.
+- Tap a non-linked item → toggles only that item (current behavior).
+- Tap a linked item (has `linked_checklist_id`) → toggle that item AND every other item in the current checklist sharing the same `linked_checklist_id`.
+  - If the tapped item is being added to selection: add it and all matches not already in the set.
+  - If the tapped item is being removed: remove it and all matches.
+- Children (nested items) are included in the match scan, mirroring how Swap Links already treats children as selectable.
+- No change to non-swap modes (combine, normal toggle).
 
-## Implementation (in `src/pages/Checklist.tsx`)
+## Implementation
 
-1. **State**
-   - Add `swapLinksMode: boolean` and `swapLinksSelection: Set<string>`.
-   - Add `exitSwapLinksMode()` helper that clears both.
+Single edit in `src/pages/Checklist.tsx`, in the `handleToggle` function's `if (swapLinksMode)` branch (around lines 309–317).
 
-2. **Toggle handler** (`handleToggle`)
-   - Mirror the existing `combineMode` branch: if `swapLinksMode`, toggle id in `swapLinksSelection` and return.
+Replace the simple toggle with one that:
+1. Reads `item.linked_checklist_id`.
+2. If null → toggle just `item.id` (current behavior).
+3. If present → build a list of matching ids by scanning both top-level `items` and any children arrays for items where `linked_checklist_id === item.linked_checklist_id`. Determine whether we are adding or removing based on whether `item.id` is currently in `swapLinksSelection`. Add/remove all matching ids in a single `setSwapLinksSelection` update.
 
-3. **Row rendering** (around line 1377 / 1394)
-   - Extend the `combineMode ? {...checked: combineSelection.has(...)} : it` pattern so when `swapLinksMode`, `checked` reflects `swapLinksSelection.has(it.id)`. Same for child rows.
-   - Disable `isActive` highlight while in swap mode (same as combine).
+Pseudocode:
 
-4. **Bottom action bar** (around line 1423)
-   - Add a new branch `swapLinksMode ?` rendering Cancel + `Swap (N)` buttons (matching the Combine layout). The Swap button opens `setDialog({ kind: "swap-links-pick" })`.
+```ts
+if (swapLinksMode) {
+  setSwapLinksSelection((prev) => {
+    const n = new Set(prev);
+    const linkId = item.linked_checklist_id;
+    const adding = !n.has(item.id);
+    const matchIds: string[] = [item.id];
+    if (linkId) {
+      // collect all items + children with same linked_checklist_id
+      for (const top of items) {
+        if (top.id !== item.id && top.linked_checklist_id === linkId) matchIds.push(top.id);
+        // include children if the row map exposes them; otherwise iterate items array which already contains them flat
+      }
+    }
+    for (const id of matchIds) {
+      if (adding) n.add(id); else n.delete(id);
+    }
+    return n;
+  });
+  return;
+}
+```
 
-5. **Actions sheet** (`src/components/ActionsSheet.tsx`)
-   - Add new action key `"swap-links"` to the union type.
-   - Insert a new entry `{ key: "swap-links", label: "Swap Links", icon: Link2 }` directly after the existing `insert-link` row (line 37).
+Note: I'll verify whether `items` is flat (contains children too) or whether children live in a separate structure during the implementation pass; if separate, the scan will iterate both. No DB changes, no UI changes, no new state.
 
-6. **Action handler** in Checklist.tsx switch (near line 594)
-   - Case `"swap-links"`: close actions sheet, clear selection set, set `swapLinksMode = true`, toast "Select boxes, then tap Swap".
+## Optional polish
 
-7. **Dialog wiring**
-   - Extend the `dialog` discriminated union with `{ kind: "swap-links-pick" }`.
-   - Render a second `<ChecklistPickerDialog>` instance bound to that kind. Its `onPick(id, title)`:
-     - Build `ids = [...swapLinksSelection]`.
-     - Optimistically `setItems` mapping each selected item to `{ ...i, text: title, linked_checklist_id: id, external_link: null, media_url: null, media_type: null, checked: i.checked }` (preserve existing checked state).
-     - Single `supabase.from("checklist_items").update({ text: title, linked_checklist_id: id, external_link: null, media_url: null, media_type: null }).in("id", ids)`.
-     - On error: revert via refetch and toast. On success: toast "Swapped N items", call `exitSwapLinksMode()`, close dialog.
+- Toast a brief "Selected N matching links" when auto-select adds >1 extra item, so the user knows why other boxes lit up. Skip if you'd rather keep it silent.
 
-## Notes / Edge Cases
+## Files
 
-- Selecting zero items disables the Swap button (same UX as Combine requiring ≥2; here we allow ≥1).
-- The picker already excludes the current checklist via `excludeId={checklist.id}` — reuse that.
-- Children (nested items) are selectable too, matching Combine behavior.
-- No DB schema changes; reuses existing `linked_checklist_id` column.
-- Cancel exits without mutating anything.
+- `src/pages/Checklist.tsx` (one function body change)
+- `.lovable/plan.md` (append note about auto-match behavior)

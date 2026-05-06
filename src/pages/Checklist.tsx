@@ -309,8 +309,18 @@ const ChecklistPage = () => {
     if (swapLinksMode) {
       setSwapLinksSelection((prev) => {
         const n = new Set(prev);
-        if (n.has(item.id)) n.delete(item.id);
-        else n.add(item.id);
+        const adding = !n.has(item.id);
+        const linkId = item.linked_checklist_id;
+        const ids: string[] = [item.id];
+        if (linkId) {
+          for (const i of items) {
+            if (i.id !== item.id && i.linked_checklist_id === linkId) ids.push(i.id);
+          }
+        }
+        for (const id of ids) {
+          if (adding) n.add(id);
+          else n.delete(id);
+        }
         return n;
       });
       return;
