@@ -1,30 +1,31 @@
-## Add two MCP tools to `claude-mcp`
+## Add "Download all media" action
 
-Add `updateMediaTitle` and `updateChecklistTitle` to `supabase/functions/claude-mcp/index.ts`, registered alongside `fetchMedia` (around line 487).
+Add a new action sheet button that downloads every image and video from the user's Media Gallery as a single zip file, preserving each asset's gallery title (with correct extension) as the filename inside the zip.
 
-Both tools follow the same pattern as existing tools (use the `admin` service-role client, return `text({...})`).
+### Changes
 
-### Tool 1: `updateMediaTitle`
+**1. `src/components/ActionsSheet.tsx`**
+- Add new `ActionKey` value: `"download-all-media"`.
+- Add a new entry to `STATIC_ITEMS` near the other Media Gallery action, labeled **"Download all media"** with the `Download` icon (from lucide-react).
 
-- **inputSchema** (required: `media_id`, `user_id`, `title`):
-  - `media_id`: string — UUID of `media_assets` row
-  - `user_id`: string — owner UUID for ownership check
-  - `title`: string — new title (min length 1)
-- **handler**:
-  1. Validate `title` is a non-empty string; else return `{ error: "title must be a non-empty string" }`.
-  2. Fetch the row by `id = media_id` (single). If not found → `{ error: "media not found", media_id }`.
-  3. If `row.user_id !== user_id` → `{ error: "ownership mismatch: media is owned by a different user", media_id }` (no silent fail).
-  4. `update({ title }).eq("id", media_id).eq("user_id", user_id).select().single()`.
-  5. Return `{ media: data }` on success, `{ error: error.message }` on DB error.
+**2. `src/lib/mediaAssets.ts`**
+- Add helper `downloadAllMediaAsZip(userId)`:
+  - Calls `listMediaAssets(userId)` and filters to `kind === "image" || kind === "video"`.
+  - For each asset: `fetch(asset.url)` → `blob()`.
+  - Compute filename: start from `asset.title`; if it has no extension, derive one from `mime_type` (or fall back to a sensible default by `kind`: `.png` for image, `.mp4` for video). Sanitize illegal filesystem chars (`/ \ : * ? " < > |`) to `_`.
+  - De-duplicate names within the zip by appending ` (2)`, ` (3)`, etc. before the extension so two assets with the same title don't collide.
+  - Use `jszip` to build the archive, then trigger a download via a temporary `<a>` link with `URL.createObjectURL(blob)`. Filename: `media-gallery-YYYY-MM-DD.zip`.
 
-### Tool 2: `updateChecklistTitle`
+**3. `src/pages/Checklist.tsx`**
+- In the `onPick` switch, add a `case "download-all-media":` that:
+  - Shows a `toast.loading("Preparing zip…")`.
+  - Calls `downloadAllMediaAsZip(user.id)`.
+  - On success: `toast.success("Downloaded N files.")`. On empty gallery: `toast.error("No media to download.")`. On failure: `toast.error("Download failed. Try again.")`.
 
-Same shape, against `checklists` table:
-- **inputSchema** (required: `checklist_id`, `user_id`, `title`).
-- **handler**: same ownership-check flow as above. Return `{ checklist: data }`.
+**4. Dependency**
+- Add `jszip` via `bun add jszip` (small, browser-friendly, no native deps).
 
-### Deploy
-
-Deploy `claude-mcp` after the edit so the new tools are immediately callable by Dante. Confirm both tools shipped in the reply.
-
-No DB migrations, no schema changes, no new secrets. RLS is already enforced via `admin` + explicit `user_id` filters.
+### Notes
+- All downloads happen client-side; `media_assets.url` is in a public bucket so no signed URL needed.
+- Large galleries: zip is built in memory. Acceptable for typical use; if it ever needs streaming we can revisit with `client-zip`.
+- Filenames preserve the user's gallery titles exactly (after light sanitization), satisfying the "same name as in gallery" requirement.
