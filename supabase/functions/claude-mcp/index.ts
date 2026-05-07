@@ -486,6 +486,64 @@ mcp.tool("fetchMedia", {
   },
 });
 
+mcp.tool("updateMediaTitle", {
+  description: "Rename a media asset (media_assets.title) owned by user_id. Returns the updated row, or an ownership/not-found error.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      media_id: { type: "string", description: "UUID of the media_assets row" },
+      user_id: { type: "string", description: "Owner UUID — required for ownership check" },
+      title: { type: "string", description: "New title (non-empty)" },
+    },
+    required: ["media_id", "user_id", "title"],
+  },
+  handler: async ({ media_id, user_id, title }: any) => {
+    if (typeof title !== "string" || !title.trim()) {
+      return text({ error: "title must be a non-empty string" });
+    }
+    const { data: row, error: fetchErr } = await admin
+      .from("media_assets").select("id, user_id").eq("id", media_id).maybeSingle();
+    if (fetchErr) return text({ error: fetchErr.message });
+    if (!row) return text({ error: "media not found", media_id });
+    if (row.user_id !== user_id) {
+      return text({ error: "ownership mismatch: media is owned by a different user", media_id });
+    }
+    const { data, error } = await admin
+      .from("media_assets").update({ title }).eq("id", media_id).eq("user_id", user_id).select().single();
+    if (error) return text({ error: error.message });
+    return text({ media: data });
+  },
+});
+
+mcp.tool("updateChecklistTitle", {
+  description: "Rename a checklist (checklists.title) owned by user_id. Returns the updated row, or an ownership/not-found error.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      checklist_id: { type: "string", description: "UUID of the checklists row" },
+      user_id: { type: "string", description: "Owner UUID — required for ownership check" },
+      title: { type: "string", description: "New title (non-empty)" },
+    },
+    required: ["checklist_id", "user_id", "title"],
+  },
+  handler: async ({ checklist_id, user_id, title }: any) => {
+    if (typeof title !== "string" || !title.trim()) {
+      return text({ error: "title must be a non-empty string" });
+    }
+    const { data: row, error: fetchErr } = await admin
+      .from("checklists").select("id, user_id").eq("id", checklist_id).maybeSingle();
+    if (fetchErr) return text({ error: fetchErr.message });
+    if (!row) return text({ error: "checklist not found", checklist_id });
+    if (row.user_id !== user_id) {
+      return text({ error: "ownership mismatch: checklist is owned by a different user", checklist_id });
+    }
+    const { data, error } = await admin
+      .from("checklists").update({ title }).eq("id", checklist_id).eq("user_id", user_id).select().single();
+    if (error) return text({ error: error.message });
+    return text({ checklist: data });
+  },
+});
+
 const ACTION_SCHEMAS: Record<string, any> = {
   "text-text": {
     description: "Generate text from a prompt (LLM call). Routes to openai-text.",
