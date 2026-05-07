@@ -855,6 +855,21 @@ const ChecklistPage = () => {
       case "media-gallery":
         navigate("/media");
         break;
+      case "download-all-media": {
+        if (!user) break;
+        const tid = toast.loading("Preparing zip…");
+        try {
+          const n = await downloadAllMediaAsZip(user.id);
+          toast.dismiss(tid);
+          if (n === 0) toast.error("No media to download.");
+          else toast.success(`Downloaded ${n} file${n === 1 ? "" : "s"}.`);
+        } catch (e) {
+          toast.dismiss(tid);
+          console.error(e);
+          toast.error("Download failed. Try again.");
+        }
+        break;
+      }
       case "theme":
         setTheme((t) => (t === "dark" ? "light" : "dark"));
         break;
