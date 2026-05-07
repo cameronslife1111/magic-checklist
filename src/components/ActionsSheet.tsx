@@ -13,7 +13,7 @@ export type ActionKey =
   | "add" | "duplicate-item" | "new" | "duplicate" | "delete-checklist" | "edit-title" | "split" | "split-emoji"
   | "text-text" | "text-image" | "image-image" | "remix" | "image-video" | "video-video" | "audio-image-video"
   | "insert-link" | "swap-links" | "insert-new-link" | "analyze-image" | "web-search" | "bg" | "rearrange"
-  | "copy-sentence" | "copy-checklist" | "delete-current" | "delete-all-checkboxes" | "send-to" | "send-to-blank" | "send-to-gdrive" | "send-to-top" | "send-to-bottom" | "uncheck-all" | "combine-checked" | "media-gallery" | "export-text" | "run-sequence" | "manage-context-groups" | "manage-home-favorites" | "theme" | "sign-out";
+  | "copy-sentence" | "copy-checklist" | "delete-current" | "delete-all-checkboxes" | "send-to" | "send-to-blank" | "send-to-gdrive" | "send-to-top" | "send-to-bottom" | "uncheck-all" | "combine-checked" | "media-gallery" | "download-all-media" | "export-text" | "run-sequence" | "manage-context-groups" | "manage-home-favorites" | "theme" | "sign-out";
 
 const AI_KEYS = new Set<ActionKey>([
   "text-text", "text-image", "image-image", "remix",
