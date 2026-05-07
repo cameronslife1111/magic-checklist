@@ -24,6 +24,7 @@ import { RunSequenceDialog } from "@/components/RunSequenceDialog";
 import { ContextGroupsManager } from "@/components/ContextGroupsManager";
 import { HomeFavoritesDialog } from "@/components/HomeFavoritesDialog";
 import { nextFavoriteAfter } from "@/lib/homeFavorites";
+import { downloadAllMediaAsZip } from "@/lib/mediaAssets";
 import { toast } from "sonner";
 import { primeSpeech, speak, stopSpeech, isMuted, setMuted } from "@/lib/speech";
 import { wasPickJustNow } from "@/lib/clickGuard";
