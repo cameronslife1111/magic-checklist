@@ -46,6 +46,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "send-to-gdrive",   label: "Send to Google Drive",     icon: HardDrive },
   { key: "copy-checklist",   label: "Copy full checklist",      icon: ClipboardList },
   { key: "media-gallery",    label: "Media Gallery",            icon: Library },
+  { key: "download-all-media", label: "Download all media",     icon: Download },
   { key: "export-text",      label: "Export text file",         icon: FileDown },
   { key: "bg",               label: "Change checklist background", icon: Palette },
 
