@@ -4,7 +4,7 @@ import {
   Plus, FilePlus, FilePlus2, Copy, CopyPlus, Pencil, Scissors, Type, Image as ImageIcon, Images, Wand2,
   Film, Video, Mic2, Link2, Eye, Search, Palette, LogOut, Moon, Sun, ArrowUpDown,
   ClipboardCopy, ClipboardList, Send, Volume2, VolumeX, ListChecks, Trash2, Library, Square, Smile, Combine, FileDown, Workflow,
-  ArrowUpToLine, ArrowDownToLine, HardDrive, Layers, ListX, Home,
+  ArrowUpToLine, ArrowDownToLine, HardDrive, Layers, ListX, Home, Download,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
