@@ -299,8 +299,8 @@ mcp.tool("triggerJob", {
       action_type: { type: "string", enum: VALID_JOB_ACTIONS },
       payload: PAYLOAD_SCHEMA,
       source_item_id: { type: "string" },
-      scheduled_for: { type: "string", description: "ISO timestamp; if set, job is scheduled instead of pending" },
-      recurrence: { type: "object" },
+      scheduled_for: { type: "string", description: "UTC ISO 8601 timestamp for the (first) run. If set, status=scheduled. NO timezone field — convert local time to UTC yourself (e.g. 12:00 AM PST = 08:00:00Z; PDT = 07:00:00Z)." },
+      recurrence: { type: ["string", "null"], enum: [null, "hourly", "daily", "weekly", "monthly", "yearly"], description: "Optional. null = one-shot. String value = recur forever at fixed interval (1h/1d/7d/1mo/1y) measured from end of previous run. NO cron, RRULE, custom intervals, end_date, max_count, or timezone. To stop: delete the action_jobs row or null this field." },
     },
     required: ["user_id", "checklist_id", "action_type"],
   },
@@ -355,8 +355,8 @@ mcp.tool("createItemAndTriggerJob", {
       parent_item_id: { type: "string" },
       action_type: { type: "string", enum: VALID_JOB_ACTIONS },
       payload: PAYLOAD_SCHEMA,
-      scheduled_for: { type: "string" },
-      recurrence: { type: "object" },
+      scheduled_for: { type: "string", description: "UTC ISO 8601 timestamp for (first) run. NO timezone field — convert local time to UTC (e.g. 12:00 AM PST = 08:00:00Z, PDT = 07:00:00Z)." },
+      recurrence: { type: ["string", "null"], enum: [null, "hourly", "daily", "weekly", "monthly", "yearly"], description: "Optional. null = one-shot. String value = recur forever at fixed interval (1h/1d/7d/1mo/1y). NO cron, RRULE, custom intervals, end_date, max_count, or timezone. To stop: delete the action_jobs row or null this field." },
     },
     required: ["user_id", "checklist_id", "text", "action_type"],
   },
@@ -637,6 +637,15 @@ mcp.tool("describeAction", {
     },
   },
   handler: async ({ action_type }: any) => {
+    const RECURRENCE_SCHEMA = {
+      type: "string | null",
+      allowed: [null, "hourly", "daily", "weekly", "monthly", "yearly"],
+      semantics: "null = one-shot. Any allowed string = recur forever at that fixed interval (hourly=1h, daily=1d, weekly=7d, monthly=1mo, yearly=1y) measured from end of previous successful run.",
+      scheduled_for: "UTC ISO 8601 timestamp for the first run. NO timezone field — convert local wall-clock to UTC yourself. 12:00 AM America/Los_Angeles = 08:00:00Z (PST) or 07:00:00Z (PDT); recurring jobs will drift one hour across DST transitions.",
+      unsupported: ["cron expressions", "RRULE", "custom intervals", "end_date", "max_count", "timezone"],
+      stop: "Delete the action_jobs row OR update its recurrence column to null to halt future runs.",
+      example: { scheduled_for: "2026-05-08T08:00:00.000Z", recurrence: "daily" },
+    };
     if (!action_type) {
       const all = Object.fromEntries(
         Object.entries(ACTION_SCHEMAS).map(([k, v]: any) => [k, v.description]),
@@ -647,10 +656,11 @@ mcp.tool("describeAction", {
           checklist_id: "<checklist uuid> (required)",
           action_type: "<one of the keys below> (required)",
           source_item_id: "<optional uuid — links result back to a checklist item>",
-          scheduled_for: "<optional ISO timestamp; omit to run immediately>",
-          recurrence: "<null | hourly | daily | weekly | monthly | yearly>",
+          scheduled_for: "<optional UTC ISO timestamp; omit to run immediately>",
+          recurrence: "<optional; see recurrence_schema>",
           payload: "<action-specific, see describeAction({ action_type })>",
         },
+        recurrence_schema: RECURRENCE_SCHEMA,
         actions: all,
         notes: [
           "All media URLs must be public URLs under https://iedwmkdvwggpcmdyliii.supabase.co/storage/v1/object/public/generated-media/...",
@@ -661,6 +671,19 @@ mcp.tool("describeAction", {
     }
     const schema = ACTION_SCHEMAS[action_type];
     if (!schema) return text({ error: `unknown action_type: ${action_type}` });
+    const recurring_example = action_type === "action-sequence" ? {
+      user_id: "00000000-0000-0000-0000-000000000001",
+      checklist_id: "11111111-1111-1111-1111-111111111111",
+      action_type: "action-sequence",
+      scheduled_for: "2026-05-08T08:00:00.000Z",
+      recurrence: "daily",
+      payload: {
+        prompt: "Daily 12am PT creative drop",
+        output_checklist_id: "22222222-2222-2222-2222-222222222222",
+        max_steps: 6, max_images: 4, max_videos: 1, max_runtime_minutes: 30,
+      },
+      _note: "12:00 AM America/Los_Angeles = 08:00Z in PST (winter) / 07:00Z in PDT (summer). Recurrence is timezone-naive; expect 1h DST drift.",
+    } : undefined;
     return text({
       action_type,
       description: schema.description,
@@ -669,16 +692,18 @@ mcp.tool("describeAction", {
         checklist_id: "<checklist uuid>",
         action_type,
         source_item_id: "<optional>",
-        scheduled_for: "<optional ISO timestamp>",
-        recurrence: null,
+        scheduled_for: "<optional UTC ISO timestamp>",
+        recurrence: "<optional; see recurrence_schema>",
         payload: schema.payload,
       },
+      recurrence_schema: RECURRENCE_SCHEMA,
       example_full_request: {
         user_id: "00000000-0000-0000-0000-000000000001",
         checklist_id: "11111111-1111-1111-1111-111111111111",
         action_type,
         payload: schema.example,
       },
+      ...(recurring_example ? { recurring_example } : {}),
     });
   },
 });
