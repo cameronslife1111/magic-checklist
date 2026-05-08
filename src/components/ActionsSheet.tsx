@@ -45,7 +45,7 @@ const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: Rea
   { key: "send-to-blank",    label: "Send to blank checklist",  icon: FilePlus2 },
   { key: "send-to-gdrive",   label: "Send to Google Drive",     icon: HardDrive },
   { key: "copy-checklist",   label: "Copy full checklist",      icon: ClipboardList },
-  { key: "media-gallery",    label: "Media Gallery",            icon: Library },
+  { key: "queue",            label: "Action Queue Dashboard",   icon: ListChecks },
   { key: "download-all-media", label: "Download all media",     icon: Download },
   { key: "export-text",      label: "Export text file",         icon: FileDown },
   { key: "bg",               label: "Change checklist background", icon: Palette },
@@ -86,12 +86,12 @@ export const ActionsSheet = ({ open, onOpenChange, onPick, currentTheme, muted }
     ? { key: "mute" as const, label: "Unmute speech", icon: Volume2 }
     : { key: "mute" as const, label: "Mute speech", icon: VolumeX };
   const sendToItem = { key: "send-to" as const, label: "Send to checklist", icon: Send };
-  const queueItem = { key: "queue" as const, label: "Action Queue Dashboard", icon: ListChecks };
+  const mediaGalleryItem = { key: "media-gallery" as const, label: "Media Gallery", icon: Library };
   const themeItem = currentTheme === "dark"
     ? { key: "theme" as const, label: "Switch to light mode", icon: Sun }
     : { key: "theme" as const, label: "Switch to dark mode", icon: Moon };
   const signOutItem = { key: "sign-out" as const, label: "Sign out", icon: LogOut };
-  const items = [sendToItem, queueItem, muteItem, ...STATIC_ITEMS, themeItem, signOutItem];
+  const items = [sendToItem, mediaGalleryItem, muteItem, ...STATIC_ITEMS, themeItem, signOutItem];
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
