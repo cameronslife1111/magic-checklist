@@ -132,7 +132,8 @@
   /* Metallic gradient buttons (used by bottom action bar) */
   .btn-metallic-orange,
   .btn-metallic-blue,
-  .btn-metallic-green {
+  .btn-metallic-green,
+  .btn-metallic-yellow {
     position: relative;
     overflow: hidden;
     background-image: linear-gradient(
