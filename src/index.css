@@ -81,6 +81,8 @@
     --action-orange-foreground: 0 0% 100%;
     --action-green: 142 60% 42%;
     --action-green-foreground: 0 0% 100%;
+    --action-yellow: 48 90% 56%;
+    --action-yellow-foreground: 30 30% 12%;
   }
 }
 
