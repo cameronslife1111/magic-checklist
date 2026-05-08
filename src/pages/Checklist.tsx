@@ -1659,7 +1659,7 @@ const ChecklistPage = () => {
                 }}
                 onContextMenu={(e) => e.preventDefault()}
                 style={{ ["--shimmer-delay" as any]: "0s" }}
-                className="flex-1 h-28 rounded-none text-base font-semibold select-none touch-none text-action-orange-foreground btn-metallic-orange btn-shimmer"
+                className="flex-[0.5] h-28 rounded-none text-base font-semibold select-none touch-none text-action-orange-foreground btn-metallic-orange btn-shimmer"
               >
                 Actions
               </Button>
