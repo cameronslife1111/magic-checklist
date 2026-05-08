@@ -1725,6 +1725,7 @@ const ChecklistPage = () => {
               </Button>
 
               <Button
+                aria-label="Check current and advance (long-press: go back one)"
                 onPointerDown={(e) => {
                   e.preventDefault();
                   longPressFiredRef.current = false;
