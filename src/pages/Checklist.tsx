@@ -1712,7 +1712,19 @@ const ChecklistPage = () => {
               </Button>
 
               <Button
-                aria-label="Check current and advance (long-press: go back one)"
+                aria-label="Recycle: go to first Home Favorite, check current, follow links"
+                onPointerUp={async (e) => {
+                  e.preventDefault();
+                  await runRecycle();
+                }}
+                onContextMenu={(e) => e.preventDefault()}
+                style={{ ["--shimmer-delay" as any]: "2.4s" }}
+                className="w-20 h-28 rounded-none text-2xl leading-none select-none touch-none text-action-yellow-foreground btn-metallic-yellow btn-shimmer"
+              >
+                🐝
+              </Button>
+
+              <Button
                 onPointerDown={(e) => {
                   e.preventDefault();
                   longPressFiredRef.current = false;
