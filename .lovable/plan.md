@@ -1,29 +1,60 @@
-## Make full media titles always visible
+## Goal
+Add a 4th bottom action button — a yellow "Recycle" button with a 🐝 emoji — that automatically navigates the user through their Home Favorites slot 1 + linked-checklist chain, checking the current item off along the way.
 
-The single bottleneck: each row uses `flex items-center` with the title `<button>` on `truncate text-sm font-medium`, then three icon buttons (rename, open, delete) sit beside it on the same row. On mobile that leaves ~120 px for the title — anything longer than ~18 chars gets `…`'d.
+## Layout change (bottom action bar)
 
-### Fix: stack the row on mobile, side-by-side on desktop
+Today the bar has 3 buttons (`src/pages/Checklist.tsx` ~line 1565–1682):
 
-A two-line title wrap alone wouldn't be enough for long shot codes like `X245_charRef_sceneB_v3_final` — they'd still get cropped on narrow screens. Moving the actions below the title on mobile gives the title the entire card width; on desktop where there's space, we keep the current side-by-side layout.
+```text
+[ Actions  flex-1 ] [ 🏠 w-20 ] [ ✓ flex-1 ]
+```
 
-### Changes (only `src/pages/MediaGallery.tsx`, lines ~178–230)
+New layout (left → right):
 
-1. **Row container** — change `<li className="flex items-center gap-3 px-3 py-2.5 bg-card">` to `flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-3 py-2.5 bg-card`. Stacks on mobile, restores horizontal layout from `sm:` breakpoint up.
+```text
+[ Actions  ~half ] [ 🏠 w-20 ] [ 🐝 w-20 ] [ ✓ flex-1 ]
+```
 
-2. **Top row (icon + title block)** — wrap the kind-icon `<span>` and the `<div className="min-w-0 flex-1">` in a new `<div className="flex items-start gap-3 w-full min-w-0">`. `items-start` so the round icon aligns to the first line of a wrapped title.
+- Keep the green ✓ button at its current size (`flex-1 h-28`).
+- Keep the blue 🏠 button at `w-20 h-28`.
+- Insert a new yellow 🐝 button at `w-20 h-28` between 🏠 and ✓.
+- Shrink the orange Actions button to roughly half its current width by changing `flex-1` → `flex-[0.5]` so the green button still occupies the dominant share. All four buttons keep `h-28` and `rounded-none` for the same visual language.
 
-3. **Title button** — replace `truncate` with `break-words whitespace-normal leading-snug`. No line clamp — full title shows, wrapping as many lines as needed. Keep `text-sm font-medium`, keep `block w-full text-left hover:underline`, keep the rename-on-click behavior.
+## New "Recycle" button (🐝, yellow)
 
-4. **Action buttons row** — wrap the three `<Button>`s in `<div className="flex items-center gap-1 self-end sm:self-auto -mr-1 sm:mr-0">`. On mobile they sit on a second line, right-aligned (`self-end`) so they line up with the card edge and stay thumb-reachable. On desktop they revert to inline-with-title.
+Style:
+- Same shape/height as the others (`w-20 h-28 rounded-none select-none touch-none`).
+- New metallic-yellow background to mirror existing `btn-metallic-blue/green/orange` classes. Add `.btn-metallic-yellow` to `src/index.css` using HSL tokens (a warm yellow gradient + matching shadow), plus `--action-yellow-foreground` for the icon/emoji color. Apply `text-action-yellow-foreground btn-metallic-yellow btn-shimmer` and a `--shimmer-delay` of `2.4s` to interleave with the existing 0s / 1.6s / 3.2s shimmer cadence.
+- Children: the 🐝 emoji at `text-2xl leading-none` (matches 🏠).
+- `aria-label="Recycle: go to first Home Favorite, check current, follow links"`.
 
-5. **Edit mode row** — give the inline rename `<div>` `w-full` so the input expands to full card width on mobile (currently it's constrained by the flex children).
+Behavior (single tap, no long-press):
+1. Read Home Favorites slot 0 (`loadFavorites()[0]` from `src/lib/homeFavorites.ts`). If empty, toast "No Home Favorite in slot 1" and stop.
+2. `await openChecklist(slot0Id)`.
+3. Re-fetch that checklist's top-level items directly (don't rely on React state, which won't have updated yet inside the same handler) and find the first unchecked top-level item.
+4. If found, mark it checked in the DB (`update checklist_items set checked = true where id = ...`) — mirrors what `handleToggle(item, true)` does for the persistence side, but performed inline so we can chain.
+5. Re-query the same checklist's items, find the new first unchecked top-level item.
+6. If that item has a `linked_checklist_id`, repeat from step 2 with that id (open it, find first unchecked, but do NOT auto-check on subsequent hops — the user said "open all of the links until it's at a checklist where there is not an attached link"). Loop until the landing checklist's first unchecked item has no `linked_checklist_id` (or there is no unchecked item).
+7. Finally call `openChecklist(finalId)` so React state + UI reflect the landing checklist, and `stopSpeech()` already runs inside `openChecklist`.
 
-Nothing else changes: handlers, state, multi-select (none here), MediaViewer, AlertDialog, upload buttons, filter chips, header — all untouched.
+Edge cases:
+- All items in slot-1 already checked → still call `openChecklist(slot0)` and stop (nothing to chain).
+- Linked checklist id points to a deleted checklist → if fetch returns null, stop on the previous valid one.
+- Guard against infinite loops with a `Set<string>` of visited checklist ids; bail with a toast if we revisit.
+- Only consider top-level items (`parent_item_id IS NULL`), matching how `highestUnchecked` is computed.
 
-### Why this is the cleanest option
-- Wrap-only would leave actions squeezing the title on mobile to ~60% width, still wrapping awkwardly into 3–4 lines for long names.
-- Stack-only on every breakpoint wastes vertical space on desktop where horizontal fits fine.
-- Combo (wrap + responsive stack) gives the title 100% of card width on mobile with no truncation, and preserves the existing tidy desktop row.
+## Files to change
 
-### Visual style
-- Same `bg-card`, `divide-y divide-border`, `text-sm font-medium`, `text-xs text-muted-foreground` for the meta line, same icon button sizing — zero new tokens or colors introduced.
+- `src/pages/Checklist.tsx`
+  - Adjust the Actions button `className` from `flex-1` to `flex-[0.5]`.
+  - Insert the new `<Button>` between the 🏠 button and the ✓ button.
+  - Add a `runRecycle()` async helper near `openChecklist` containing steps 1–7 above.
+- `src/index.css`
+  - Add `--action-yellow` / `--action-yellow-foreground` HSL tokens (light + dark) and a `.btn-metallic-yellow` class mirroring the existing metallic button classes.
+- `tailwind.config.ts`
+  - Register `action-yellow` / `action-yellow-foreground` colors so `text-action-yellow-foreground` resolves, mirroring the existing `action-orange` / `action-green` entries.
+
+## Out of scope
+- No changes to long-press behavior on existing buttons.
+- No changes to `homeFavorites.ts`, `ActionsSheet`, or any other component.
+- No changes to how individual checkboxes render or to speech/dictation behavior.
