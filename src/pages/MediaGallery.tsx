@@ -236,6 +236,9 @@ const MediaGalleryPage = () => {
         open={!!viewer}
         url={viewer?.url ?? null}
         type={viewer?.kind ?? null}
+        title={viewer?.title ?? null}
+        mimeType={viewer?.mime_type ?? null}
+        storagePath={viewer?.storage_path ?? null}
         onClose={() => setViewer(null)}
       />
 

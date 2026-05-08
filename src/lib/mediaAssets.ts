@@ -113,49 +113,119 @@ const extFor = (asset: MediaAsset): string => {
   return "bin";
 };
 
+/** Build a filename from an asset's title, ensuring it has a sensible extension. */
+export function filenameForAsset(asset: Pick<MediaAsset, "title" | "mime_type" | "storage_path" | "kind">): string {
+  let base = sanitize(asset.title || "Untitled");
+  if (!hasExt(base)) base = `${base}.${extFor(asset as MediaAsset)}`;
+  return base;
+}
+
+/**
+ * Build a download URL that tells Supabase Storage to serve the file with
+ * Content-Disposition: attachment; filename=... — so the browser streams
+ * straight to disk with the right name and the save dialog appears instantly,
+ * no JS-side fetch+blob buffering required.
+ */
+export function buildDownloadUrl(
+  asset: Pick<MediaAsset, "url" | "title" | "mime_type" | "storage_path" | "kind">,
+  overrideName?: string,
+): string {
+  const name = overrideName ?? filenameForAsset(asset);
+  const sep = asset.url.includes("?") ? "&" : "?";
+  return `${asset.url}${sep}download=${encodeURIComponent(name)}`;
+}
+
+/** Trigger a direct streaming download via a temporary anchor. */
+export function triggerDirectDownload(
+  asset: Pick<MediaAsset, "url" | "title" | "mime_type" | "storage_path" | "kind">,
+  overrideName?: string,
+): void {
+  const href = buildDownloadUrl(asset, overrideName);
+  const a = document.createElement("a");
+  a.href = href;
+  a.rel = "noopener";
+  a.download = overrideName ?? filenameForAsset(asset);
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+}
+
+/**
+ * Stream-zips the user's images + videos and triggers a single download.
+ * Uses client-zip so files are pulled lazily and no full-archive blob is
+ * held in memory until generation is done. A small concurrency limiter
+ * keeps the network from being saturated by huge galleries.
+ */
 export async function downloadAllMediaAsZip(userId: string): Promise<number> {
   const all = await listMediaAssets(userId);
   const items = all.filter((a) => a.kind === "image" || a.kind === "video");
   if (items.length === 0) return 0;
 
-  const { default: JSZip } = await import("jszip");
-  const zip = new JSZip();
+  // Resolve unique filenames up front.
   const used = new Map<string, number>();
-
-  await Promise.all(items.map(async (a) => {
-    try {
-      const res = await fetch(a.url);
-      if (!res.ok) throw new Error(`fetch ${res.status}`);
-      const blob = await res.blob();
-      let base = sanitize(a.title);
-      if (!hasExt(base)) base = `${base}.${extFor(a)}`;
-      const dot = base.lastIndexOf(".");
-      const stem = dot > 0 ? base.slice(0, dot) : base;
-      const ext = dot > 0 ? base.slice(dot) : "";
-      let name = base;
-      const key = name.toLowerCase();
-      if (used.has(key)) {
-        const n = (used.get(key) ?? 1) + 1;
-        used.set(key, n);
-        name = `${stem} (${n})${ext}`;
-      } else {
-        used.set(key, 1);
-      }
-      zip.file(name, blob);
-    } catch (e) {
-      console.error("zip skip", a.title, e);
+  const planned = items.map((a) => {
+    let base = filenameForAsset(a);
+    const dot = base.lastIndexOf(".");
+    const stem = dot > 0 ? base.slice(0, dot) : base;
+    const ext = dot > 0 ? base.slice(dot) : "";
+    const key = base.toLowerCase();
+    let name = base;
+    if (used.has(key)) {
+      const n = (used.get(key) ?? 1) + 1;
+      used.set(key, n);
+      name = `${stem} (${n})${ext}`;
+    } else {
+      used.set(key, 1);
     }
-  }));
+    return { asset: a, name };
+  });
 
-  const out = await zip.generateAsync({ type: "blob" });
-  const url = URL.createObjectURL(out);
-  const a = document.createElement("a");
+  const { downloadZip } = await import("client-zip");
+
+  // Lazy async iterator with a concurrency cap of 4: we prefetch up to 4
+  // responses ahead of what client-zip is consuming, so the pipeline stays
+  // full but we don't fire 200 requests at once.
+  const CONCURRENCY = 4;
+  async function* source() {
+    let next = 0;
+    const inflight: Promise<{ idx: number; name: string; res: Response } | null>[] = [];
+    const start = (idx: number) => {
+      const { asset, name } = planned[idx];
+      return fetch(asset.url)
+        .then((res) => {
+          if (!res.ok) throw new Error(`fetch ${res.status}`);
+          return { idx, name, res };
+        })
+        .catch((e) => {
+          console.error("zip skip", planned[idx].name, e);
+          return null;
+        });
+    };
+    while (next < CONCURRENCY && next < planned.length) inflight.push(start(next++));
+    while (inflight.length > 0) {
+      const item = await inflight.shift()!;
+      if (next < planned.length) inflight.push(start(next++));
+      if (!item) continue;
+      yield { name: item.name, input: item.res, lastModified: new Date(planned[item.idx].asset.created_at) };
+    }
+  }
+
+  const zipResponse = downloadZip(source());
   const date = new Date().toISOString().slice(0, 10);
+  const filename = `media-gallery-${date}.zip`;
+
+  // We still need an object URL to trigger a download (browsers don't let
+  // anchors point at in-memory streams). But because client-zip emits as it
+  // reads, peak memory is bounded by network buffer + a few in-flight files,
+  // not the whole archive.
+  const blob = await zipResponse.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
   a.href = url;
-  a.download = `media-gallery-${date}.zip`;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-  return items.length;
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
+  return planned.length;
 }

@@ -1,44 +1,31 @@
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Download } from "lucide-react";
-import { toast } from "sonner";
+import { triggerDirectDownload } from "@/lib/mediaAssets";
 
 type Props = {
   open: boolean;
   url: string | null;
   type: string | null;
+  title?: string | null;
+  mimeType?: string | null;
+  storagePath?: string | null;
   onClose: () => void;
 };
 
-const extFor = (type: string | null, mime?: string): string => {
-  if (mime) {
-    const sub = mime.split("/")[1]?.split(";")[0];
-    if (sub) return sub === "jpeg" ? "jpg" : sub === "quicktime" ? "mov" : sub;
-  }
-  if (type === "video") return "mp4";
-  if (type === "audio") return "mp3";
-  return "png";
-};
-
-export const MediaViewer = ({ open, url, type, onClose }: Props) => {
-  const handleDownload = async () => {
+export const MediaViewer = ({ open, url, type, title, mimeType, storagePath, onClose }: Props) => {
+  const handleDownload = () => {
     if (!url) return;
-    try {
-      const r = await fetch(url);
-      if (!r.ok) throw new Error(`download failed: ${r.status}`);
-      const blob = await r.blob();
-      const ext = extFor(type, blob.type);
-      const obj = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = obj;
-      a.download = `magic-checklist.${ext}`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      setTimeout(() => URL.revokeObjectURL(obj), 1000);
-    } catch (e: any) {
-      toast.error(e?.message ?? "Could not download. Try again.");
-    }
+    const kind = (type === "video" || type === "audio" || type === "image"
+      ? type
+      : "image") as "image" | "video" | "audio";
+    triggerDirectDownload({
+      url,
+      title: title || "magic-checklist",
+      mime_type: mimeType ?? null,
+      storage_path: storagePath ?? "",
+      kind,
+    });
   };
 
   return (
