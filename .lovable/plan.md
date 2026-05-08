@@ -1,50 +1,29 @@
-## Why downloads feel slow (first-principles)
+## Make full media titles always visible
 
-**Single image/video download (MediaViewer):**
-The current code does `fetch(url) → response.blob() → URL.createObjectURL → <a download> click`. That means the browser must pull the *entire* file into JS memory before the save dialog can appear. For a 50 MB video on a phone, that's ~30–60s of "nothing happening" before the OS save sheet shows up. There's no progress indicator either, so it feels frozen.
+The single bottleneck: each row uses `flex items-center` with the title `<button>` on `truncate text-sm font-medium`, then three icon buttons (rename, open, delete) sit beside it on the same row. On mobile that leaves ~120 px for the title — anything longer than ~18 chars gets `…`'d.
 
-The only reason to do the fetch+blob dance is to control the saved filename. The plain `<a download="name.mp4" href={url}>` attribute is *ignored* when the file is on a different origin (Supabase Storage is a different host than the app), which is why we currently work around it.
+### Fix: stack the row on mobile, side-by-side on desktop
 
-**The fix:** Supabase Storage supports a `?download=<filename>` query parameter on public URLs. When present, Storage returns `Content-Disposition: attachment; filename="<name>"` — the browser streams the file straight to disk with the correct name, no JS buffering, no memory copy, dialog opens instantly. This is the same trick the Supabase docs recommend.
+A two-line title wrap alone wouldn't be enough for long shot codes like `X245_charRef_sceneB_v3_final` — they'd still get cropped on narrow screens. Moving the actions below the title on mobile gives the title the entire card width; on desktop where there's space, we keep the current side-by-side layout.
 
-**"Download all media":**
-Three compounding problems:
-1. We `await fetch(...).blob()` for every asset, holding *every* file fully in RAM at once.
-2. JSZip then builds the entire archive in memory and only emits the final blob at the end. On a gallery with a few large videos this can be hundreds of MB.
-3. `Promise.all` starts every fetch simultaneously — on mobile this saturates the connection and many requests stall.
+### Changes (only `src/pages/MediaGallery.tsx`, lines ~178–230)
 
-**The fix:** swap JSZip for `client-zip`, which produces a streaming `Response` whose body is a `ReadableStream`. Fetches are pulled lazily as the zip is read, memory stays flat, and the download starts almost immediately. Combine that with a small concurrency limiter (e.g., 4 parallel fetches) so the network isn't choked.
+1. **Row container** — change `<li className="flex items-center gap-3 px-3 py-2.5 bg-card">` to `flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3 px-3 py-2.5 bg-card`. Stacks on mobile, restores horizontal layout from `sm:` breakpoint up.
 
-## Changes
+2. **Top row (icon + title block)** — wrap the kind-icon `<span>` and the `<div className="min-w-0 flex-1">` in a new `<div className="flex items-start gap-3 w-full min-w-0">`. `items-start` so the round icon aligns to the first line of a wrapped title.
 
-**1. `src/lib/mediaAssets.ts`**
-- Add helper `buildDownloadUrl(asset)`:
-  - Computes the desired filename (existing `sanitize` + `extFor` logic, ensuring an extension).
-  - Returns `${asset.url}?download=${encodeURIComponent(filename)}`.
-- Replace `downloadAllMediaAsZip` with a streaming version:
-  - Filter to image/video as today.
-  - Resolve unique filenames up-front (same de-dup logic).
-  - Use `client-zip`'s `downloadZip(asyncIterable)` to produce a streaming `Response`.
-  - The async iterable yields `{ name, input: fetch(url) }` with a concurrency cap of 4 (simple semaphore — no extra dep).
-  - Pipe `response.body` into a download via `URL.createObjectURL(await response.blob())` *only* if streaming-to-disk via the File System Access API isn't available. (For browsers that support `showSaveFilePicker`, pipe the stream directly so memory stays flat; otherwise fall back to blob — still faster than JSZip because client-zip doesn't buffer intermediate state.)
-  - Keep the `media-gallery-YYYY-MM-DD.zip` filename and the returned count.
+3. **Title button** — replace `truncate` with `break-words whitespace-normal leading-snug`. No line clamp — full title shows, wrapping as many lines as needed. Keep `text-sm font-medium`, keep `block w-full text-left hover:underline`, keep the rename-on-click behavior.
 
-**2. `src/components/MediaViewer.tsx`**
-- Delete the `fetch → blob → object URL` path.
-- Replace with a direct anchor: `<a href={buildDownloadUrl(...)} download>` (the `download` attribute is now redundant since Storage sets `Content-Disposition`, but harmless and helps the same-origin case).
-- Keep the visible Download button; on click, just programmatically click that anchor. The OS save dialog appears immediately and the file streams in the background.
-- Needs `mime_type` to pick the extension. The viewer currently only receives `url` + `type`. Easiest: also pass `title` and `mime_type` (or the whole asset) from the gallery page so we can build the proper filename. Update `MediaViewer` props and the one caller in `MediaGallery.tsx`.
+4. **Action buttons row** — wrap the three `<Button>`s in `<div className="flex items-center gap-1 self-end sm:self-auto -mr-1 sm:mr-0">`. On mobile they sit on a second line, right-aligned (`self-end`) so they line up with the card edge and stay thumb-reachable. On desktop they revert to inline-with-title.
 
-**3. `src/components/MediaGalleryPicker.tsx` / other viewer callers** — update only if they pass to `MediaViewer`; otherwise no change. Will verify during implementation.
+5. **Edit mode row** — give the inline rename `<div>` `w-full` so the input expands to full card width on mobile (currently it's constrained by the flex children).
 
-**4. Dependency**
-- `bun add client-zip` (tiny, no deps, ESM, browser-native streams).
-- Leave `jszip` installed for now; remove only after confirming nothing else imports it.
+Nothing else changes: handlers, state, multi-select (none here), MediaViewer, AlertDialog, upload buttons, filter chips, header — all untouched.
 
-## Expected result
+### Why this is the cleanest option
+- Wrap-only would leave actions squeezing the title on mobile to ~60% width, still wrapping awkwardly into 3–4 lines for long names.
+- Stack-only on every breakpoint wastes vertical space on desktop where horizontal fits fine.
+- Combo (wrap + responsive stack) gives the title 100% of card width on mobile with no truncation, and preserves the existing tidy desktop row.
 
-- Single image/video: save dialog appears in <200 ms regardless of file size; the browser streams to disk natively.
-- "Download all": zip starts downloading within ~1 second, memory usage stays low, total time is bounded by network throughput rather than `JS heap` allocation. On mobile this is the difference between "instant" and "spinner for a minute."
-
-## Out of scope
-No backend/queue changes. Edge functions and DB are not in this path — bottleneck is purely client-side. If gallery sizes ever grow into the multi-GB range we can revisit a server-built zip, but it's unnecessary now.
+### Visual style
+- Same `bg-card`, `divide-y divide-border`, `text-sm font-medium`, `text-xs text-muted-foreground` for the meta line, same icon button sizing — zero new tokens or colors introduced.
