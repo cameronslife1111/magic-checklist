@@ -26,7 +26,7 @@ const RED_KEYS = new Set<ActionKey>(["delete-current", "delete-all-checkboxes"])
 const STATIC_ITEMS: { key: Exclude<ActionKey, "theme">; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
   // Top: moved-up quick actions (right under Mute)
   { key: "split",            label: "Split current checkbox",   icon: Scissors },
-  { key: "split-emoji",      label: "Split by emoji",           icon: Smile },
+  { key: "split-emoji",      label: "Split by punctuation",     icon: Smile },
   { key: "uncheck-all",      label: "Uncheck all checkboxes",   icon: Square },
   { key: "rearrange",        label: "Rearrange checkboxes",     icon: ArrowUpDown },
 
