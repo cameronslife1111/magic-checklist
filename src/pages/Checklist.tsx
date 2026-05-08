@@ -197,6 +197,70 @@ const ChecklistPage = () => {
     setActiveLineItemId(null);
   };
 
+  // Recycle: jump to Home Favorite slot 1, check off its current top item,
+  // then auto-follow linked-checklist chain until we land on a checklist whose
+  // current top unchecked item has no linked_checklist_id (or is empty).
+  const runRecycle = async () => {
+    const slots = loadFavorites();
+    const slot1 = slots[0];
+    if (!slot1) {
+      toast.message("No Home Favorite in slot 1", {
+        description: "Open Actions → Manage Home Favorites to set slot 1.",
+      });
+      return;
+    }
+    stopSpeech();
+    const visited = new Set<string>();
+    let currentId: string = slot1;
+    let didCheck = false;
+
+    for (let hop = 0; hop < 25; hop++) {
+      if (visited.has(currentId)) break;
+      visited.add(currentId);
+
+      const { data: its } = await supabase
+        .from("checklist_items")
+        .select("*")
+        .eq("checklist_id", currentId)
+        .is("parent_item_id", null)
+        .order("position", { ascending: true });
+      const list = (its ?? []) as ChecklistItem[];
+      const firstUnchecked = list.find((i) => !i.checked) ?? null;
+
+      // Only check off on the very first hop (the slot-1 checklist).
+      if (!didCheck && firstUnchecked) {
+        await supabase
+          .from("checklist_items")
+          .update({ checked: true })
+          .eq("id", firstUnchecked.id);
+        didCheck = true;
+        // Re-fetch to get the new "first unchecked".
+        const { data: its2 } = await supabase
+          .from("checklist_items")
+          .select("*")
+          .eq("checklist_id", currentId)
+          .is("parent_item_id", null)
+          .order("position", { ascending: true });
+        const list2 = (its2 ?? []) as ChecklistItem[];
+        const next = list2.find((i) => !i.checked) ?? null;
+        if (next?.linked_checklist_id) {
+          currentId = next.linked_checklist_id;
+          continue;
+        }
+        break;
+      }
+
+      if (firstUnchecked?.linked_checklist_id) {
+        currentId = firstUnchecked.linked_checklist_id;
+        continue;
+      }
+      break;
+    }
+
+    await openChecklist(currentId);
+  };
+
+
   // Subscribe to the active Run Sequence parent for this checklist so we can
   // (a) highlight the line currently being worked on in green, and
   // (b) refresh items when the agent inserts new child rows.
