@@ -108,8 +108,8 @@ async function pollFalOnce(falKey: string, statusUrl: string, responseUrl: strin
 // Legacy synchronous path: submit then poll until done. Kept for direct UI calls
 // that don't go through the action queue. Capped at ~140s so it fits inside the
 // 150s edge-function ceiling — but the action queue uses submit/poll instead.
-async function syncSubmitAndPoll(falKey: string, prompt: string, aspectRatio: string | undefined, refs: string[]) {
-  const handle = await submitToFal(falKey, prompt, aspectRatio, refs);
+async function syncSubmitAndPoll(falKey: string, prompt: string, aspectRatio: string | undefined, refs: string[], quality: string) {
+  const handle = await submitToFal(falKey, prompt, aspectRatio, refs, quality);
   if (!handle.status_url || !handle.response_url) throw new Error("fal did not return queue handle");
   const start = Date.now();
   let i = 0;
