@@ -43,7 +43,7 @@ function pickEndpoint(hasRefs: boolean) {
     : "https://queue.fal.run/openai/gpt-image-2";
 }
 
-function buildSubmitBody(prompt: string, aspectRatio: string | undefined, refs: string[]) {
+function buildSubmitBody(prompt: string, aspectRatio: string | undefined, refs: string[], quality: string) {
   const hasRefs = refs.length > 0;
   const image_size = hasRefs
     ? (aspectRatio ? (ASPECT_TO_SIZE[aspectRatio] ?? "auto") : "auto")
@@ -51,7 +51,7 @@ function buildSubmitBody(prompt: string, aspectRatio: string | undefined, refs: 
   const body: Record<string, any> = {
     prompt,
     image_size,
-    quality: "high",
+    quality,
     num_images: 1,
     output_format: "png",
   };
@@ -59,12 +59,12 @@ function buildSubmitBody(prompt: string, aspectRatio: string | undefined, refs: 
   return body;
 }
 
-async function submitToFal(falKey: string, prompt: string, aspectRatio: string | undefined, refs: string[]) {
+async function submitToFal(falKey: string, prompt: string, aspectRatio: string | undefined, refs: string[], quality: string) {
   const endpoint = pickEndpoint(refs.length > 0);
   const submit = await fetch(endpoint, {
     method: "POST",
     headers: { Authorization: `Key ${falKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify(buildSubmitBody(prompt, aspectRatio, refs)),
+    body: JSON.stringify(buildSubmitBody(prompt, aspectRatio, refs, quality)),
   });
   if (!submit.ok) {
     const t = await submit.text();
@@ -108,8 +108,8 @@ async function pollFalOnce(falKey: string, statusUrl: string, responseUrl: strin
 // Legacy synchronous path: submit then poll until done. Kept for direct UI calls
 // that don't go through the action queue. Capped at ~140s so it fits inside the
 // 150s edge-function ceiling — but the action queue uses submit/poll instead.
-async function syncSubmitAndPoll(falKey: string, prompt: string, aspectRatio: string | undefined, refs: string[]) {
-  const handle = await submitToFal(falKey, prompt, aspectRatio, refs);
+async function syncSubmitAndPoll(falKey: string, prompt: string, aspectRatio: string | undefined, refs: string[], quality: string) {
+  const handle = await submitToFal(falKey, prompt, aspectRatio, refs, quality);
   if (!handle.status_url || !handle.response_url) throw new Error("fal did not return queue handle");
   const start = Date.now();
   let i = 0;
@@ -142,20 +142,21 @@ Deno.serve(async (req) => {
     }
 
     // ── Shared input parsing for submit + legacy ──────────────────────────
-    const { prompt, aspectRatio, refImages, refImageUrls } = body ?? {};
+    const { prompt, aspectRatio, refImages, refImageUrls, quality: qIn } = body ?? {};
     if (!prompt) return json({ error: "Missing prompt" }, 400);
     const urlRefs: string[] = Array.isArray(refImageUrls) ? refImageUrls.filter((u) => typeof u === "string") : [];
     const dataUrlRefs: string[] = Array.isArray(refImages) ? refImages.filter((u) => typeof u === "string") : [];
     const allRefs = [...urlRefs, ...dataUrlRefs].slice(0, 16);
+    const quality = (qIn === "low" || qIn === "medium" || qIn === "high") ? qIn : "high";
 
     // ── Mode: submit ──────────────────────────────────────────────────────
     if (mode === "submit") {
-      const handle = await submitToFal(falKey, prompt, aspectRatio, allRefs);
+      const handle = await submitToFal(falKey, prompt, aspectRatio, allRefs, quality);
       return json(handle);
     }
 
     // ── Legacy synchronous mode (no `mode` field) ─────────────────────────
-    const dataUrl = await syncSubmitAndPoll(falKey, prompt, aspectRatio, allRefs);
+    const dataUrl = await syncSubmitAndPoll(falKey, prompt, aspectRatio, allRefs, quality);
     return json({ dataUrl });
   } catch (e) {
     console.error("lovable-image error", e);
