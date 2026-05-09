@@ -43,7 +43,7 @@ function pickEndpoint(hasRefs: boolean) {
     : "https://queue.fal.run/openai/gpt-image-2";
 }
 
-function buildSubmitBody(prompt: string, aspectRatio: string | undefined, refs: string[]) {
+function buildSubmitBody(prompt: string, aspectRatio: string | undefined, refs: string[], quality: string) {
   const hasRefs = refs.length > 0;
   const image_size = hasRefs
     ? (aspectRatio ? (ASPECT_TO_SIZE[aspectRatio] ?? "auto") : "auto")
@@ -51,7 +51,7 @@ function buildSubmitBody(prompt: string, aspectRatio: string | undefined, refs: 
   const body: Record<string, any> = {
     prompt,
     image_size,
-    quality: "high",
+    quality,
     num_images: 1,
     output_format: "png",
   };
@@ -59,12 +59,12 @@ function buildSubmitBody(prompt: string, aspectRatio: string | undefined, refs: 
   return body;
 }
 
-async function submitToFal(falKey: string, prompt: string, aspectRatio: string | undefined, refs: string[]) {
+async function submitToFal(falKey: string, prompt: string, aspectRatio: string | undefined, refs: string[], quality: string) {
   const endpoint = pickEndpoint(refs.length > 0);
   const submit = await fetch(endpoint, {
     method: "POST",
     headers: { Authorization: `Key ${falKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify(buildSubmitBody(prompt, aspectRatio, refs)),
+    body: JSON.stringify(buildSubmitBody(prompt, aspectRatio, refs, quality)),
   });
   if (!submit.ok) {
     const t = await submit.text();
