@@ -142,20 +142,21 @@ Deno.serve(async (req) => {
     }
 
     // ── Shared input parsing for submit + legacy ──────────────────────────
-    const { prompt, aspectRatio, refImages, refImageUrls } = body ?? {};
+    const { prompt, aspectRatio, refImages, refImageUrls, quality: qIn } = body ?? {};
     if (!prompt) return json({ error: "Missing prompt" }, 400);
     const urlRefs: string[] = Array.isArray(refImageUrls) ? refImageUrls.filter((u) => typeof u === "string") : [];
     const dataUrlRefs: string[] = Array.isArray(refImages) ? refImages.filter((u) => typeof u === "string") : [];
     const allRefs = [...urlRefs, ...dataUrlRefs].slice(0, 16);
+    const quality = (qIn === "low" || qIn === "medium" || qIn === "high") ? qIn : "high";
 
     // ── Mode: submit ──────────────────────────────────────────────────────
     if (mode === "submit") {
-      const handle = await submitToFal(falKey, prompt, aspectRatio, allRefs);
+      const handle = await submitToFal(falKey, prompt, aspectRatio, allRefs, quality);
       return json(handle);
     }
 
     // ── Legacy synchronous mode (no `mode` field) ─────────────────────────
-    const dataUrl = await syncSubmitAndPoll(falKey, prompt, aspectRatio, allRefs);
+    const dataUrl = await syncSubmitAndPoll(falKey, prompt, aspectRatio, allRefs, quality);
     return json({ dataUrl });
   } catch (e) {
     console.error("lovable-image error", e);
