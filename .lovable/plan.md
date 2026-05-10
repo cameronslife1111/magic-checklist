@@ -1,60 +1,83 @@
-## Goal
-Add a 4th bottom action button — a yellow "Recycle" button with a 🐝 emoji — that automatically navigates the user through their Home Favorites slot 1 + linked-checklist chain, checking the current item off along the way.
+## Bee Protocol — replace Dante Inbox watcher
 
-## Layout change (bottom action bar)
+Goal: replace the per-item conversational Dante watcher with a "Bee Protocol" walker that, every 30 minutes, walks all checklists linked from the `🤖 Dante Inbox` checklist, triages each unprocessed item with one LLM call, and either marks it ✅ (with appended completed work) or 🐝 (with 4 options).
 
-Today the bar has 3 buttons (`src/pages/Checklist.tsx` ~line 1565–1682):
+### Schema-reality notes (to confirm before coding)
 
-```text
-[ Actions  flex-1 ] [ 🏠 w-20 ] [ ✓ flex-1 ]
-```
+- There is no `linked_checklist_owner_id` — `checklist_items` has only `linked_checklist_id`. Ownership check will join `checklists.user_id`.
+- There is no `dante_processing` boolean column. I'll add a nullable `dante_locked_at timestamptz` on `checklist_items` for the cycle lock instead of a boolean (auto-expires after 10 min).
+- Existing `dante_daily_counters` table has only `(day, count, updated_at)` — no `user_id`. Spec says "per user." Two options (will ask): keep global daily cap, or add `user_id` and key by owner of the Dante Inbox.
+- Current `dante-watcher/index.ts` calls RPCs `dante_try_lock`, `dante_unlock`, `dante_claim_items` that don't exist in the DB — the existing watcher is already non-functional. Safe to fully replace.
+- Central Time day boundary: use `(now() AT TIME ZONE 'America/Chicago')::date`.
+- Title prefix detection must handle existing `✅ ` / `🐝 ` / `⚠️ ` prefixes idempotently.
 
-New layout (left → right):
+### Step 0 — Strip old Dante logic
 
-```text
-[ Actions  ~half ] [ 🏠 w-20 ] [ 🐝 w-20 ] [ ✓ flex-1 ]
-```
+- Replace contents of `supabase/functions/dante-watcher/index.ts` entirely (no other function references the old conversational flow).
+- Drop the obsolete RPC stubs from any migration if present (none exist in DB, so nothing to drop).
+- Leave `claude-bridge`, `claude-mcp`, `openai-text`, etc. untouched — they are shared services.
+- No frontend changes. `ItemRow` already renders title text, so ✅ / 🐝 prefixes appear automatically.
 
-- Keep the green ✓ button at its current size (`flex-1 h-28`).
-- Keep the blue 🏠 button at `w-20 h-28`.
-- Insert a new yellow 🐝 button at `w-20 h-28` between 🏠 and ✓.
-- Shrink the orange Actions button to roughly half its current width by changing `flex-1` → `flex-[0.5]` so the green button still occupies the dominant share. All four buttons keep `h-28` and `rounded-none` for the same visual language.
+### Step 1 — Migration
 
-## New "Recycle" button (🐝, yellow)
+New migration adds:
 
-Style:
-- Same shape/height as the others (`w-20 h-28 rounded-none select-none touch-none`).
-- New metallic-yellow background to mirror existing `btn-metallic-blue/green/orange` classes. Add `.btn-metallic-yellow` to `src/index.css` using HSL tokens (a warm yellow gradient + matching shadow), plus `--action-yellow-foreground` for the icon/emoji color. Apply `text-action-yellow-foreground btn-metallic-yellow btn-shimmer` and a `--shimmer-delay` of `2.4s` to interleave with the existing 0s / 1.6s / 3.2s shimmer cadence.
-- Children: the 🐝 emoji at `text-2xl leading-none` (matches 🏠).
-- `aria-label="Recycle: go to first Home Favorite, check current, follow links"`.
+1. `checklist_items.dante_locked_at timestamptz null` — per-item soft lock (cycle-scoped, auto-expires).
+2. `checklist_items.dante_fail_count int not null default 0` — for the 3-strike ⚠️ rule.
+3. New table `dante_action_log`:
+   - `id uuid pk`, `user_id uuid`, `checklist_id uuid`, `item_id uuid`,
+   - `decision text check in ('complete','bee','error')`,
+   - `model_used text`, `tokens_used int`, `error text null`,
+   - `processed_at timestamptz default now()`.
+   - RLS: owner can select; service role inserts.
+4. Alter `dante_daily_counters` to add `user_id uuid` (nullable for back-compat) and unique `(user_id, day)`.
+5. Helper SQL function `dante_inbox_checklist_id(uid uuid) returns uuid` — finds the user's checklist titled exactly `🤖 Dante Inbox` (used to avoid hardcoding via env, but we keep `DANTE_INBOX_CHECKLIST_ID` env as fallback for the single-tenant case).
+6. pg_cron schedule (via `supabase--insert`, not migration, since it embeds the anon key) to call `dante-watcher` every 30 minutes.
 
-Behavior (single tap, no long-press):
-1. Read Home Favorites slot 0 (`loadFavorites()[0]` from `src/lib/homeFavorites.ts`). If empty, toast "No Home Favorite in slot 1" and stop.
-2. `await openChecklist(slot0Id)`.
-3. Re-fetch that checklist's top-level items directly (don't rely on React state, which won't have updated yet inside the same handler) and find the first unchecked top-level item.
-4. If found, mark it checked in the DB (`update checklist_items set checked = true where id = ...`) — mirrors what `handleToggle(item, true)` does for the persistence side, but performed inline so we can chain.
-5. Re-query the same checklist's items, find the new first unchecked top-level item.
-6. If that item has a `linked_checklist_id`, repeat from step 2 with that id (open it, find first unchecked, but do NOT auto-check on subsequent hops — the user said "open all of the links until it's at a checklist where there is not an attached link"). Loop until the landing checklist's first unchecked item has no `linked_checklist_id` (or there is no unchecked item).
-7. Finally call `openChecklist(finalId)` so React state + UI reflect the landing checklist, and `stopSpeech()` already runs inside `openChecklist`.
+### Step 2 — New `dante-watcher` edge function
 
-Edge cases:
-- All items in slot-1 already checked → still call `openChecklist(slot0)` and stop (nothing to chain).
-- Linked checklist id points to a deleted checklist → if fetch returns null, stop on the previous valid one.
-- Guard against infinite loops with a `Set<string>` of visited checklist ids; bail with a toast if we revisit.
-- Only consider top-level items (`parent_item_id IS NULL`), matching how `highestUnchecked` is computed.
+Single Deno function. On invocation:
 
-## Files to change
+1. **Auth**: accept service-role bearer or `x-dante-cron-secret` (preserve existing behavior).
+2. **Resolve scope**: for each owner of a `🤖 Dante Inbox` checklist (initially just the configured one via `DANTE_INBOX_CHECKLIST_ID`, extensible later):
+   - Read all items in that inbox where `linked_checklist_id is not null` → set of permitted checklist IDs.
+   - Filter to checklists whose `user_id` matches the inbox owner (security boundary).
+3. **Daily cap**: read `dante_daily_counters` for `(user_id, today_ct)`. If `count >= 100`, skip user.
+4. **Walk permitted checklists**: for each, fetch all items ordered by position. Build a numbered context list (title + checked state) for the LLM.
+5. **Classify items**:
+   - DONE if `checked = true` OR title starts with `✅ ` OR `🐝 `.
+   - SKIP if `dante_locked_at` is within last 10 min OR `dante_fail_count >= 3` (already ⚠️-prefixed).
+   - READY otherwise.
+6. **Per-item processing loop** (respecting remaining daily budget):
+   - Atomic claim: `update checklist_items set dante_locked_at = now() where id = ? and (dante_locked_at is null or dante_locked_at < now() - interval '10 min') returning *`. Skip if no row updated.
+   - Build prompt per spec (system + user message with full checklist context + the target item).
+   - Call **OpenAI** via existing `OPENAI_API_KEY` using `gpt-5.5` (same model already used in this project) with `response_format: { type: "json_object" }`. The user wrote "Claude Sonnet 4.5 OR whatever AI gateway is configured" — this project uses OpenAI; will note in chat. JSON-strict per the spec's schema.
+   - Validate JSON with Zod: `{decision, reasoning_for_cj, completed_work, bee_options[]}`.
+   - On `decision = "complete"`: rewrite `text` to ``✅ <original>\n\n— Dante <MM/DD h:mma CT> —\n<completed_work>``. Leave `checked = false`. (Image generation tool is out of scope for v1; if `completed_work` contains a URL we just keep it as text — note in plan.)
+   - On `decision = "bee"`: rewrite `text` to ``🐝 <original>\n\n— Dante <MM/DD h:mma CT> —\nI can help in 4 ways:\nA) ...\nB) ...\nC) ...\nD) ...``.
+   - "Original" is computed by stripping any leading `✅ `, `🐝 `, `⚠️ ` prefix and any prior `\n\n— Dante ` block.
+   - Insert `dante_action_log` row, increment `dante_daily_counters` (upsert), clear `dante_locked_at`, reset `dante_fail_count = 0`.
+7. **Errors**:
+   - On LLM failure / JSON-parse failure: increment `dante_fail_count`, clear lock, log row with `decision='error'`. If count reaches 3, prefix title with `⚠️ ` (idempotent).
+   - On missing checklist (link to deleted): skip silently.
+   - Owner mismatch: skip (defense-in-depth even though already filtered).
+8. **Never modify items inside the Dante Inbox itself.** Permitted-set explicitly excludes the inbox id.
 
-- `src/pages/Checklist.tsx`
-  - Adjust the Actions button `className` from `flex-1` to `flex-[0.5]`.
-  - Insert the new `<Button>` between the 🏠 button and the ✓ button.
-  - Add a `runRecycle()` async helper near `openChecklist` containing steps 1–7 above.
-- `src/index.css`
-  - Add `--action-yellow` / `--action-yellow-foreground` HSL tokens (light + dark) and a `.btn-metallic-yellow` class mirroring the existing metallic button classes.
-- `tailwind.config.ts`
-  - Register `action-yellow` / `action-yellow-foreground` colors so `text-action-yellow-foreground` resolves, mirroring the existing `action-orange` / `action-green` entries.
+### Step 3 — Cron
 
-## Out of scope
-- No changes to long-press behavior on existing buttons.
-- No changes to `homeFavorites.ts`, `ActionsSheet`, or any other component.
-- No changes to how individual checkboxes render or to speech/dictation behavior.
+Use `supabase--insert` to register a `pg_cron` job named `dante-bee-walker` running `*/30 * * * *` that POSTs to the deployed `dante-watcher` URL with header `x-dante-cron-secret: <DANTE_CRON_SECRET>`. Does not replace any existing schedule unless one exists with the same name.
+
+### Files
+
+- `supabase/functions/dante-watcher/index.ts` — full rewrite.
+- `supabase/functions/dante-watcher/deno.json` — keep, ensure `zod` import.
+- New migration: schema additions above.
+- `supabase--insert` for pg_cron schedule.
+- No frontend files change.
+
+### Open questions before I implement
+
+1. Daily cap — global (current schema) or per-Dante-Inbox-owner (add `user_id`)?
+2. Model — OK to use `openai/gpt-5.5` via the existing `OPENAI_API_KEY` (since Claude isn't wired here), or do you want me to add an `ANTHROPIC_API_KEY` and use Claude Sonnet 4.5?
+3. Image-generation tool inside Dante's "complete" action — defer to v2, or wire `lovable-image`/`fal` so Dante can attach a real `media_url`?
+4. Title rewrites are destructive (we overwrite `text`). Confirm that's OK (spec says so) vs. storing Dante output in `result` and only prefix-flagging the title.
