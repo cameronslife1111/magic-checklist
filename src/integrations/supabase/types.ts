@@ -264,24 +264,6 @@ export type Database = {
         }
         Relationships: []
       }
-      dante_daily_counters: {
-        Row: {
-          count: number
-          day: string
-          updated_at: string
-        }
-        Insert: {
-          count?: number
-          day: string
-          updated_at?: string
-        }
-        Update: {
-          count?: number
-          day?: string
-          updated_at?: string
-        }
-        Relationships: []
-      }
       media_assets: {
         Row: {
           created_at: string
@@ -335,7 +317,34 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      dante_claim_items: {
+        Args: { p_checklist_id: string; p_limit: number }
+        Returns: {
+          checked: boolean
+          checklist_id: string
+          created_at: string
+          external_link: string | null
+          id: string
+          linked_checklist_id: string | null
+          media_type: string | null
+          media_url: string | null
+          parent_item_id: string | null
+          position: number
+          result: string | null
+          status: string | null
+          text: string
+          updated_at: string
+          user_id: string
+        }[]
+        SetofOptions: {
+          from: "*"
+          to: "checklist_items"
+          isOneToOne: false
+          isSetofReturn: true
+        }
+      }
+      dante_try_lock: { Args: never; Returns: boolean }
+      dante_unlock: { Args: never; Returns: boolean }
     }
     Enums: {
       [_ in never]: never
