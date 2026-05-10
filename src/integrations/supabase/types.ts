@@ -115,6 +115,8 @@ export type Database = {
           checked: boolean
           checklist_id: string
           created_at: string
+          dante_fail_count: number
+          dante_locked_at: string | null
           external_link: string | null
           id: string
           linked_checklist_id: string | null
@@ -132,6 +134,8 @@ export type Database = {
           checked?: boolean
           checklist_id: string
           created_at?: string
+          dante_fail_count?: number
+          dante_locked_at?: string | null
           external_link?: string | null
           id?: string
           linked_checklist_id?: string | null
@@ -149,6 +153,8 @@ export type Database = {
           checked?: boolean
           checklist_id?: string
           created_at?: string
+          dante_fail_count?: number
+          dante_locked_at?: string | null
           external_link?: string | null
           id?: string
           linked_checklist_id?: string | null
@@ -264,21 +270,60 @@ export type Database = {
         }
         Relationships: []
       }
+      dante_action_log: {
+        Row: {
+          checklist_id: string
+          decision: string
+          error: string | null
+          id: string
+          item_id: string
+          model_used: string | null
+          processed_at: string
+          tokens_used: number | null
+          user_id: string
+        }
+        Insert: {
+          checklist_id: string
+          decision: string
+          error?: string | null
+          id?: string
+          item_id: string
+          model_used?: string | null
+          processed_at?: string
+          tokens_used?: number | null
+          user_id: string
+        }
+        Update: {
+          checklist_id?: string
+          decision?: string
+          error?: string | null
+          id?: string
+          item_id?: string
+          model_used?: string | null
+          processed_at?: string
+          tokens_used?: number | null
+          user_id?: string
+        }
+        Relationships: []
+      }
       dante_daily_counters: {
         Row: {
           count: number
           day: string
           updated_at: string
+          user_id: string | null
         }
         Insert: {
           count?: number
           day: string
           updated_at?: string
+          user_id?: string | null
         }
         Update: {
           count?: number
           day?: string
           updated_at?: string
+          user_id?: string | null
         }
         Relationships: []
       }
