@@ -45,9 +45,9 @@ export const MediaViewer = ({ open, url, type, title, mimeType, storagePath, onC
               </Button>
             </div>
             {type === "video" ? (
-              <video src={url} controls autoPlay className="w-full h-auto rounded-lg" />
+              <video src={url} controls playsInline className="w-full h-auto rounded-lg" />
             ) : type === "audio" ? (
-              <audio src={url} controls autoPlay className="w-full" />
+              <audio src={url} controls className="w-full" />
             ) : (
               <img src={url} alt="Media" className="w-full h-auto rounded-lg" />
             )}
