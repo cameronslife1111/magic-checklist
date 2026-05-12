@@ -166,20 +166,50 @@ export async function triggerDirectDownload(
 ): Promise<void> {
   const filename = overrideName ?? filenameForAsset(asset);
   const downloadUrl = buildDownloadUrl(asset, overrideName);
+  const ios = isIOSDevice();
 
   try {
     const res = await fetch(downloadUrl, { mode: "cors", credentials: "omit" });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const blob = await res.blob();
+    const mime = asset.mime_type || blob.type || "application/octet-stream";
+
+    // Preferred path on iOS (and any browser that supports file sharing):
+    // hand the file to the native share sheet so the user can pick
+    // "Save Video" / "Save Image" — which routes into Photos.
+    try {
+      const file = new File([blob], filename, { type: mime });
+      const nav = navigator as Navigator & {
+        canShare?: (data: { files: File[] }) => boolean;
+        share?: (data: { files: File[]; title?: string }) => Promise<void>;
+      };
+      if (nav.share && nav.canShare && nav.canShare({ files: [file] })) {
+        await nav.share({ files: [file], title: filename });
+        return;
+      }
+    } catch (e: any) {
+      // User cancelled the share sheet — that's fine, just stop.
+      if (e?.name === "AbortError") return;
+      // Anything else: fall through to the anchor / new-tab fallback.
+    }
+
     const blobUrl = URL.createObjectURL(blob);
     try {
-      clickAnchor(blobUrl, filename);
-      if (isIOSDevice()) {
-        // iOS Safari sometimes ignores the anchor click for blob URLs;
-        // navigating opens the file in a viewer where the user can save it.
-        setTimeout(() => {
-          try { window.location.href = blobUrl; } catch { /* noop */ }
-        }, 100);
+      if (ios) {
+        // No anchor click + no location.href reassignment — that combo
+        // was making the download dialog flash away. Open the blob in a
+        // new tab so the user can long-press to save.
+        window.open(blobUrl, "_blank", "noopener");
+        const { toast } = await import("sonner");
+        toast.message(
+          asset.kind === "video"
+            ? "Long-press the video and choose 'Save to Photos'."
+            : asset.kind === "image"
+              ? "Long-press the image and choose 'Save to Photos'."
+              : "Long-press the file and choose 'Download' to save it.",
+        );
+      } else {
+        clickAnchor(blobUrl, filename);
       }
     } finally {
       setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
