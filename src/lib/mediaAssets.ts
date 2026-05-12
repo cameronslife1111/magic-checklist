@@ -135,19 +135,67 @@ export function buildDownloadUrl(
   return `${asset.url}${sep}download=${encodeURIComponent(name)}`;
 }
 
-/** Trigger a direct streaming download via a temporary anchor. */
-export function triggerDirectDownload(
-  asset: Pick<MediaAsset, "url" | "title" | "mime_type" | "storage_path" | "kind">,
-  overrideName?: string,
-): void {
-  const href = buildDownloadUrl(asset, overrideName);
+const isIOSDevice = (): boolean =>
+  typeof navigator !== "undefined" &&
+  (/iPad|iPhone|iPod/.test(navigator.userAgent) ||
+    // iPadOS 13+ reports as Mac; detect via touch
+    (navigator.platform === "MacIntel" && (navigator as any).maxTouchPoints > 1));
+
+const clickAnchor = (href: string, filename: string) => {
   const a = document.createElement("a");
   a.href = href;
+  a.download = filename;
   a.rel = "noopener";
-  a.download = overrideName ?? filenameForAsset(asset);
+  a.target = "_blank";
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
+};
+
+/**
+ * Trigger a download that actually saves the file on mobile.
+ *
+ * Cross-origin URLs (e.g. fal.media) ignore the <a download> attribute, so on
+ * iOS Safari the browser just navigates to the raw asset. We fetch the asset
+ * as a blob and click a same-origin object URL so the save dialog appears.
+ * Falls back to opening the URL with a long-press hint if fetch fails (CORS).
+ */
+export async function triggerDirectDownload(
+  asset: Pick<MediaAsset, "url" | "title" | "mime_type" | "storage_path" | "kind">,
+  overrideName?: string,
+): Promise<void> {
+  const filename = overrideName ?? filenameForAsset(asset);
+  const downloadUrl = buildDownloadUrl(asset, overrideName);
+
+  try {
+    const res = await fetch(downloadUrl, { mode: "cors", credentials: "omit" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const blob = await res.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    try {
+      clickAnchor(blobUrl, filename);
+      if (isIOSDevice()) {
+        // iOS Safari sometimes ignores the anchor click for blob URLs;
+        // navigating opens the file in a viewer where the user can save it.
+        setTimeout(() => {
+          try { window.location.href = blobUrl; } catch { /* noop */ }
+        }, 100);
+      }
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+    }
+  } catch {
+    // CORS or network error — fall back to opening the URL directly.
+    try { window.open(downloadUrl, "_blank", "noopener"); } catch { /* noop */ }
+    const { toast } = await import("sonner");
+    if (asset.kind === "video") {
+      toast.message("Long-press the video and choose 'Save to Photos' to download.");
+    } else if (asset.kind === "image") {
+      toast.message("Long-press the image and choose 'Save to Photos' to download.");
+    } else {
+      toast.message("Long-press the file and choose 'Download' to save it.");
+    }
+  }
 }
 
 /**
