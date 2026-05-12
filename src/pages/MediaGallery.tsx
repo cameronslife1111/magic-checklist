@@ -7,7 +7,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import {
-  ArrowLeft, Image as ImageIcon, Video, Music, Eye, Trash2, Pencil, Upload, Loader2, Check, X,
+  ArrowLeft, Image as ImageIcon, Video, Music, Eye, Trash2, Pencil, Upload, Loader2, Check, X, CheckSquare,
 } from "lucide-react";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
