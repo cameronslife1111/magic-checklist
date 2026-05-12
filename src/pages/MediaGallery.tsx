@@ -120,6 +120,37 @@ const MediaGalleryPage = () => {
     catch { toast.error("Could not delete. Try again."); }
   };
 
+  const exitSelect = () => { setSelectMode(false); setSelectedIds(new Set()); };
+
+  const toggleSelected = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const selectAllVisible = () => {
+    setSelectedIds(new Set(filtered.map((a) => a.id)));
+  };
+
+  const confirmBulkDelete = async () => {
+    setPendingBulkDelete(false);
+    const ids = Array.from(selectedIds);
+    if (ids.length === 0) return;
+    const targets = assets.filter((a) => ids.includes(a.id));
+    setBulkDeleting(true);
+    setAssets((prev) => prev.filter((x) => !selectedIds.has(x.id)));
+    let failed = 0;
+    await Promise.all(targets.map(async (a) => {
+      try { await deleteMediaAsset(a); } catch { failed += 1; }
+    }));
+    setBulkDeleting(false);
+    exitSelect();
+    if (failed === 0) toast.success(`Deleted ${targets.length} item${targets.length > 1 ? "s" : ""}.`);
+    else toast.error(`Deleted ${targets.length - failed}, ${failed} failed.`);
+  };
+
   return (
     <div className="min-h-screen flex flex-col bg-background text-foreground">
       <header className="sticky top-0 z-20 bg-background/85 backdrop-blur-md border-b border-border">
