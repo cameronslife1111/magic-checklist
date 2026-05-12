@@ -179,17 +179,37 @@ const MediaGalleryPage = () => {
       </header>
 
       <main className="flex-1 max-w-2xl mx-auto w-full px-4 py-4">
-        <div className="grid grid-cols-3 gap-2 mb-4">
-          <Button variant="outline" onClick={() => imgRef.current?.click()} className="justify-center">
-            <Upload className="h-4 w-4" /> Image
-          </Button>
-          <Button variant="outline" onClick={() => vidRef.current?.click()} className="justify-center">
-            <Upload className="h-4 w-4" /> Video
-          </Button>
-          <Button variant="outline" onClick={() => audRef.current?.click()} className="justify-center">
-            <Upload className="h-4 w-4" /> Audio
-          </Button>
-        </div>
+        {selectMode ? (
+          <div className="flex items-center gap-2 mb-4 flex-wrap">
+            <span className="text-sm font-medium mr-auto">{selectedIds.size} selected</span>
+            <Button variant="outline" size="sm" onClick={selectAllVisible}>Select all</Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              disabled={selectedIds.size === 0 || bulkDeleting}
+              onClick={() => setPendingBulkDelete(true)}
+            >
+              {bulkDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              Delete ({selectedIds.size})
+            </Button>
+            <Button variant="ghost" size="sm" onClick={exitSelect}>Cancel</Button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-4 gap-2 mb-4">
+            <Button variant="outline" onClick={() => imgRef.current?.click()} className="justify-center px-2">
+              <Upload className="h-4 w-4" /> Image
+            </Button>
+            <Button variant="outline" onClick={() => vidRef.current?.click()} className="justify-center px-2">
+              <Upload className="h-4 w-4" /> Video
+            </Button>
+            <Button variant="outline" onClick={() => audRef.current?.click()} className="justify-center px-2">
+              <Upload className="h-4 w-4" /> Audio
+            </Button>
+            <Button variant="outline" onClick={() => setSelectMode(true)} className="justify-center px-2" aria-label="Select multiple">
+              <CheckSquare className="h-4 w-4" /> Select
+            </Button>
+          </div>
+        )}
         <input ref={imgRef} type="file" accept="image/*" multiple className="hidden"
           onChange={(e) => { handleUpload(e.target.files, "image"); e.target.value = ""; }} />
         <input ref={vidRef} type="file" accept="video/*" multiple className="hidden"
