@@ -299,7 +299,7 @@ const MediaGalleryPage = () => {
                     <Button size="icon" variant="ghost" className="h-9 w-9" onClick={() => startEdit(a)} aria-label="Rename">
                       <Pencil className="h-4 w-4" />
                     </Button>
-                    <Button size="icon" variant="ghost" className="h-9 w-9" onClick={() => setViewer(a)} aria-label="Open">
+                    <Button size="icon" variant="ghost" className="h-9 w-9" onClick={() => setViewerIndex(filtered.findIndex((x) => x.id === a.id))} aria-label="Open">
                       <Eye className="h-4 w-4" />
                     </Button>
                     <Button size="icon" variant="ghost" className="h-9 w-9 text-destructive" onClick={() => setPendingDelete(a)} aria-label="Delete">
