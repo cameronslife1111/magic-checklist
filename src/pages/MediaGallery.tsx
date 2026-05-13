@@ -315,13 +315,10 @@ const MediaGalleryPage = () => {
       </main>
 
       <MediaViewer
-        open={!!viewer}
-        url={viewer?.url ?? null}
-        type={viewer?.kind ?? null}
-        title={viewer?.title ?? null}
-        mimeType={viewer?.mime_type ?? null}
-        storagePath={viewer?.storage_path ?? null}
-        onClose={() => setViewer(null)}
+        items={filtered}
+        index={viewerIndex !== null && viewerIndex < filtered.length ? viewerIndex : null}
+        onIndexChange={setViewerIndex}
+        onClose={() => setViewerIndex(null)}
       />
 
       <AlertDialog open={!!pendingDelete} onOpenChange={(o) => !o && setPendingDelete(null)}>
