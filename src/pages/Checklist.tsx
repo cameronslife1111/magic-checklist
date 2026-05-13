@@ -1991,9 +1991,23 @@ const ChecklistPage = () => {
       )}
 
       <MediaViewer
-        open={!!viewer}
-        url={viewer?.url ?? null}
-        type={viewer?.type ?? null}
+        items={viewer ? [{
+          id: "viewer-single",
+          user_id: "",
+          title: "",
+          kind: (viewer.type === "video" || viewer.type === "audio" || viewer.type === "image" ? viewer.type : "image") as "image" | "video" | "audio",
+          url: viewer.url,
+          storage_path: "",
+          mime_type: null,
+          size_bytes: null,
+          duration_seconds: null,
+          width: null,
+          height: null,
+          created_at: "",
+          updated_at: "",
+        }] : []}
+        index={viewer ? 0 : null}
+        onIndexChange={() => {}}
         onClose={() => setViewer(null)}
       />
 
