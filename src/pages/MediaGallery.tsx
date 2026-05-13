@@ -40,7 +40,7 @@ const MediaGalleryPage = () => {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<Filter>("all");
   const [uploading, setUploading] = useState(0);
-  const [viewer, setViewer] = useState<MediaAsset | null>(null);
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [pendingDelete, setPendingDelete] = useState<MediaAsset | null>(null);
