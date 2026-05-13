@@ -1,37 +1,62 @@
+import { useEffect, useRef } from "react";
 import { Dialog, DialogContent } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Download } from "lucide-react";
-import { triggerDirectDownload } from "@/lib/mediaAssets";
+import { Download, ChevronLeft, ChevronRight } from "lucide-react";
+import { triggerDirectDownload, MediaAsset } from "@/lib/mediaAssets";
 
 type Props = {
-  open: boolean;
-  url: string | null;
-  type: string | null;
-  title?: string | null;
-  mimeType?: string | null;
-  storagePath?: string | null;
+  items: MediaAsset[];
+  index: number | null;
+  onIndexChange: (i: number) => void;
   onClose: () => void;
 };
 
-export const MediaViewer = ({ open, url, type, title, mimeType, storagePath, onClose }: Props) => {
+export const MediaViewer = ({ items, index, onIndexChange, onClose }: Props) => {
+  const open = index !== null && index >= 0 && index < items.length;
+  const active = open ? items[index!] : null;
+  const count = items.length;
+
+  const go = (delta: number) => {
+    if (count === 0 || index === null) return;
+    onIndexChange(((index + delta) % count + count) % count);
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "ArrowLeft") { e.preventDefault(); go(-1); }
+      else if (e.key === "ArrowRight") { e.preventDefault(); go(1); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, index, count]);
+
+  const touchStartX = useRef<number | null>(null);
+  const onTouchStart = (e: React.TouchEvent) => {
+    touchStartX.current = e.touches[0]?.clientX ?? null;
+  };
+  const onTouchEnd = (e: React.TouchEvent) => {
+    if (touchStartX.current === null) return;
+    const dx = (e.changedTouches[0]?.clientX ?? touchStartX.current) - touchStartX.current;
+    touchStartX.current = null;
+    if (Math.abs(dx) > 50) go(dx < 0 ? 1 : -1);
+  };
+
   const handleDownload = () => {
-    if (!url) return;
-    const kind = (type === "video" || type === "audio" || type === "image"
-      ? type
-      : "image") as "image" | "video" | "audio";
+    if (!active) return;
     triggerDirectDownload({
-      url,
-      title: title || "magic-checklist",
-      mime_type: mimeType ?? null,
-      storage_path: storagePath ?? "",
-      kind,
+      url: active.url,
+      title: active.title || "magic-checklist",
+      mime_type: active.mime_type ?? null,
+      storage_path: active.storage_path ?? "",
+      kind: active.kind,
     });
   };
 
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-[95vw] sm:max-w-2xl p-2 bg-background">
-        {url && (
+      <DialogContent className="max-w-[95vw] sm:max-w-3xl max-h-[90vh] p-2 bg-background flex flex-col">
+        {active && (
           <>
             <div className="absolute right-12 top-3 z-10">
               <Button
@@ -44,12 +69,53 @@ export const MediaViewer = ({ open, url, type, title, mimeType, storagePath, onC
                 Download
               </Button>
             </div>
-            {type === "video" ? (
-              <video src={url} controls playsInline className="w-full h-auto rounded-lg" />
-            ) : type === "audio" ? (
-              <audio src={url} controls className="w-full" />
-            ) : (
-              <img src={url} alt="Media" className="w-full h-auto rounded-lg" />
+
+            <div
+              className="flex-1 min-h-0 flex items-center justify-center overflow-hidden relative"
+              onTouchStart={onTouchStart}
+              onTouchEnd={onTouchEnd}
+            >
+              {active.kind === "video" ? (
+                <video
+                  key={active.id}
+                  src={active.url}
+                  controls
+                  playsInline
+                  className="max-h-[80vh] max-w-full w-auto h-auto rounded-lg"
+                />
+              ) : active.kind === "audio" ? (
+                <audio key={active.id} src={active.url} controls className="w-full" />
+              ) : (
+                <img
+                  key={active.id}
+                  src={active.url}
+                  alt={active.title || "Media"}
+                  className="max-h-[80vh] max-w-full w-auto h-auto object-contain rounded-lg"
+                />
+              )}
+            </div>
+
+            {count > 1 && (
+              <>
+                <Button
+                  size="icon"
+                  variant="secondary"
+                  onClick={() => go(-1)}
+                  aria-label="Previous"
+                  className="absolute left-2 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full shadow-md z-10"
+                >
+                  <ChevronLeft className="h-5 w-5" />
+                </Button>
+                <Button
+                  size="icon"
+                  variant="secondary"
+                  onClick={() => go(1)}
+                  aria-label="Next"
+                  className="absolute right-2 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full shadow-md z-10"
+                >
+                  <ChevronRight className="h-5 w-5" />
+                </Button>
+              </>
             )}
           </>
         )}

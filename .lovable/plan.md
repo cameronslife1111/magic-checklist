@@ -1,38 +1,41 @@
-# Fix Media Viewer download UX on iOS
+# Add prev/next navigation in Media Viewer
 
-Three small problems are stacked on top of each other in `src/components/MediaViewer.tsx` and `src/lib/mediaAssets.ts`. Fix them together.
+## Goal
+When a user opens any item from the Media Gallery, show a left and right arrow inside the viewer so they can cycle through the filtered list without closing the modal. Sizing must adapt cleanly to phone and desktop viewports.
 
-## Problems
+## Changes
 
-1. **Video autoplays the moment the viewer opens.** `<video autoPlay>` is hardcoded, so tapping a video instantly starts playback — distracting and burns mobile data.
-2. **Download dialog flashes and disappears.** Inside `triggerDirectDownload`, on iOS we both click an anchor *and* run `window.location.href = blobUrl` 100ms later. That second navigation tears down the current page context, which is what's making the iOS share/save sheet flash away. We should pick one path on iOS, not both.
-3. **"Download" on iOS doesn't go straight to Photos.** iOS only offers "Save to Photos" when the file is presented through the native share sheet (`navigator.share` with a `File`) or when the user long-presses a video element. A plain anchor download lands the file in **Files**, not Photos.
+### 1. `src/components/MediaViewer.tsx`
+- Change props: replace single `url/type/title/mimeType/storagePath` with:
+  - `items: MediaAsset[]` (the currently filtered list)
+  - `index: number | null` (which one is open; null = closed)
+  - `onIndexChange: (i: number) => void`
+  - `onClose: () => void`
+- Derive the active asset from `items[index]`. Render image/video/audio as today, keyed by asset id so the media element fully resets when navigating (prevents stale playback / flicker).
+- Add two overlay buttons:
+  - Left arrow (`ChevronLeft`) on the left edge, vertically centered.
+  - Right arrow (`ChevronRight`) on the right edge.
+  - Hidden when there is only one item. Disabled state at the ends (no wrap), or wrap-around — recommend wrap-around so cycling never dead-ends. Will use wrap-around.
+- Keyboard support: ArrowLeft / ArrowRight while open call prev/next; Escape already handled by Dialog.
+- Touch swipe (optional, lightweight): track `touchstart`/`touchend` X delta on the content container; >50px triggers prev/next. Keeps it usable on phones without arrows feeling cramped.
+- Responsive sizing:
+  - DialogContent: `max-w-[95vw] sm:max-w-3xl max-h-[90vh] p-2 flex flex-col`
+  - Media wrapper: `flex-1 min-h-0 flex items-center justify-center overflow-hidden`
+  - `<img>` / `<video>`: `max-h-[80vh] max-w-full w-auto h-auto object-contain`
+  - Arrow buttons: `absolute top-1/2 -translate-y-1/2 left-2 / right-2`, `h-10 w-10 rounded-full`, `secondary` variant with `shadow-md`, larger tap target on mobile.
+- Download button stays in the top-right area; use the active asset's fields.
 
-## Plan
+### 2. `src/pages/MediaGallery.tsx`
+- Replace `viewer` state (`MediaAsset | null`) with `viewerIndex: number | null`.
+- When user clicks the eye icon, set `viewerIndex` to that item's index in `filtered`.
+- Pass `items={filtered}`, `index={viewerIndex}`, `onIndexChange={setViewerIndex}`, `onClose={() => setViewerIndex(null)}` to `MediaViewer`.
+- If `filtered` shrinks (e.g. delete from elsewhere) below current index, clamp or close.
 
-### 1. Stop autoplay in `src/components/MediaViewer.tsx`
-- Remove `autoPlay` from the `<video>` and `<audio>` tags.
-- Keep `controls` so the user taps play themselves.
+## Out of scope
+- No changes to download logic, autoplay behavior, gallery list UI, selection mode, or backend.
 
-### 2. Fix the flashing download in `src/lib/mediaAssets.ts` (`triggerDirectDownload`)
-- On iOS, **do not** click the hidden anchor and then also navigate `window.location.href`. Pick one:
-  - Preferred: use `navigator.share({ files: [new File([blob], filename, { type: mime })] })` when `navigator.canShare?.({ files })` returns true. This opens the native iOS share sheet with **Save Video / Save Image** options that route into Photos.
-  - Fallback (older iOS or canShare false): open the blob URL in a new tab via `window.open(blobUrl, "_blank")` only — no anchor click, no `location.href` reassignment. The user long-presses to save.
-- On non-iOS, keep the current anchor + `download` attribute path (works on desktop Chrome, Android Chrome).
-- Remove the `setTimeout` that reassigns `window.location.href` — that's the source of the "dialog disappears in a split second."
-
-### 3. Wire the share-sheet path through `MediaViewer`
-- No API change needed; `triggerDirectDownload` already receives the asset. The branching lives entirely inside that helper.
-- Toast copy on the share fallback should say: *"Choose 'Save Video' (or 'Save Image') to add it to Photos."*
-
-## Technical notes
-
-- `navigator.share` with files is supported on iOS Safari 15+ and Android Chrome. Feature-detect with `typeof navigator !== "undefined" && navigator.canShare && navigator.canShare({ files: [testFile] })`.
-- Keep the existing `fetch` → `blob` step; we need the blob either way (for `File` construction or for the same-origin object URL).
-- Desktop browsers will skip the share branch (no `canShare` for files) and fall through to the existing anchor-download path, so desktop behavior is unchanged.
-- No backend, schema, or other UI changes.
-
-## Files touched
-
-- `src/components/MediaViewer.tsx` — drop `autoPlay` on `<video>` / `<audio>`.
-- `src/lib/mediaAssets.ts` — rework the iOS branch of `triggerDirectDownload` to use `navigator.share` when possible, remove the `window.location.href` reassignment.
+## Verification
+- Open image on mobile viewport (390px): arrows visible at left/right edges, image fits without overflow, swipe works.
+- Open video on desktop: arrows cycle, video resets between items (no audio bleed).
+- Single-item filter: arrows hidden.
+- Keyboard arrows cycle on desktop; Escape closes.

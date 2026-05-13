@@ -40,7 +40,7 @@ const MediaGalleryPage = () => {
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<Filter>("all");
   const [uploading, setUploading] = useState(0);
-  const [viewer, setViewer] = useState<MediaAsset | null>(null);
+  const [viewerIndex, setViewerIndex] = useState<number | null>(null);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
   const [pendingDelete, setPendingDelete] = useState<MediaAsset | null>(null);
@@ -299,7 +299,7 @@ const MediaGalleryPage = () => {
                     <Button size="icon" variant="ghost" className="h-9 w-9" onClick={() => startEdit(a)} aria-label="Rename">
                       <Pencil className="h-4 w-4" />
                     </Button>
-                    <Button size="icon" variant="ghost" className="h-9 w-9" onClick={() => setViewer(a)} aria-label="Open">
+                    <Button size="icon" variant="ghost" className="h-9 w-9" onClick={() => setViewerIndex(filtered.findIndex((x) => x.id === a.id))} aria-label="Open">
                       <Eye className="h-4 w-4" />
                     </Button>
                     <Button size="icon" variant="ghost" className="h-9 w-9 text-destructive" onClick={() => setPendingDelete(a)} aria-label="Delete">
@@ -315,13 +315,10 @@ const MediaGalleryPage = () => {
       </main>
 
       <MediaViewer
-        open={!!viewer}
-        url={viewer?.url ?? null}
-        type={viewer?.kind ?? null}
-        title={viewer?.title ?? null}
-        mimeType={viewer?.mime_type ?? null}
-        storagePath={viewer?.storage_path ?? null}
-        onClose={() => setViewer(null)}
+        items={filtered}
+        index={viewerIndex !== null && viewerIndex < filtered.length ? viewerIndex : null}
+        onIndexChange={setViewerIndex}
+        onClose={() => setViewerIndex(null)}
       />
 
       <AlertDialog open={!!pendingDelete} onOpenChange={(o) => !o && setPendingDelete(null)}>
