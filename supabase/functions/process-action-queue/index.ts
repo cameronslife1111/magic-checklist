@@ -701,6 +701,7 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
         allowed_actions: allowed,
         default_aspect_ratio: defaultAspect,
         max_images_per_step: Number(payload.max_images_per_step ?? 1),
+        prior_outputs: state.outputs ?? [],
       });
     } catch (e) {
       state.outputs.push({ failed: true, line_idx: lineIdx, reason: `planner error: ${(e as Error).message.slice(0, 200)}` });
@@ -723,6 +724,50 @@ async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean
       await persist();
       return { done: false };
     }
+
+    // Management call: execute inline (synchronous), push a result entry to
+    // state.outputs so later lines can reference it via "step:N.field", advance.
+    if (decision.management) {
+      const stepGlobalIdx = state.outputs.length;
+      const mgmtRes = await runManagementTool(supabase, parent, decision.management, state.outputs);
+      const summary = mgmtRes.summary ?? decision.management.tool;
+      if (mgmtRes.ok) {
+        state.outputs.push({
+          line_idx: lineIdx,
+          mgmt_tool: decision.management.tool,
+          mgmt_result: mgmtRes.result ?? null,
+          mgmt_result_keys: mgmtRes.result && typeof mgmtRes.result === "object"
+            ? Object.keys(mgmtRes.result).slice(0, 12) : null,
+          mgmt_summary: summary,
+          name: `Step ${stepGlobalIdx + 1}: ${summary}`,
+        });
+      } else {
+        state.outputs.push({
+          line_idx: lineIdx,
+          mgmt_tool: decision.management.tool,
+          failed: true,
+          reason: mgmtRes.error ?? "management call failed",
+          mgmt_summary: summary,
+        });
+        state.failures += 1;
+        await appendItemToChecklist(supabase, {
+          user_id: parent.user_id,
+          checklist_id: outputChecklistId,
+          text: `⚠️ Step ${lineIdx + 1} (${decision.management.tool}): ${(mgmtRes.error ?? "failed").slice(0, 240)}`,
+        });
+      }
+      state.steps_used += 1;
+      const sourceItemId = state.input_lines?.[lineIdx]?.item_id;
+      if (sourceItemId) {
+        try { await supabase.from("checklist_items").update({ checked: true }).eq("id", sourceItemId); } catch {}
+      }
+      await clearActiveLine();
+      state.cursor += 1;
+      state.phase = "planning_step";
+      await persist();
+      return { done: false };
+    }
+
     // One line = one tool call. Compound is no longer supported by the planner.
     const onlyStep = decision.step;
     state.pending_steps = onlyStep ? [{ ...onlyStep, line_idx: lineIdx }] : [];
