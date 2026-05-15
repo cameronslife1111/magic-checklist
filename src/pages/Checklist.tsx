@@ -1688,6 +1688,7 @@ const ChecklistPage = () => {
                   if (homeLongPressTimerRef.current) window.clearTimeout(homeLongPressTimerRef.current);
                   homeLongPressTimerRef.current = window.setTimeout(async () => {
                     homeLongPressFiredRef.current = true;
+                    if (guardNav()) return;
                     if (highestUnchecked?.linked_checklist_id) {
                       await openChecklist(highestUnchecked.linked_checklist_id);
                     } else if (highestUnchecked?.external_link) {
