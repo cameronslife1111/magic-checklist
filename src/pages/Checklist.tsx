@@ -210,6 +210,11 @@ const ChecklistPage = () => {
     setActiveLineItemId(null);
   };
 
+  const openChecklistGuarded = async (id: string) => {
+    if (guardNav()) return;
+    await openChecklist(id);
+  };
+
   // Recycle: jump to Home Favorite slot 1, check off its current top item,
   // then auto-follow linked-checklist chain until we land on a checklist whose
   // current top unchecked item has no linked_checklist_id (or is empty).
