@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { ContextAttacher, AttachedContext } from "@/components/ContextAttacher";
 import { ChecklistPickerDialog } from "@/components/ChecklistPickerDialog";
 
-const ALL_TOOLS: { key: string; label: string }[] = [
+const GEN_TOOLS: { key: string; label: string }[] = [
   { key: "text-text", label: "Text → text" },
   { key: "web-search", label: "Web search" },
   { key: "text-image", label: "Text → image" },
@@ -18,6 +18,20 @@ const ALL_TOOLS: { key: string; label: string }[] = [
   { key: "audio-image-video", label: "Audio + image → video" },
   { key: "analyze-image", label: "Analyze image" },
 ];
+
+const MGMT_TOOLS: { key: string; label: string }[] = [
+  { key: "fetchChecklist", label: "Find checklist" },
+  { key: "fetchItems", label: "Read items" },
+  { key: "fetchMedia", label: "Search media" },
+  { key: "addItem", label: "Add item" },
+  { key: "updateItem", label: "Update item" },
+  { key: "updateChecklistTitle", label: "Rename checklist" },
+  { key: "updateMediaTitle", label: "Rename media" },
+  { key: "createChecklist", label: "Create checklist" },
+  { key: "createItemAndTriggerJob", label: "Add item + run job" },
+];
+
+const ALL_TOOLS = [...GEN_TOOLS, ...MGMT_TOOLS];
 
 const ASPECT_OPTIONS = ["1:1", "16:9", "9:16", "4:3", "3:4"] as const;
 
