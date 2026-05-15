@@ -1705,6 +1705,7 @@ const ChecklistPage = () => {
                     homeLongPressTimerRef.current = null;
                   }
                   if (homeLongPressFiredRef.current) return;
+                  if (guardNav()) return;
 
                   // Cycle through Home Favorites (up to 5 user-chosen slots).
                   const targetId = nextFavoriteAfter(checklist.id);
