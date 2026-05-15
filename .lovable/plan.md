@@ -1,52 +1,77 @@
-# Add Lock / Unlock long-press to the 🐝 Bumblebee button
+## Goal
 
-Add a long-press (≈600ms) gesture on the yellow 🐝 button that toggles a "locked to current checklist" mode. While locked, the user can still check items, add items, use Actions, dictate, and use speech — but cannot navigate away from the current checklist.
+Phase 1 only: bring Run Sequence's planner/executor up to full **Magic Checklist app-CRUD parity** with Dante. Same OpenAI key, Dante-style system prompt + routing, hardcoded 17-name roster, default fallback to `📨 Cameron Inbox`. No Google/Apple/Places/Sports/Charts/Recipes/CodeExec in this pass.
 
-## Behavior
+## What Run Sequence has today
 
-- Single click/tap on 🐝 — unchanged. Runs the existing Recycle flow (when unlocked). When locked, it does nothing except speak "Locked".
-- Long press on 🐝 (≈600ms) — toggles lock state:
-  - Unlocked → Locked: turn the 🐝 button red and speak "Locked".
-  - Locked → Unlocked: restore the normal yellow metallic styling and speak "Unlocked".
-- While locked:
-  - 🏠 Home button: short tap is suppressed (does nothing, optional brief "Locked" toast). Long-press of Home (open current item's link) is also suppressed — both forms of Home navigate away.
-  - 🐝 short tap: suppressed (speaks "Locked").
-  - ✅ Green check button: works as today (toggles current item, long-press goes back one step on the same list — back-one-step does not navigate away from this checklist, so it stays allowed).
-  - Actions button + sheet: works as today. Any action inside the sheet that would navigate away from the current checklist is blocked with a "Locked" toast. Specifically: Send to checklist, Send to blank checklist, New checklist, Duplicate checklist, Delete checklist, Insert checklist link (which navigates to the new link target after creating), Swap Links (if it navigates), Media Gallery, Action Queue Dashboard, and the Home Favorites cycle. Non-navigating actions (split, copy, combine, edit title, background, mute, theme, AI prompts that stay on this list, etc.) work normally.
-  - Item rows: tapping a checkbox works. Tapping a linked-item's link icon to jump to another checklist is blocked with a "Locked" toast.
-- Lock state is in-memory only (resets on full reload). It is per-tab, not persisted.
+- Per-line planner picks ONE tool per line: `text-text`, `web-search`, `text-image`, `image-image`, `remix`, `image-video`, `video-video`, `audio-image-video`, `analyze-image`.
+- Output is appended as a new checkbox at the bottom of one chosen output checklist.
+- No app-management tools (cannot rename, cannot update an existing item, cannot route to a different checklist mid-sequence, cannot search checklists, cannot create new ones).
 
-## Visual
+## What's missing (vs Dante's `claude-mcp`)
 
-- Locked state replaces `btn-metallic-yellow` with a solid red background using the existing destructive token (`bg-destructive text-destructive-foreground`) and removes the shimmer class so it reads clearly as an alert state.
-- The 🐝 emoji stays. `aria-label` updates to "Unlock checklist (long-press)" while locked, and to "Recycle (long-press: lock checklist)" while unlocked.
+| Tool | Status |
+| --- | --- |
+| `fetchChecklist` (ilike) | missing in planner |
+| `fetchItems` | missing |
+| `addItem` | partially (executor always appends to fixed output list) |
+| `createItemAndTriggerJob` | missing |
+| `updateItem` | missing |
+| `updateChecklistTitle` | missing |
+| `updateMediaTitle` | missing |
+| `fetchMedia` | missing |
+| `createChecklist` (gated) | missing |
+| `describeAction` | missing (planner has no schema lookup) |
+| `triggerJob` / `pollJob` / `getRecentJobs` | not exposed to planner |
 
-## Implementation notes (technical)
+## Changes
 
-File: `src/pages/Checklist.tsx`
+### 1. `supabase/functions/plan-action-sequence/index.ts`
+- Expand `ALL_ACTIONS` to two groups:
+  - **Generation** (existing 9).
+  - **Management**: `addItem`, `updateItem`, `updateChecklistTitle`, `updateMediaTitle`, `fetchChecklist`, `fetchItems`, `fetchMedia`, `createChecklist`, `createItemAndTriggerJob`.
+- Update the `decide` JSON schema so a `tool_call` step can be either a generation step (current shape with `prompt`/`input_refs`/`aspect_ratio`) OR a management step (`{ tool, args }`). One tool per line still enforced.
+- Replace SYSTEM prompt with a Dante-flavored one (Auto-Execute v5 spirit, condensed):
+  - Identity: "You are Dante's executor for Magic Checklist."
+  - **Routing rules** (hardcoded):
+    - Roster names → ilike checklist title containing that name. Embedded list: Jackson, Twan, Ava, Zamir, Andre, Layla, Brandy, James, Stella, Samantha, Mason, Destiny, Fay, Lewis, David, Marcus, Dante.
+    - Roles → roster mapping baked into prompt (Jackson=content, Twan=music, Ava=Multiverse, Zamir=app code, Andre=app hygiene, Layla=automation, Brandy=forms, James=personal routines, Stella=house, Samantha=travel, Mason=phone, Destiny=communications, Fay=family/friends, Lewis=finance, David=research, Marcus=sponsorship, Dante=appointments/deadlines).
+    - When destination is unspecified → `fetchChecklist` with `name: "%Cameron Inbox%"` then `addItem` there.
+    - "Send to Dispatch" lane for outbound messages CJ routes manually.
+  - **Execution standards**: never invent checklist titles, never create new lists unless line explicitly says "create checklist", preserve task details verbatim, appointment lines get the 4-sentence + A/B/C/D format, deadline cadence (7d/3d/1d/day-of), commute math (15-min default / 25-min high-stakes) — these are emitted as text into the target item.
+- Pass-through: planner still outputs ONE decision per line.
 
-1. Add state: `const [locked, setLocked] = useState(false);` plus refs `bumbleLongPressTimerRef` and `bumbleLongPressFiredRef` mirroring the existing Home/Check long-press pattern.
-2. Replace the current 🐝 `onPointerUp={runRecycle}` handler with the same `onPointerDown` / `onPointerUp` / `onPointerCancel` long-press pattern used for the Home button:
-   - On `pointerdown`, start a 600ms timer that sets `locked` to its inverse, calls `speak("Locked")` or `speak("Unlocked")` accordingly, and sets `bumbleLongPressFiredRef.current = true`.
-   - On `pointerup`: if long-press fired, return. Otherwise, if `locked`, `speak("Locked")` and return. Else `await runRecycle()`.
-3. Apply locked styling conditionally via `cn(...)`: when `locked`, use `"bg-destructive text-destructive-foreground hover:bg-destructive/90"` and drop `btn-metallic-yellow btn-shimmer`.
-4. Guard navigation paths with a tiny helper `const guardNav = () => { if (locked) { speak("Locked"); toast.message("Locked"); return true; } return false; };`:
-   - Wrap the 🏠 short-tap handler (line ~1683 onPointerUp) and its long-press timer body (line ~1672) so both early-return when `guardNav()` is true.
-   - Wrap the body of `runRecycle` so it early-returns when locked (defensive — bumble short-tap already blocks, but `runRecycle` should not navigate either way).
-   - In `onPick` (the ActionsSheet handler around line 914+), early-return with `guardNav()` for keys: `queue`, `media-gallery`, `send-to`, `send-to-blank`, `new`, `duplicate`, `delete-checklist`, `insert-link`, `insert-new-link`, `swap-links`, `manage-home-favorites` (only the navigation step — the manager dialog itself can open; if it triggers navigation that needs the same guard).
-   - In `ItemRow`/`SortableItemRow`, the link-tap that calls `openChecklist(linked_checklist_id)` from within a row should be guarded. Easiest: wrap the existing `openChecklist` call site at the row level by passing `locked` down OR by checking `locked` in a small wrapper `openChecklistGuarded` and using that wrapper for any in-row "follow link" handler. (Ad-hoc audit during implementation: only wrap call sites that change checklists; do not wrap calls that load the initial checklist or recover state.)
-5. The `goBackOneStep` long-press on the green ✅ button stays unguarded — it operates on the current list and does not navigate away.
-6. Speech calls reuse `speak()` from `@/lib/speech`; no new audio code.
+### 2. `supabase/functions/process-action-queue/index.ts`
+- In the action-sequence executor (around line 687-700) branch on the planner's decision shape:
+  - Generation step → existing path (unchanged).
+  - Management step → execute directly via service-role admin client, mirroring the handlers in `claude-mcp/index.ts`. Always force `user_id` to the sequence's owner (never trust planner output for that).
+- Capture each management call's result into the `step:N` handle catalog so subsequent lines can reference it (e.g. a `fetchChecklist` result becomes available as `step:3.checklist_id` for a later `addItem`).
+- Continue to honor `max_steps`, `max_images`, `max_videos`, `max_runtime_minutes`, and the dialog's `allowed_actions`.
 
-## Out of scope
+### 3. `src/components/RunSequenceDialog.tsx`
+- Add a second checkbox group "Allowed app actions" containing the 9 management tools, all checked by default.
+- Merge both groups into `allowed_actions` on submit.
+- No other UI changes (output checklist picker, sliders, aspect ratio, context attacher all stay).
 
-- No persistence of lock state across reloads.
-- No DB columns, no backend, no edge function changes.
-- No changes to Action Queue, Media Gallery internals, auth, or styling tokens beyond reusing `bg-destructive`.
-- No changes to the Home Favorites list, Recycle algorithm, or any other button's gestures.
+### 4. Out of scope this pass (explicitly)
+- Google Calendar / Gmail / Drive connector wiring.
+- Apple Native iOS, Places, Maps, Sports, Image search, Charts, Recipes, file creation, code execution.
+- Switching the planner to Anthropic.
+- New roster table / admin UI (hardcoded in prompt instead).
 
-## Verification
+## Acceptance test
 
-- Long-press 🐝 on an unlocked checklist: button turns red, speaks "Locked".
-- While locked: short-tap 🏠 does nothing/toast. Long-press 🏠 does nothing/toast. Short-tap 🐝 speaks "Locked". Tap a checkbox → toggles. Long-press ✅ goes back one item on the same list. Open Actions → tapping "Media Gallery" toasts "Locked"; tapping "Split by punctuation" works.
-- Long-press 🐝 again: returns to yellow metallic, speaks "Unlocked", all navigation works normally.
+A 6-line checklist:
+```text
+Find the Cameron Inbox
+Add a note "Test from Run Sequence" to it
+Rename that checklist to "📨 Cameron Inbox"
+Generate a 16:9 sunset image and add it to Jackson's content list
+Web-search "best espresso machines 2026"
+Add the top 3 results to David's research list
+```
+…should plan and execute correctly, with each line producing one tool call, ilike-matching the right checklist, and never creating a new list.
+
+## Changelog format
+
+After implementation I'll list, per tool, **ADDED** vs **already present**, and call out any secret/connector setup needed (none expected for this phase).
