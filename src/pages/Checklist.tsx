@@ -1554,7 +1554,7 @@ const ChecklistPage = () => {
                     isRunning={activeLineItemId === it.id}
                     onToggle={handleToggle}
                     onTextChange={handleTextChange}
-                    onOpenLinkedChecklist={openChecklist}
+                    onOpenLinkedChecklist={openChecklistGuarded}
                     onOpenMedia={(url, type) => setViewer({ url, type })}
                     registerRef={registerRef}
                   />
@@ -1574,7 +1574,7 @@ const ChecklistPage = () => {
                             childLabel={`↳ from step ${idx + 1}`}
                             onToggle={handleToggle}
                             onTextChange={handleTextChange}
-                            onOpenLinkedChecklist={openChecklist}
+                            onOpenLinkedChecklist={openChecklistGuarded}
                             onOpenMedia={(url, type) => setViewer({ url, type })}
                             registerRef={registerRef}
                           />
