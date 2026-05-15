@@ -635,6 +635,17 @@ const ChecklistPage = () => {
     setActionsOpen(false);
     if (!checklist || !user) return;
 
+    const NAV_LOCKED_KEYS: ActionKey[] = [
+      "queue", "media-gallery", "send-to", "send-to-blank",
+      "new", "duplicate", "delete-checklist", "insert-link",
+      "insert-new-link", "swap-links",
+    ];
+    if (lockedRef.current && NAV_LOCKED_KEYS.includes(key)) {
+      speak("Locked");
+      toast.message("Locked");
+      return;
+    }
+
     switch (key) {
       case "mute": {
         const next = !muted;
