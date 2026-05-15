@@ -135,6 +135,23 @@ const ChecklistPage = () => {
   const actionsLongPressFiredRef = useRef(false);
   const homeLongPressTimerRef = useRef<number | null>(null);
   const homeLongPressFiredRef = useRef(false);
+  const bumbleLongPressTimerRef = useRef<number | null>(null);
+  const bumbleLongPressFiredRef = useRef(false);
+  const [locked, setLocked] = useState(false);
+  const lockedRef = useRef(false);
+  useEffect(() => { lockedRef.current = locked; }, [locked]);
+  const guardNav = useCallback(() => {
+    if (lockedRef.current) {
+      speak("Locked");
+      toast.message("Locked");
+      return true;
+    }
+    return false;
+  }, []);
+  const openChecklistGuarded = useCallback(async (id: string) => {
+    if (guardNav()) return;
+    await openChecklist(id);
+  }, [guardNav]);
   const keepaliveRef = useRef<HTMLInputElement>(null);
   const didAutoFocusRef = useRef<string | null>(null);
   const registerRef = useCallback((id: string, el: HTMLLIElement | null) => {
