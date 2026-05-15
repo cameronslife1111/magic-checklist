@@ -218,6 +218,7 @@ const ChecklistPage = () => {
   // then auto-follow linked-checklist chain until we land on a checklist whose
   // current top unchecked item has no linked_checklist_id (or is empty).
   const runRecycle = async () => {
+    if (lockedRef.current) { speak("Locked"); return; }
     const slots = loadFavorites();
     const slot1 = slots[0];
     if (!slot1) {
