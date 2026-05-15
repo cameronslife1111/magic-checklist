@@ -148,10 +148,6 @@ const ChecklistPage = () => {
     }
     return false;
   }, []);
-  const openChecklistGuarded = useCallback(async (id: string) => {
-    if (guardNav()) return;
-    await openChecklist(id);
-  }, [guardNav]);
   const keepaliveRef = useRef<HTMLInputElement>(null);
   const didAutoFocusRef = useRef<string | null>(null);
   const registerRef = useCallback((id: string, el: HTMLLIElement | null) => {
