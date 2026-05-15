@@ -135,6 +135,19 @@ const ChecklistPage = () => {
   const actionsLongPressFiredRef = useRef(false);
   const homeLongPressTimerRef = useRef<number | null>(null);
   const homeLongPressFiredRef = useRef(false);
+  const bumbleLongPressTimerRef = useRef<number | null>(null);
+  const bumbleLongPressFiredRef = useRef(false);
+  const [locked, setLocked] = useState(false);
+  const lockedRef = useRef(false);
+  useEffect(() => { lockedRef.current = locked; }, [locked]);
+  const guardNav = useCallback(() => {
+    if (lockedRef.current) {
+      speak("Locked");
+      toast.message("Locked");
+      return true;
+    }
+    return false;
+  }, []);
   const keepaliveRef = useRef<HTMLInputElement>(null);
   const didAutoFocusRef = useRef<string | null>(null);
   const registerRef = useCallback((id: string, el: HTMLLIElement | null) => {
@@ -197,10 +210,16 @@ const ChecklistPage = () => {
     setActiveLineItemId(null);
   };
 
+  const openChecklistGuarded = async (id: string) => {
+    if (guardNav()) return;
+    await openChecklist(id);
+  };
+
   // Recycle: jump to Home Favorite slot 1, check off its current top item,
   // then auto-follow linked-checklist chain until we land on a checklist whose
   // current top unchecked item has no linked_checklist_id (or is empty).
   const runRecycle = async () => {
+    if (lockedRef.current) { speak("Locked"); return; }
     const slots = loadFavorites();
     const slot1 = slots[0];
     if (!slot1) {
@@ -616,6 +635,17 @@ const ChecklistPage = () => {
   const onPick = async (key: ActionKey) => {
     setActionsOpen(false);
     if (!checklist || !user) return;
+
+    const NAV_LOCKED_KEYS: ActionKey[] = [
+      "queue", "media-gallery", "send-to", "send-to-blank",
+      "new", "duplicate", "delete-checklist", "insert-link",
+      "insert-new-link", "swap-links",
+    ];
+    if (lockedRef.current && NAV_LOCKED_KEYS.includes(key)) {
+      speak("Locked");
+      toast.message("Locked");
+      return;
+    }
 
     switch (key) {
       case "mute": {
@@ -1525,7 +1555,7 @@ const ChecklistPage = () => {
                     isRunning={activeLineItemId === it.id}
                     onToggle={handleToggle}
                     onTextChange={handleTextChange}
-                    onOpenLinkedChecklist={openChecklist}
+                    onOpenLinkedChecklist={openChecklistGuarded}
                     onOpenMedia={(url, type) => setViewer({ url, type })}
                     registerRef={registerRef}
                   />
@@ -1545,7 +1575,7 @@ const ChecklistPage = () => {
                             childLabel={`↳ from step ${idx + 1}`}
                             onToggle={handleToggle}
                             onTextChange={handleTextChange}
-                            onOpenLinkedChecklist={openChecklist}
+                            onOpenLinkedChecklist={openChecklistGuarded}
                             onOpenMedia={(url, type) => setViewer({ url, type })}
                             registerRef={registerRef}
                           />
@@ -1671,6 +1701,7 @@ const ChecklistPage = () => {
                   if (homeLongPressTimerRef.current) window.clearTimeout(homeLongPressTimerRef.current);
                   homeLongPressTimerRef.current = window.setTimeout(async () => {
                     homeLongPressFiredRef.current = true;
+                    if (guardNav()) return;
                     if (highestUnchecked?.linked_checklist_id) {
                       await openChecklist(highestUnchecked.linked_checklist_id);
                     } else if (highestUnchecked?.external_link) {
@@ -1687,6 +1718,7 @@ const ChecklistPage = () => {
                     homeLongPressTimerRef.current = null;
                   }
                   if (homeLongPressFiredRef.current) return;
+                  if (guardNav()) return;
 
                   // Cycle through Home Favorites (up to 5 user-chosen slots).
                   const targetId = nextFavoriteAfter(checklist.id);
@@ -1712,14 +1744,48 @@ const ChecklistPage = () => {
               </Button>
 
               <Button
-                aria-label="Recycle: go to first Home Favorite, check current, follow links"
+                aria-label={locked ? "Unlock checklist (long-press)" : "Recycle (long-press: lock checklist)"}
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  bumbleLongPressFiredRef.current = false;
+                  if (bumbleLongPressTimerRef.current) window.clearTimeout(bumbleLongPressTimerRef.current);
+                  bumbleLongPressTimerRef.current = window.setTimeout(() => {
+                    bumbleLongPressFiredRef.current = true;
+                    setLocked((prev) => {
+                      const next = !prev;
+                      lockedRef.current = next;
+                      speak(next ? "Locked" : "Unlocked");
+                      toast.message(next ? "Locked" : "Unlocked");
+                      return next;
+                    });
+                  }, 600);
+                }}
                 onPointerUp={async (e) => {
                   e.preventDefault();
+                  if (bumbleLongPressTimerRef.current) {
+                    window.clearTimeout(bumbleLongPressTimerRef.current);
+                    bumbleLongPressTimerRef.current = null;
+                  }
+                  if (bumbleLongPressFiredRef.current) return;
+                  if (lockedRef.current) {
+                    speak("Locked");
+                    return;
+                  }
                   await runRecycle();
+                }}
+                onPointerCancel={() => {
+                  if (bumbleLongPressTimerRef.current) {
+                    window.clearTimeout(bumbleLongPressTimerRef.current);
+                    bumbleLongPressTimerRef.current = null;
+                  }
                 }}
                 onContextMenu={(e) => e.preventDefault()}
                 style={{ ["--shimmer-delay" as any]: "2.4s" }}
-                className="w-20 h-28 rounded-none text-2xl leading-none select-none touch-none text-action-yellow-foreground btn-metallic-yellow btn-shimmer"
+                className={`w-20 h-28 rounded-none text-2xl leading-none select-none touch-none ${
+                  locked
+                    ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    : "text-action-yellow-foreground btn-metallic-yellow btn-shimmer"
+                }`}
               >
                 🐝
               </Button>
