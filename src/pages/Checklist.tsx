@@ -1731,14 +1731,48 @@ const ChecklistPage = () => {
               </Button>
 
               <Button
-                aria-label="Recycle: go to first Home Favorite, check current, follow links"
+                aria-label={locked ? "Unlock checklist (long-press)" : "Recycle (long-press: lock checklist)"}
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  bumbleLongPressFiredRef.current = false;
+                  if (bumbleLongPressTimerRef.current) window.clearTimeout(bumbleLongPressTimerRef.current);
+                  bumbleLongPressTimerRef.current = window.setTimeout(() => {
+                    bumbleLongPressFiredRef.current = true;
+                    setLocked((prev) => {
+                      const next = !prev;
+                      lockedRef.current = next;
+                      speak(next ? "Locked" : "Unlocked");
+                      toast.message(next ? "Locked" : "Unlocked");
+                      return next;
+                    });
+                  }, 600);
+                }}
                 onPointerUp={async (e) => {
                   e.preventDefault();
+                  if (bumbleLongPressTimerRef.current) {
+                    window.clearTimeout(bumbleLongPressTimerRef.current);
+                    bumbleLongPressTimerRef.current = null;
+                  }
+                  if (bumbleLongPressFiredRef.current) return;
+                  if (lockedRef.current) {
+                    speak("Locked");
+                    return;
+                  }
                   await runRecycle();
+                }}
+                onPointerCancel={() => {
+                  if (bumbleLongPressTimerRef.current) {
+                    window.clearTimeout(bumbleLongPressTimerRef.current);
+                    bumbleLongPressTimerRef.current = null;
+                  }
                 }}
                 onContextMenu={(e) => e.preventDefault()}
                 style={{ ["--shimmer-delay" as any]: "2.4s" }}
-                className="w-20 h-28 rounded-none text-2xl leading-none select-none touch-none text-action-yellow-foreground btn-metallic-yellow btn-shimmer"
+                className={`w-20 h-28 rounded-none text-2xl leading-none select-none touch-none ${
+                  locked
+                    ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                    : "text-action-yellow-foreground btn-metallic-yellow btn-shimmer"
+                }`}
               >
                 🐝
               </Button>
