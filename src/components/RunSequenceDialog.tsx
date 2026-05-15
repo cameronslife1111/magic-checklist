@@ -154,15 +154,30 @@ export const RunSequenceDialog = ({ open, userId, currentChecklist, onClose, onS
             </div>
 
             <div>
-              <Label className="text-xs">Allowed tools</Label>
+              <Label className="text-xs">Allowed generation tools</Label>
               <div className="grid grid-cols-2 gap-2 mt-1">
-                {ALL_TOOLS.map((t) => (
+                {GEN_TOOLS.map((t) => (
                   <label key={t.key} className="flex items-center gap-2 text-xs cursor-pointer">
                     <Checkbox checked={allowed.has(t.key)} onCheckedChange={(v) => toggle(t.key, v === true)} />
                     <span>{t.label}</span>
                   </label>
                 ))}
               </div>
+            </div>
+
+            <div>
+              <Label className="text-xs">Allowed app actions (Magic Checklist CRUD)</Label>
+              <div className="grid grid-cols-2 gap-2 mt-1">
+                {MGMT_TOOLS.map((t) => (
+                  <label key={t.key} className="flex items-center gap-2 text-xs cursor-pointer">
+                    <Checkbox checked={allowed.has(t.key)} onCheckedChange={(v) => toggle(t.key, v === true)} />
+                    <span>{t.label}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Lets the agent route work to roster checklists, rename items, etc. Defaults to Cameron Inbox when no destination is named.
+              </p>
             </div>
 
             <ContextAttacher
