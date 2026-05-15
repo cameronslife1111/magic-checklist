@@ -543,7 +543,203 @@ function buildAttachedTextContext(state: any): string {
   return blocks.join("\n\n");
 }
 
-// One state-machine tick for an action-sequence parent. Idempotent and bounded.
+// Resolve "step:N.field" references inside management args using prior outputs.
+// Walks objects/arrays recursively. Strings of shape "step:N.path.to.field" are
+// replaced with the corresponding value from outputs[N].mgmt_result.
+function resolveMgmtArgs(args: any, outputs: any[]): any {
+  const RX = /^step:(\d+)(?:\.(.+))?$/;
+  const walk = (v: any): any => {
+    if (typeof v === "string") {
+      const m = v.match(RX);
+      if (!m) return v;
+      const idx = Number(m[1]);
+      const path = m[2] ?? "";
+      const out = outputs[idx];
+      if (!out) return v;
+      let cur: any = out.mgmt_result ?? out;
+      // Convenience: "step:N.checklist_id" → checklists[0].id when fetchChecklist
+      if (path === "checklist_id" && cur && Array.isArray(cur.checklists) && cur.checklists[0]?.id) {
+        return cur.checklists[0].id;
+      }
+      if (path === "item_id" && cur && Array.isArray(cur.items) && cur.items[0]?.id) {
+        return cur.items[0].id;
+      }
+      if (path === "media_id" && cur && Array.isArray(cur.media) && cur.media[0]?.id) {
+        return cur.media[0].id;
+      }
+      if (!path) return cur;
+      for (const seg of path.split(".")) {
+        if (cur == null) return v;
+        cur = cur[seg];
+      }
+      return cur === undefined ? v : cur;
+    }
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === "object") {
+      const o: any = {};
+      for (const k of Object.keys(v)) o[k] = walk(v[k]);
+      return o;
+    }
+    return v;
+  };
+  return walk(args);
+}
+
+type MgmtResult = { ok: boolean; result?: any; error?: string; summary?: string };
+
+async function runManagementTool(
+  supabase: any,
+  parent: Job,
+  mgmt: { tool: string; args: Record<string, any>; note?: string },
+  priorOutputs: any[],
+): Promise<MgmtResult> {
+  const tool = mgmt.tool;
+  const args = resolveMgmtArgs({ ...(mgmt.args ?? {}) }, priorOutputs);
+  // Always force user_id to the sequence owner — never trust the planner.
+  args.user_id = parent.user_id;
+  try {
+    switch (tool) {
+      case "fetchChecklist": {
+        if (!args.name) return { ok: false, error: "name required" };
+        const { data, error } = await supabase
+          .from("checklists").select("*")
+          .eq("user_id", args.user_id).ilike("title", args.name)
+          .order("updated_at", { ascending: false }).limit(10);
+        if (error) return { ok: false, error: error.message };
+        const first = (data ?? [])[0];
+        return { ok: true, result: { checklists: data ?? [] }, summary: `fetchChecklist "${args.name}" → ${first?.title ?? "no match"}` };
+      }
+      case "fetchItems": {
+        if (!args.checklist_id) return { ok: false, error: "checklist_id required" };
+        const { data, error } = await supabase
+          .from("checklist_items").select("*")
+          .eq("checklist_id", args.checklist_id).order("position", { ascending: true });
+        if (error) return { ok: false, error: error.message };
+        return { ok: true, result: { items: data ?? [] }, summary: `fetchItems → ${data?.length ?? 0} items` };
+      }
+      case "fetchMedia": {
+        const cap = Math.min(Math.max(Number(args.limit) || 10, 1), 50);
+        let q = supabase.from("media_assets")
+          .select("id, kind, url, title, mime_type, created_at")
+          .eq("user_id", args.user_id)
+          .order("created_at", { ascending: false }).limit(cap);
+        if (args.kind) q = q.eq("kind", args.kind);
+        if (args.query && String(args.query).trim()) q = q.ilike("title", `%${String(args.query).trim()}%`);
+        const { data, error } = await q;
+        if (error) return { ok: false, error: error.message };
+        return { ok: true, result: { media: data ?? [] }, summary: `fetchMedia → ${data?.length ?? 0} items` };
+      }
+      case "addItem": {
+        if (!args.checklist_id || typeof args.text !== "string") {
+          return { ok: false, error: "checklist_id and text required" };
+        }
+        const { data, error } = await supabase.from("checklist_items").insert({
+          checklist_id: args.checklist_id,
+          user_id: args.user_id,
+          text: args.text,
+          position: typeof args.position === "number" ? args.position : Date.now(),
+          parent_item_id: args.parent_item_id ?? null,
+        }).select().single();
+        if (error) return { ok: false, error: error.message };
+        return { ok: true, result: { item: data, item_id: data.id }, summary: `addItem → "${String(args.text).slice(0, 60)}"` };
+      }
+      case "updateItem": {
+        if (!args.item_id) return { ok: false, error: "item_id required" };
+        const patch: any = {};
+        if (typeof args.text === "string") patch.text = args.text;
+        if (typeof args.checked === "boolean") patch.checked = args.checked;
+        if (typeof args.position === "number") patch.position = args.position;
+        if (typeof args.linked_checklist_id === "string") {
+          patch.linked_checklist_id = args.linked_checklist_id === "" ? null : args.linked_checklist_id;
+        }
+        if (typeof args.external_link === "string") {
+          patch.external_link = args.external_link === "" ? null : args.external_link;
+        }
+        if (typeof args.status === "string") patch.status = args.status;
+        if (typeof args.result === "string") patch.result = args.result === "" ? null : args.result;
+        if (Object.keys(patch).length === 0) return { ok: false, error: "no fields to update" };
+        patch.updated_at = new Date().toISOString();
+        const { data, error } = await supabase.from("checklist_items").update(patch)
+          .eq("id", args.item_id).eq("user_id", args.user_id).select().maybeSingle();
+        if (error) return { ok: false, error: error.message };
+        if (!data) return { ok: false, error: "item not found or not owned by user" };
+        return { ok: true, result: { item: data }, summary: `updateItem ${args.item_id.slice(0, 8)}` };
+      }
+      case "updateChecklistTitle": {
+        if (!args.checklist_id || typeof args.title !== "string" || !args.title.trim()) {
+          return { ok: false, error: "checklist_id and non-empty title required" };
+        }
+        const { data, error } = await supabase.from("checklists").update({ title: args.title })
+          .eq("id", args.checklist_id).eq("user_id", args.user_id).select().maybeSingle();
+        if (error) return { ok: false, error: error.message };
+        if (!data) return { ok: false, error: "checklist not found or not owned by user" };
+        return { ok: true, result: { checklist: data }, summary: `renamed → "${args.title}"` };
+      }
+      case "updateMediaTitle": {
+        if (!args.media_id || typeof args.title !== "string" || !args.title.trim()) {
+          return { ok: false, error: "media_id and non-empty title required" };
+        }
+        const { data, error } = await supabase.from("media_assets").update({ title: args.title })
+          .eq("id", args.media_id).eq("user_id", args.user_id).select().maybeSingle();
+        if (error) return { ok: false, error: error.message };
+        if (!data) return { ok: false, error: "media not found or not owned by user" };
+        return { ok: true, result: { media: data }, summary: `renamed media → "${args.title}"` };
+      }
+      case "createChecklist": {
+        if (typeof args.title !== "string" || !args.title.trim()) {
+          return { ok: false, error: "title required" };
+        }
+        const insert: any = { user_id: args.user_id, title: args.title };
+        if (typeof args.background_color === "string") insert.background_color = args.background_color;
+        const { data, error } = await supabase.from("checklists").insert(insert).select().single();
+        if (error) return { ok: false, error: error.message };
+        return { ok: true, result: { checklist: data, checklist_id: data.id }, summary: `created "${args.title}"` };
+      }
+      case "createItemAndTriggerJob": {
+        if (!args.checklist_id || typeof args.text !== "string" || !args.action_type) {
+          return { ok: false, error: "checklist_id, text, action_type required" };
+        }
+        const { data: item, error: itemErr } = await supabase.from("checklist_items").insert({
+          checklist_id: args.checklist_id,
+          user_id: args.user_id,
+          text: args.text,
+          position: typeof args.position === "number" ? args.position : Date.now(),
+          parent_item_id: args.parent_item_id ?? null,
+        }).select("id").single();
+        if (itemErr) return { ok: false, error: `create item failed: ${itemErr.message}` };
+        const status = args.scheduled_for ? "scheduled" : "pending";
+        const promptPreview = typeof args.payload?.prompt === "string"
+          ? String(args.payload.prompt).slice(0, 500) : null;
+        const { data: job, error: jobErr } = await supabase.from("action_jobs").insert({
+          user_id: args.user_id,
+          checklist_id: args.checklist_id,
+          source_item_id: item.id,
+          action_type: args.action_type,
+          status,
+          payload: args.payload ?? {},
+          prompt_preview: promptPreview,
+          scheduled_for: args.scheduled_for ?? null,
+          recurrence: args.recurrence ?? null,
+        }).select("id, status").single();
+        if (jobErr) {
+          await supabase.from("checklist_items").delete().eq("id", item.id);
+          return { ok: false, error: `create job failed: ${jobErr.message}` };
+        }
+        return {
+          ok: true,
+          result: { item_id: item.id, job_id: job.id, status: job.status },
+          summary: `addItem+trigger ${args.action_type}`,
+        };
+      }
+      default:
+        return { ok: false, error: `unknown management tool: ${tool}` };
+    }
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
+  }
+}
+
+
 async function tickSequence(supabase: any, parent: Job): Promise<{ done: boolean; aborted?: string }> {
   const state = (parent.sequence_state && Object.keys(parent.sequence_state).length ? parent.sequence_state : null) ?? {
     phase: "planning_init",
