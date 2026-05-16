@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { ContextAttacher, AttachedContext } from "@/components/ContextAttacher";
 import { ChecklistPickerDialog } from "@/components/ChecklistPickerDialog";
 
-const GEN_TOOLS: { key: string; label: string }[] = [
+const ALL_TOOLS: { key: string; label: string }[] = [
   { key: "text-text", label: "Text → text" },
   { key: "web-search", label: "Web search" },
   { key: "text-image", label: "Text → image" },
@@ -18,20 +18,6 @@ const GEN_TOOLS: { key: string; label: string }[] = [
   { key: "audio-image-video", label: "Audio + image → video" },
   { key: "analyze-image", label: "Analyze image" },
 ];
-
-const MGMT_TOOLS: { key: string; label: string }[] = [
-  { key: "fetchChecklist", label: "Find checklist" },
-  { key: "fetchItems", label: "Read items" },
-  { key: "fetchMedia", label: "Search media" },
-  { key: "addItem", label: "Add item" },
-  { key: "updateItem", label: "Update item" },
-  { key: "updateChecklistTitle", label: "Rename checklist" },
-  { key: "updateMediaTitle", label: "Rename media" },
-  { key: "createChecklist", label: "Create checklist" },
-  { key: "createItemAndTriggerJob", label: "Add item + run job" },
-];
-
-const ALL_TOOLS = [...GEN_TOOLS, ...MGMT_TOOLS];
 
 const ASPECT_OPTIONS = ["1:1", "16:9", "9:16", "4:3", "3:4"] as const;
 
@@ -154,30 +140,15 @@ export const RunSequenceDialog = ({ open, userId, currentChecklist, onClose, onS
             </div>
 
             <div>
-              <Label className="text-xs">Allowed generation tools</Label>
+              <Label className="text-xs">Allowed tools</Label>
               <div className="grid grid-cols-2 gap-2 mt-1">
-                {GEN_TOOLS.map((t) => (
+                {ALL_TOOLS.map((t) => (
                   <label key={t.key} className="flex items-center gap-2 text-xs cursor-pointer">
                     <Checkbox checked={allowed.has(t.key)} onCheckedChange={(v) => toggle(t.key, v === true)} />
                     <span>{t.label}</span>
                   </label>
                 ))}
               </div>
-            </div>
-
-            <div>
-              <Label className="text-xs">Allowed app actions (Magic Checklist CRUD)</Label>
-              <div className="grid grid-cols-2 gap-2 mt-1">
-                {MGMT_TOOLS.map((t) => (
-                  <label key={t.key} className="flex items-center gap-2 text-xs cursor-pointer">
-                    <Checkbox checked={allowed.has(t.key)} onCheckedChange={(v) => toggle(t.key, v === true)} />
-                    <span>{t.label}</span>
-                  </label>
-                ))}
-              </div>
-              <p className="text-[10px] text-muted-foreground mt-1">
-                Lets the agent route work to roster checklists, rename items, etc. Defaults to Cameron Inbox when no destination is named.
-              </p>
             </div>
 
             <ContextAttacher
