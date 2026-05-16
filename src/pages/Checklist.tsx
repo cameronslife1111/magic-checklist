@@ -243,8 +243,28 @@ const ChecklistPage = () => {
         .eq("checklist_id", currentId)
         .is("parent_item_id", null)
         .order("position", { ascending: true });
-      const list = (its ?? []) as ChecklistItem[];
-      const firstUnchecked = list.find((i) => !i.checked) ?? null;
+      let list = (its ?? []) as ChecklistItem[];
+      let firstUnchecked = list.find((i) => !i.checked) ?? null;
+
+      // First-hop auto-reset: if the slot-1 list is fully checked, uncheck
+      // everything and start over from the top.
+      if (hop === 0 && !firstUnchecked && list.length > 0) {
+        await supabase
+          .from("checklist_items")
+          .update({ checked: false })
+          .eq("checklist_id", currentId)
+          .is("parent_item_id", null);
+        speak("Resetting");
+        toast.message("List reset");
+        const { data: itsR } = await supabase
+          .from("checklist_items")
+          .select("*")
+          .eq("checklist_id", currentId)
+          .is("parent_item_id", null)
+          .order("position", { ascending: true });
+        list = (itsR ?? []) as ChecklistItem[];
+        firstUnchecked = list.find((i) => !i.checked) ?? null;
+      }
 
       // Only check off on the very first hop (the slot-1 checklist).
       if (!didCheck && firstUnchecked) {
