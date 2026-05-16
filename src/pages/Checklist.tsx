@@ -229,6 +229,25 @@ const ChecklistPage = () => {
       return;
     }
     stopSpeech();
+
+    // If every top-level item in slot-1 is already checked, uncheck them all
+    // first so the normal flow re-checks the first item and opens its link.
+    {
+      const { data: slot1Items } = await supabase
+        .from("checklist_items")
+        .select("id,checked")
+        .eq("checklist_id", slot1)
+        .is("parent_item_id", null);
+      const s1 = (slot1Items ?? []) as { id: string; checked: boolean }[];
+      if (s1.length > 0 && s1.every((i) => i.checked)) {
+        await supabase
+          .from("checklist_items")
+          .update({ checked: false })
+          .eq("checklist_id", slot1)
+          .is("parent_item_id", null);
+      }
+    }
+
     const visited = new Set<string>();
     let currentId: string = slot1;
     let didCheck = false;

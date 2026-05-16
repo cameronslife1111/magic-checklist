@@ -1,52 +1,38 @@
-# Add Lock / Unlock long-press to the 🐝 Bumblebee button
+## Add auto-reset to 🐝 Bumblebee single-tap
 
-Add a long-press (≈600ms) gesture on the yellow 🐝 button that toggles a "locked to current checklist" mode. While locked, the user can still check items, add items, use Actions, dictate, and use speech — but cannot navigate away from the current checklist.
+When the user single-taps the 🐝 button and every top-level item in the Home Favorite slot-1 checklist is already checked, automatically uncheck them all and then run the normal recycle flow so it opens the top link again.
 
-## Behavior
+### Current behavior (unchanged paths)
 
-- Single click/tap on 🐝 — unchanged. Runs the existing Recycle flow (when unlocked). When locked, it does nothing except speak "Locked".
-- Long press on 🐝 (≈600ms) — toggles lock state:
-  - Unlocked → Locked: turn the 🐝 button red and speak "Locked".
-  - Locked → Unlocked: restore the normal yellow metallic styling and speak "Unlocked".
-- While locked:
-  - 🏠 Home button: short tap is suppressed (does nothing, optional brief "Locked" toast). Long-press of Home (open current item's link) is also suppressed — both forms of Home navigate away.
-  - 🐝 short tap: suppressed (speaks "Locked").
-  - ✅ Green check button: works as today (toggles current item, long-press goes back one step on the same list — back-one-step does not navigate away from this checklist, so it stays allowed).
-  - Actions button + sheet: works as today. Any action inside the sheet that would navigate away from the current checklist is blocked with a "Locked" toast. Specifically: Send to checklist, Send to blank checklist, New checklist, Duplicate checklist, Delete checklist, Insert checklist link (which navigates to the new link target after creating), Swap Links (if it navigates), Media Gallery, Action Queue Dashboard, and the Home Favorites cycle. Non-navigating actions (split, copy, combine, edit title, background, mute, theme, AI prompts that stay on this list, etc.) work normally.
-  - Item rows: tapping a checkbox works. Tapping a linked-item's link icon to jump to another checklist is blocked with a "Locked" toast.
-- Lock state is in-memory only (resets on full reload). It is per-tab, not persisted.
+- Long-press 🐝 still toggles Locked/Unlocked.
+- Lock guard at the top of `runRecycle` still wins (does nothing while locked).
+- When at least one item is unchecked, behavior is identical to today: check off the first unchecked item, then follow its link if any.
 
-## Visual
+### New behavior
 
-- Locked state replaces `btn-metallic-yellow` with a solid red background using the existing destructive token (`bg-destructive text-destructive-foreground`) and removes the shimmer class so it reads clearly as an alert state.
-- The 🐝 emoji stays. `aria-label` updates to "Unlock checklist (long-press)" while locked, and to "Recycle (long-press: lock checklist)" while unlocked.
+In `runRecycle` (`src/pages/Checklist.tsx`, ~line 221), after loading slot-1 items but before the existing hop loop:
 
-## Implementation notes (technical)
+1. Fetch slot-1's top-level items (same query already used on hop 0).
+2. If the list is non-empty AND every item is `checked === true`:
+   - Update all of slot-1's top-level items to `checked: false` in a single `supabase.from("checklist_items").update({ checked: false }).eq("checklist_id", slot1).is("parent_item_id", null)` call.
+   - Speak a brief confirmation (reuse `speak("Recycled")` — optional, matches existing speech pattern).
+   - Re-run the existing hop logic from the top so the now-unchecked first item gets checked and its link is opened (the "top link"). Cleanest implementation: extract nothing — just `continue`-style restart by letting the existing `for` loop run after the reset, since the first iteration will re-fetch and find the first item unchecked.
+3. If the list has any unchecked items, skip the reset and run the existing flow unchanged.
 
-File: `src/pages/Checklist.tsx`
+### Edge cases
 
-1. Add state: `const [locked, setLocked] = useState(false);` plus refs `bumbleLongPressTimerRef` and `bumbleLongPressFiredRef` mirroring the existing Home/Check long-press pattern.
-2. Replace the current 🐝 `onPointerUp={runRecycle}` handler with the same `onPointerDown` / `onPointerUp` / `onPointerCancel` long-press pattern used for the Home button:
-   - On `pointerdown`, start a 600ms timer that sets `locked` to its inverse, calls `speak("Locked")` or `speak("Unlocked")` accordingly, and sets `bumbleLongPressFiredRef.current = true`.
-   - On `pointerup`: if long-press fired, return. Otherwise, if `locked`, `speak("Locked")` and return. Else `await runRecycle()`.
-3. Apply locked styling conditionally via `cn(...)`: when `locked`, use `"bg-destructive text-destructive-foreground hover:bg-destructive/90"` and drop `btn-metallic-yellow btn-shimmer`.
-4. Guard navigation paths with a tiny helper `const guardNav = () => { if (locked) { speak("Locked"); toast.message("Locked"); return true; } return false; };`:
-   - Wrap the 🏠 short-tap handler (line ~1683 onPointerUp) and its long-press timer body (line ~1672) so both early-return when `guardNav()` is true.
-   - Wrap the body of `runRecycle` so it early-returns when locked (defensive — bumble short-tap already blocks, but `runRecycle` should not navigate either way).
-   - In `onPick` (the ActionsSheet handler around line 914+), early-return with `guardNav()` for keys: `queue`, `media-gallery`, `send-to`, `send-to-blank`, `new`, `duplicate`, `delete-checklist`, `insert-link`, `insert-new-link`, `swap-links`, `manage-home-favorites` (only the navigation step — the manager dialog itself can open; if it triggers navigation that needs the same guard).
-   - In `ItemRow`/`SortableItemRow`, the link-tap that calls `openChecklist(linked_checklist_id)` from within a row should be guarded. Easiest: wrap the existing `openChecklist` call site at the row level by passing `locked` down OR by checking `locked` in a small wrapper `openChecklistGuarded` and using that wrapper for any in-row "follow link" handler. (Ad-hoc audit during implementation: only wrap call sites that change checklists; do not wrap calls that load the initial checklist or recover state.)
-5. The `goBackOneStep` long-press on the green ✅ button stays unguarded — it operates on the current list and does not navigate away.
-6. Speech calls reuse `speak()` from `@/lib/speech`; no new audio code.
+- Empty slot-1 checklist: do nothing new; existing flow already breaks out and calls `openChecklist(slot1)`.
+- Slot-1 missing: existing toast remains.
+- Items without `linked_checklist_id`: after reset, the first item gets checked; if it has no link, the existing loop breaks and `openChecklist` opens slot-1 itself — same as today's single-tap on a fresh list.
+- No persistence or schema changes. No new DB columns. No edge functions.
 
-## Out of scope
+### Files touched
 
-- No persistence of lock state across reloads.
-- No DB columns, no backend, no edge function changes.
-- No changes to Action Queue, Media Gallery internals, auth, or styling tokens beyond reusing `bg-destructive`.
-- No changes to the Home Favorites list, Recycle algorithm, or any other button's gestures.
+- `src/pages/Checklist.tsx` — only the body of `runRecycle`.
+- `.lovable/plan.md` — updated to document the new behavior.
 
-## Verification
+### Verification
 
-- Long-press 🐝 on an unlocked checklist: button turns red, speaks "Locked".
-- While locked: short-tap 🏠 does nothing/toast. Long-press 🏠 does nothing/toast. Short-tap 🐝 speaks "Locked". Tap a checkbox → toggles. Long-press ✅ goes back one item on the same list. Open Actions → tapping "Media Gallery" toasts "Locked"; tapping "Split by punctuation" works.
-- Long-press 🐝 again: returns to yellow metallic, speaks "Unlocked", all navigation works normally.
+- Open slot-1 checklist, check every item manually, tap 🐝 → all items become unchecked, first item gets re-checked, and the linked checklist of the first item opens.
+- Tap 🐝 with at least one unchecked item → behavior identical to today.
+- Long-press 🐝 → still toggles lock; reset logic does not fire.
