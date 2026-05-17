@@ -736,16 +736,37 @@ const ChecklistPage = () => {
       }
       case "export-text": {
         try {
-          const { data: lists, error: lErr } = await supabase
-            .from("checklists")
-            .select("id, title")
-            .eq("user_id", user.id);
-          if (lErr) throw lErr;
-          const { data: rows, error: iErr } = await supabase
-            .from("checklist_items")
-            .select("checklist_id, text, checked, position")
-            .eq("user_id", user.id);
-          if (iErr) throw iErr;
+          // Paginate — Supabase caps SELECT at 1000 rows per request by default.
+          const PAGE = 1000;
+          const fetchAll = async <T,>(
+            build: (from: number, to: number) => any,
+          ): Promise<T[]> => {
+            const out: T[] = [];
+            for (let from = 0; ; from += PAGE) {
+              const to = from + PAGE - 1;
+              const { data, error } = await build(from, to);
+              if (error) throw error;
+              const batch = (data ?? []) as T[];
+              out.push(...batch);
+              if (batch.length < PAGE) break;
+            }
+            return out;
+          };
+
+          const lists = await fetchAll<{ id: string; title: string }>((from, to) =>
+            supabase
+              .from("checklists")
+              .select("id, title")
+              .eq("user_id", user.id)
+              .range(from, to),
+          );
+          const rows = await fetchAll<{ checklist_id: string; text: string; checked: boolean; position: number }>((from, to) =>
+            supabase
+              .from("checklist_items")
+              .select("checklist_id, text, checked, position")
+              .eq("user_id", user.id)
+              .range(from, to),
+          );
 
           const sortedLists = sortChecklistsByTitle(lists ?? []);
           const itemsByList = new Map<string, { text: string; checked: boolean; position: number }[]>();
